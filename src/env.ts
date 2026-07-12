@@ -31,6 +31,15 @@ export interface Env {
    */
   BASE_SEPOLIA_RPC_URL?: string;
 
+  /**
+   * Private key for the EIP-7702 relayer account on Base Sepolia.
+   * Funds the gas for Investments Account setup (type-4 sponsored tx).
+   * Same account used for the CDP Paymaster on Sepolia.
+   * Set via `wrangler secret put RELAYER_PRIVATE_KEY`.
+   * Migration path: replace with CDP Server-Side Wallets for production.
+   */
+  RELAYER_PRIVATE_KEY?: string;
+
   // ── secrets (set via `wrangler secret put NAME`) ────────────────
   /**
    * Neon Postgres connection string for the `polis` DB (enterprise/company
