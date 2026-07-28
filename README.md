@@ -2,7 +2,7 @@
 
 > Public-edge HTTP Worker for the [Cofferdam](https://cofferdam.xyz) wallet stack.
 > Hono router on Cloudflare Workers; reads ZKSync Era contracts via viem; binds to
-> [`cofferdam-attester`](https://github.com/OffshoreSync/cofferdam-attester) over
+> [`cofferdam-attester`](https://github.com/cofferdamxyz/cofferdam-attester) over
 > Workers RPC for signing operations.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -20,7 +20,7 @@
 It is **stateless** with respect to identity: no passport bytes, no biometric
 material, no private keys ever transit through this Worker. The trust model is
 documented in
-[cofferdam-sdk/IDENTITY_LAYER_DESIGN.md](https://github.com/OffshoreSync/cofferdam-sdk/blob/main/IDENTITY_LAYER_DESIGN.md).
+[cofferdam-sdk/IDENTITY_LAYER_DESIGN.md](https://github.com/cofferdamxyz/cofferdam-sdk/blob/main/IDENTITY_LAYER_DESIGN.md).
 
 ### Data boundaries — the plane never touches consumer data
 
@@ -104,7 +104,7 @@ yarn dev
 
 # In a separate terminal, also start cofferdam-attester so the
 # ATTESTER service binding resolves locally:
-git clone https://github.com/OffshoreSync/cofferdam-attester.git ../cofferdam-attester
+git clone https://github.com/cofferdamxyz/cofferdam-attester.git ../cofferdam-attester
 cd ../cofferdam-attester && yarn install && yarn dev
 ```
 
@@ -219,11 +219,11 @@ test/
 
 | Repo                                                                       | Role                                          |
 |----------------------------------------------------------------------------|-----------------------------------------------|
-| [`cofferdam-attester`](https://github.com/OffshoreSync/cofferdam-attester) | Self.xyz attester signing Worker              |
-| [`cofferdam-prover`](https://github.com/OffshoreSync/cofferdam-prover)     | Self.xyz Groth16 prover Container (WIP)       |
-| [`cofferdam-sdk`](https://github.com/OffshoreSync/cofferdam-sdk)           | Public SDK + identity-layer design doc        |
+| [`cofferdam-attester`](https://github.com/cofferdamxyz/cofferdam-attester) | Self.xyz attester signing Worker              |
+| [`cofferdam-prover`](https://github.com/cofferdamxyz/cofferdam-prover)     | Self.xyz Groth16 prover Container (WIP)       |
+| [`cofferdam-sdk`](https://github.com/cofferdamxyz/cofferdam-sdk)           | Public SDK + identity-layer design doc        |
 | [`contracts`](https://github.com/OffshoreSync/contracts)                   | Solidity contracts (Self.xyz integration)     |
 
 ## License
 
-[Apache License 2.0](LICENSE). Copyright 2026 OffshoreSync LLC.
+[Apache License 2.0](LICENSE). Copyright 2026 Cofferdam Inc.
