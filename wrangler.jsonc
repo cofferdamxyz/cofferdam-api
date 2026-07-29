@@ -38,7 +38,6 @@
   // required — `/v1/activity` uses the SQD Portal Stream API directly.
   "vars": {
     "ENVIRONMENT": "development",
-    "ZKSYNC_SEPOLIA_RPC_URL": "https://sepolia.era.zksync.dev",
     "BASE_SEPOLIA_RPC_URL": "https://sepolia.base.org",
     "SQD_PORTAL_URL": "https://portal.sqd.dev/datasets/base-sepolia"
   },

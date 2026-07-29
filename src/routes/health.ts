@@ -1,4 +1,4 @@
-// Copyright (c) 2026 OffshoreSync LLC
+// Copyright (c) 2026 Cofferdam Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { Hono } from 'hono';

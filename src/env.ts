@@ -1,4 +1,4 @@
-// Copyright (c) 2026 OffshoreSync LLC
+// Copyright (c) 2026 Cofferdam Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 /**
@@ -15,7 +15,12 @@ import type { AttesterRpc } from './services/attester.js';
 export interface Env {
   // ── vars ────────────────────────────────────────────────────────
   ENVIRONMENT: 'development' | 'staging' | 'production';
-  ZKSYNC_SEPOLIA_RPC_URL: string;
+
+  /**
+   * Base Sepolia RPC URL — primary chain for all on-chain reads.
+   * Defaults to the public Base Sepolia endpoint.
+   */
+  BASE_SEPOLIA_RPC_URL: string;
 
   /**
    * SQD Portal Stream API base URL for the /v1/activity route.
@@ -24,12 +29,6 @@ export interface Env {
    * See ENTERPRISE_MODULE_PLAN.md §3 (decision 2026-06-26).
    */
   SQD_PORTAL_URL?: string;
-
-  /**
-   * Base Sepolia RPC URL (retained for non-activity routes / future use).
-   * Defaults to the public Base Sepolia endpoint.
-   */
-  BASE_SEPOLIA_RPC_URL?: string;
 
   /**
    * Private key for the EIP-7702 relayer account on Base Sepolia.

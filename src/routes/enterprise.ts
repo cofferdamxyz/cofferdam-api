@@ -1,4 +1,4 @@
-// Copyright (c) 2026 OffshoreSync LLC
+// Copyright (c) 2026 Cofferdam Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 /**
@@ -27,8 +27,8 @@
 
 import { Hono, type Context } from 'hono';
 import type { Env } from '../env.js';
-import { getSepoliaClient } from '../chain/client.js';
-import { ZKSYNC_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
+import { getBaseSepoliaClient } from '../chain/client.js';
+import { BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 import {
   CORPORATE_REGISTRY_ADDRESS,
   DNS_CHALLENGE_VALUE_PREFIX,
@@ -63,7 +63,7 @@ async function registrationFor(
 ): Promise<RegistrationResult> {
   if (!CORPORATE_REGISTRY_ADDRESS) return { status: 'registry_not_deployed' };
   try {
-    const client = getSepoliaClient(c.env.ZKSYNC_SEPOLIA_RPC_URL);
+    const client = getBaseSepoliaClient(c.env.BASE_SEPOLIA_RPC_URL);
     return await readCompanyRegistration(client, companyAnchor);
   } catch (err) {
     return { status: 'rpc_error', message: err instanceof Error ? err.message : String(err) };
@@ -132,7 +132,7 @@ enterpriseRoutes.get('/companies/:companyAnchor', async (c) => {
   const registration = await registrationFor(c, companyAnchor.toLowerCase() as CompanyAnchor);
   return c.json({
     ok: true,
-    chainId: ZKSYNC_SEPOLIA_CHAIN_ID,
+    chainId: BASE_SEPOLIA_CHAIN_ID,
     companyAnchor: companyAnchor.toLowerCase(),
     registration,
   });

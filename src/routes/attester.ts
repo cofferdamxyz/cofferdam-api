@@ -1,4 +1,4 @@
-// Copyright (c) 2026 OffshoreSync LLC
+// Copyright (c) 2026 Cofferdam Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 /**
@@ -29,8 +29,8 @@
 import { Hono } from 'hono';
 import { isAddress, getAddress, type Hex } from 'viem';
 import type { Env } from '../env.js';
-import { getSepoliaClient } from '../chain/client.js';
-import { SEPOLIA_DEPLOYMENTS, ZKSYNC_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
+import { getBaseSepoliaClient } from '../chain/client.js';
+import { SEPOLIA_DEPLOYMENTS, BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 
 export const attesterRoutes = new Hono<{ Bindings: Env }>();
 
@@ -144,7 +144,7 @@ attesterRoutes.post('/test-sign', async (c) => {
   }
 
   // ── Verify on-chain ────────────────────────────────────────
-  const client = getSepoliaClient(c.env.ZKSYNC_SEPOLIA_RPC_URL);
+  const client = getBaseSepoliaClient(c.env.BASE_SEPOLIA_RPC_URL);
   let onchainValid: boolean;
   try {
     onchainValid = await client.readContract({
@@ -168,7 +168,7 @@ attesterRoutes.post('/test-sign', async (c) => {
 
   return c.json({
     ok: true,
-    chainId: ZKSYNC_SEPOLIA_CHAIN_ID,
+    chainId: BASE_SEPOLIA_CHAIN_ID,
     registry,
     account,
     pubSignals: pubSignalsStr,

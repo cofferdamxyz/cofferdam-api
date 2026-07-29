@@ -1,4 +1,4 @@
-// Copyright (c) 2026 OffshoreSync LLC
+// Copyright (c) 2026 Cofferdam Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 /**
@@ -26,7 +26,7 @@
  */
 
 import { keccak256, toBytes, type Address, type Hex } from 'viem';
-import type { SepoliaClient } from '../chain/client.js';
+import type { BaseSepoliaClient } from '../chain/client.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // companyAnchor derivation
@@ -174,7 +174,7 @@ export interface CompanyRegistration {
  * should surface `registry_not_deployed`).
  */
 export async function readCompanyRegistration(
-  client: SepoliaClient,
+  client: BaseSepoliaClient,
   companyAnchor: CompanyAnchor,
 ): Promise<CompanyRegistration | null> {
   if (!CORPORATE_REGISTRY_ADDRESS) return null;

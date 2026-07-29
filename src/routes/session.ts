@@ -1,4 +1,4 @@
-// Copyright (c) 2026 OffshoreSync LLC
+// Copyright (c) 2026 Cofferdam Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 /**
@@ -17,7 +17,7 @@
  *   Verifies the passkey-signed envelope binds the sign-in fields to the
  *   presented public key (the cryptographic "session origin" proof). With
  *   `checkOnChain` it additionally reads the on-chain account's authority
- *   registry (ZKSync Sepolia only) to confirm that public key is an active
+ *   registry (Base Sepolia only) to confirm that public key is an active
  *   authority — the full authorisation gate. A counterfactual (not-yet-deployed)
  *   account returns `authority: 'account_not_deployed'`, which is expected before
  *   the user's first on-chain op and does NOT invalidate the attestation.
@@ -26,10 +26,10 @@
 import { Hono } from 'hono';
 import { getAddress, type Address } from 'viem';
 import type { Env } from '../env.js';
-import { getSepoliaClient } from '../chain/client.js';
+import { getBaseSepoliaClient } from '../chain/client.js';
 import {
   PASSKEY_AUTHORITY_MODULE_BY_SCHEME,
-  ZKSYNC_SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_CHAIN_ID,
 } from '../chain/deployments.js';
 import {
   decodeAndVerifySessionAttestation,
@@ -98,11 +98,11 @@ async function checkOnChainAuthority(
   att: SessionAttestation,
   rpcUrl: string,
 ): Promise<AuthorityCheck> {
-  if (att.chainId !== ZKSYNC_SEPOLIA_CHAIN_ID) {
+  if (att.chainId !== BASE_SEPOLIA_CHAIN_ID) {
     return { status: 'chain_unsupported', chainId: att.chainId };
   }
   try {
-    const client = getSepoliaClient(rpcUrl);
+    const client = getBaseSepoliaClient(rpcUrl);
     const address = getAddress(att.accountAddress) as Address;
 
     const code = await client.getCode({ address });
@@ -192,7 +192,7 @@ sessionRoutes.post('/verify-attestation', async (c) => {
   // Signature verified — the holder of `publicKey` authorised exactly these
   // fields. Optionally escalate to the on-chain authorisation check.
   if (body.checkOnChain === true) {
-    const authority = await checkOnChainAuthority(att, c.env.ZKSYNC_SEPOLIA_RPC_URL);
+    const authority = await checkOnChainAuthority(att, c.env.BASE_SEPOLIA_RPC_URL);
     return c.json({ ok: true, claims, authority });
   }
 
