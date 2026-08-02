@@ -56,11 +56,20 @@ export const SEPOLIA_DEPLOYMENTS = {
   MockGroth16Verifier: {
     address: '0x442f9584BBBFC9987d7220659bA84B20Fab24136',
   },
-  /** Escrow factory — paid maritime contracts. */
+  /**
+   * Escrow factory — deploys one spot escrow per job via CREATE2
+   * (`createSpotEscrow(policy, salt)`). This is the entry point; individual
+   * escrows are not pre-deployed.
+   */
   EscrowFactory: {
     address: '0x6a1C08bf3c17DDbd021C2e4131c9dA85d976A737',
   },
-  /** Escrow contract — paid maritime contracts. */
+  /**
+   * A single spot-escrow instance. NOTE: the shipped architecture is
+   * CREATE2-per-job via `EscrowFactory` above, so this is *not* a singleton
+   * every job routes through — it is one deployed instance (demo/reference).
+   * Resolve per-job addresses with `predictSpotEscrowAddress(policy, salt)`.
+   */
   CofferdamSpotEscrow: {
     address: '0xc46241fa872EFD91884E29244901cF3B266bE262',
   },
