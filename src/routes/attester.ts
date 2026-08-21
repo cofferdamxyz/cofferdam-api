@@ -27,7 +27,17 @@
  */
 
 import { Hono } from 'hono';
-import { isAddress, getAddress, type Hex } from 'viem';
+import {
+  concat,
+  encodePacked,
+  getAddress,
+  isAddress,
+  pad,
+  ripemd160,
+  sha256,
+  stringToHex,
+  type Hex,
+} from 'viem';
 import type { Env } from '../env.js';
 import { getBaseSepoliaClient } from '../chain/client.js';
 import { SEPOLIA_DEPLOYMENTS, BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
@@ -53,12 +63,55 @@ const PUB_SIGNALS_LENGTH = 21;
 const E_PASSPORT_ATTESTATION_ID = 1n;
 
 /**
- * Poseidon hash of `cofferdam.xyz` × `cofferdam-sepolia` — the scope
- * locked into the deployed `NullifierRegistry`. Mirrors the comment
- * on `SEPOLIA_DEPLOYMENTS.NullifierRegistry`.
+ * Poseidon hash of `cofferdam.xyz` × `cofferdam-bind-v1` — the scope
+ * locked into `NullifierRegistry.expectedScope`.
+ *
+ * Mirrors `COFFERDAM_BIND_V1_SCOPE` in
+ * `base-contracts/scripts/lib/selfScope.ts` (which asserts the value
+ * against Self's own derivation in a unit test) and
+ * `SelfApp.scope` in `cofferdam-app/src/features/self/selfAppConfig.ts`.
+ * Re-vendor together with `SEPOLIA_DEPLOYMENTS` whenever the registry
+ * is redeployed — `expectedScope` is immutable.
  */
-const COFFERDAM_SEPOLIA_SCOPE =
-  4110595171224311359414942497373057058713959593849800517221207032372881193556n;
+const COFFERDAM_BIND_V1_SCOPE =
+  9385173979550103756914225592429331034074493553395666193753061396908251355773n;
+
+/**
+ * `destChainID` the app declares in its `SelfApp` config. Self folds this
+ * into the `userIdentifier` commitment, so it must match
+ * `NullifierRegistry.selfDestChainId`. This is Self's destination-chain
+ * field, NOT Base Sepolia's 84532.
+ */
+const SELF_DEST_CHAIN_ID = 42220;
+
+/**
+ * Rebuild the `userContextData` preimage Self commits to.
+ * Layout: `abi.encodePacked(bytes32(destChainId), bytes32(userId), userDefinedData)`.
+ * Mirrors `getSolidityPackedUserContextData` in `self/common/src/utils/hash.ts`.
+ */
+function buildUserContextData(
+  destChainId: number,
+  userId: Hex,
+  userDefinedData = '',
+): Hex {
+  return concat([
+    // `uint256` already encodes to exactly 32 bytes; `userId` is left-padded
+    // the same way Self's `zeroPadValue(..., 32)` does.
+    encodePacked(['uint256'], [BigInt(destChainId)]),
+    pad(userId, { size: 32 }),
+    userDefinedData === '' ? '0x' : stringToHex(userDefinedData),
+  ]);
+}
+
+/**
+ * The `vc_and_disclose` circuit's `userIdentifier` public signal is NOT the
+ * user's address — it is `uint160(ripemd160(sha256(userContextData)))`.
+ * Mirrors `calculateUserIdentifierHash` in `self/common/src/utils/hash.ts`
+ * and `NullifierRegistry._checkUserContext` on-chain.
+ */
+function calculateUserIdentifierHash(userContextData: Hex): bigint {
+  return BigInt(ripemd160(sha256(userContextData)));
+}
 
 /** Minimal ABI fragment for `SelfAttesterRegistry.verifyAttesterSig`. */
 const SELF_ATTESTER_REGISTRY_ABI = [
@@ -114,12 +167,17 @@ attesterRoutes.post('/test-sign', async (c) => {
     );
   }
 
-  // ── Build synthetic pubSignals ──────────────────────────────
+  // ── Build synthetic pubSignals ──────────────────────────
+  // `userIdentifier` must be the commitment over userContextData, not the
+  // raw address — the registry recomputes it and rejects any mismatch.
+  const userContextData = buildUserContextData(SELF_DEST_CHAIN_ID, account);
+
   const pubSignals = new Array<bigint>(PUB_SIGNALS_LENGTH).fill(0n);
   pubSignals[PUB_SIGNAL_INDEX.NULLIFIER] = nullifier;
   pubSignals[PUB_SIGNAL_INDEX.ATTESTATION_ID] = E_PASSPORT_ATTESTATION_ID;
-  pubSignals[PUB_SIGNAL_INDEX.SCOPE] = COFFERDAM_SEPOLIA_SCOPE;
-  pubSignals[PUB_SIGNAL_INDEX.USER_IDENTIFIER] = BigInt(account);
+  pubSignals[PUB_SIGNAL_INDEX.SCOPE] = COFFERDAM_BIND_V1_SCOPE;
+  pubSignals[PUB_SIGNAL_INDEX.USER_IDENTIFIER] =
+    calculateUserIdentifierHash(userContextData);
 
   const pubSignalsStr = pubSignals.map((x) => x.toString());
 
@@ -131,6 +189,7 @@ attesterRoutes.post('/test-sign', async (c) => {
       registry,
       account,
       pubSignals: pubSignalsStr,
+      userContextData,
     });
   } catch (err) {
     return c.json(
@@ -172,6 +231,7 @@ attesterRoutes.post('/test-sign', async (c) => {
     registry,
     account,
     pubSignals: pubSignalsStr,
+    userContextData,
     signed,
     onchainValid,
   });

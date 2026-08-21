@@ -48,8 +48,12 @@ into `src/chain/deployments.ts`. The canonical contracts include:
 - **SelfAttesterRegistry** — allow-list of trusted Self.xyz TEE attester
   ECDSA addresses.
 - **NullifierRegistry** — one-shot Self.xyz nullifier-to-account binding,
-  locked to scope `cofferdam-sepolia`.
-- **MockGroth16Verifier** — Self.xyz proof verifier (mock on testnet).
+  locked to the immutable scope `cofferdam-bind-v1` (must match `SelfApp.scope`
+  in `cofferdam-app`). Also pins `selfDestChainId` to Self's declared
+  `SelfApp.chainID` (`42220`), not Base's.
+- **Verifier_vc_and_disclose** — the real snarkJS Groth16 verifier for Self's
+  `vc_and_disclose` circuit, vendored from Self and deployed on Base Sepolia.
+  (The earlier `MockGroth16Verifier` deploy is superseded.)
 - **MockUSDC** — test USDC token.
 - **EscrowFactory** / **CofferdamSpotEscrow** — paid maritime contract surface.
 

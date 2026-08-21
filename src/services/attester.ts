@@ -4,8 +4,7 @@
 /**
  * Local copy of the Cofferdam attester RPC contract.
  *
- * **MUST stay byte-compatible with**
- * `cofferdam-app/backend/cofferdam-attester/src/rpc.ts`.
+ * **MUST stay byte-compatible with** `cofferdam-attester/src/rpc.ts`.
  *
  * Cloudflare service bindings resolve at runtime, but TypeScript
  * needs a static interface to type the binding. Since the two
@@ -24,6 +23,13 @@ export interface SignBindRequest {
   readonly registry: Hex;
   readonly account: Hex;
   readonly pubSignals: readonly string[];
+  /**
+   * Preimage of the proof's `userIdentifier` signal:
+   * `abi.encodePacked(bytes32(SelfApp.chainID), bytes32(userId), userDefinedData)`.
+   * Signal 20 is a `ripemd160(sha256(...))` commitment, not the raw address,
+   * so the attester needs the preimage to tie the proof to `account`.
+   */
+  readonly userContextData: Hex;
 }
 
 export interface SignBindResponse {
@@ -33,6 +39,8 @@ export interface SignBindResponse {
   readonly chainId: string;
   readonly registry: Hex;
   readonly account: Hex;
+  /** Echoed so the caller submits byte-identical bytes to `verifyAndBind`. */
+  readonly userContextData: Hex;
 }
 
 /**

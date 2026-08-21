@@ -52,9 +52,18 @@ export const BASE_SEPOLIA_CHAIN_ID = 84532 as const;
  * attestation's passkey to an active on-chain authority.
  */
 export const SEPOLIA_DEPLOYMENTS = {
-  /** Self.xyz Groth16 verifier (mock on Base Sepolia). */
-  MockGroth16Verifier: {
-    address: '0x442f9584BBBFC9987d7220659bA84B20Fab24136',
+  /**
+   * Self.xyz Groth16 verifier for the `vc_and_disclose` circuit (21 public
+   * signals, E_PASSPORT). Vendored byte-identical from
+   * `self/contracts/contracts/verifiers/disclose/Verifier_vc_and_disclose.sol`.
+   *
+   * This is a REAL verifier: `NullifierRegistry.verifyAndBind` performs a
+   * genuine Groth16 check, not a trusted attestation. It supersedes the earlier
+   * `MockGroth16Verifier` (which accepted any proof) at
+   * `0x442f9584BBBFC9987d7220659bA84B20Fab24136`.
+   */
+  Verifier_vc_and_disclose: {
+    address: '0x26fBC868344AF4E99874edFd0E3756EcC2359bEb',
   },
   /**
    * Escrow factory — deploys one spot escrow per job via CREATE2
@@ -75,22 +84,40 @@ export const SEPOLIA_DEPLOYMENTS = {
   },
   /**
    * v2 — allow-list of trusted Self TEE attester ECDSA addresses.
-   * Owner: deployer. Initial attester is the secp256k1 address whose
-   * privkey lives (from Session 3) as a Cloudflare-managed secret on
-   * `cofferdam-attester`.
+   *
+   * Owner: deployer (`0x2c8A01e971d7C51B3B78f9F08c57c45584D96AB2`).
+   * Sole trusted attester: `0x2dFDdE621680A270cC01E8D9D729f25a46Bdae59`, whose
+   * private key is the `ATTESTER_PRIVATE_KEY` Cloudflare secret on
+   * `cofferdam-attester`. Deliberately NOT the deployer key — the deployer is
+   * verified `isTrustedAttester == false` so a leaked deploy key cannot mint
+   * bind attestations.
+   *
+   * Rotation is contract-free — use `base-contracts/scripts/rotate-self-attester.ts`,
+   * which does `addAttester(new)` then `removeAttester(old)` idempotently. A
+   * rotation must update three places or the Worker signs unusable proofs:
+   * this registry, the Cloudflare secret, and `cofferdam-attester/.dev.vars`.
+   * Retired: `0x9c93145AF6b37755844C572e7F73408f3fB95c75`,
+   * `0x621e5fdA698E928af5bBF825d14B92f9A0229B4a`.
    */
   SelfAttesterRegistry: {
-    address: '0x782ea54C148AdDe5679E464E16b370297039267E',
+    address: '0x8F3fF40Aa7Eb46b9AB214229D8f7833bbC47ae08',
   },
   /**
-   * v2 — one-shot Self.xyz nullifier ↔ account binding. Wired to the
-   * Groth16 verifier and the SelfAttesterRegistry.
-   * Locked to scope `cofferdam-sepolia` (uint256
-   * `4110595171224311359414942497373057058713959593849800517221207032372881193556`,
-   * Poseidon of endpoint=`cofferdam.xyz` × scope=`cofferdam-sepolia`).
+   * v2 — one-shot Self.xyz nullifier ↔ account binding. Wired to
+   * `Verifier_vc_and_disclose` and `SelfAttesterRegistry` above.
+   *
+   * Verified on-chain at deploy time:
+   *   expectedScope   = 9385173979550103756914225592429331034074493553395666193753061396908251355773
+   *                     (Poseidon of `cofferdam.xyz` × `cofferdam-bind-v1`;
+   *                      must equal `SelfApp.scope` in cofferdam-app)
+   *   selfDestChainId = 42220 (Self's `SelfApp.chainID`, NOT Base's 84532)
+   *
+   * Both are immutable, so changing either means redeploying and re-binding
+   * every user. `cofferdam-attester`'s `NULLIFIER_REGISTRY_ADDRESS` must match
+   * this exactly or `signBind` rejects with `REGISTRY_NOT_ALLOWED`.
    */
   NullifierRegistry: {
-    address: '0x8C05411C6ED0d113a200382a590CcFeC546A5cAe',
+    address: '0x2843F55C9E1491a6d47F65f041E68F96E3aeB3d4',
   },
   /** ERC-4337 EntryPoint (canonical address on Base). */
   EntryPoint: {
