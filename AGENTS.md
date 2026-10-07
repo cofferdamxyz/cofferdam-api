@@ -15,6 +15,7 @@ Cloudflare Workers API plane for Cofferdam.
 - `src/services/activity.ts` fetches Base Sepolia USDC Transfer events. Pre-production uses viem `getLogs`; production uses SQD Portal Stream API.
 - `src/env.ts` declares optional `POLIS_DATABASE_URL` and `ACTIVITY_DATABASE_URL` as future fallbacks.
 - `src/routes/enterprise.ts` + `src/services/company.ts` + `src/services/companyLinks.ts` implement the domain-anchored `companyRef` resolver and `CompanyConsumerLink` grants. Link routes return `503 link_store_unprovisioned` until the `LINKS` KV namespace is created.
+- The planned Assignment service is generic, account-pseudonym keyed, local-first, and escrow-optional. Port structural behavior from OffshoreSync `WorkAssignment`/`ScheduleOverride`; do not import Mongo IDs or maritime social dispatch into the plane.
 
 ## Validation
 

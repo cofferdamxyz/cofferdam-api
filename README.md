@@ -13,9 +13,8 @@
 
 - Serves the REST API consumed by the Cofferdam wallet (`cofferdam-app`).
 - Reads on-chain state from Base (Sepolia today, mainnet later) via [viem](https://viem.sh).
-- Brokers cross-Worker calls to `cofferdam-attester` (Self.xyz signing) and, in
-  later sessions, `cofferdam-prover` (Groth16 prover Container) — both of which
-  are private, service-binding-only Workers.
+- Brokers cross-Worker calls to `cofferdam-attester` (Self.xyz signing), a
+  private, service-binding-only Worker.
 
 It is **stateless** with respect to identity: no passport bytes, no biometric
 material, no private keys ever transit through this Worker. The trust model is
@@ -335,7 +334,6 @@ until provisioned. See [Provisioning](#provisioning) for instructions.
 | Repo                                                                       | Role                                          |
 |----------------------------------------------------------------------------|-----------------------------------------------|
 | [`cofferdam-attester`](https://github.com/cofferdamxyz/cofferdam-attester) | Self.xyz attester signing Worker              |
-| [`cofferdam-prover`](https://github.com/cofferdamxyz/cofferdam-prover)     | Self.xyz Groth16 prover Container (WIP)       |
 | [`cofferdam-sdk`](https://github.com/cofferdamxyz/cofferdam-sdk)           | Public SDK + identity-layer design doc        |
 | [`base-contracts`](https://github.com/cofferdamxyz/base-contracts)         | Solidity contracts (Self.xyz + AA + escrow)   |
 

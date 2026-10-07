@@ -1,15 +1,14 @@
 cofferdam-api
-Copyright 2026 OffshoreSync LLC
+Copyright 2026 Cofferdam Inc
 
-This product includes software developed at OffshoreSync LLC
-(https://offshoresync.com).
+This product includes software developed at Cofferdam Inc
+(https://cofferdam.xyz).
 
 cofferdam-api is the public-edge HTTP Worker for the Cofferdam wallet
 stack. It is part of the Cofferdam identity rail described in:
-  https://github.com/OffshoreSync/cofferdam-sdk/blob/main/IDENTITY_LAYER_DESIGN.md
+  https://github.com/cofferdamxyz/cofferdam-sdk/blob/main/IDENTITY_LAYER_DESIGN.md
 
 Sibling repositories:
-  cofferdam-attester  https://github.com/OffshoreSync/cofferdam-attester
-  cofferdam-prover    https://github.com/OffshoreSync/cofferdam-prover
-  cofferdam-sdk       https://github.com/OffshoreSync/cofferdam-sdk
-  contracts           https://github.com/OffshoreSync/contracts
+  cofferdam-attester  https://github.com/cofferdamxyz/cofferdam-attester
+  cofferdam-sdk       https://github.com/cofferdamxyz/cofferdam-sdk
+  base-contracts      https://github.com/cofferdamxyz/base-contracts
