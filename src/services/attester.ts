@@ -32,6 +32,18 @@ export interface SignBindRequest {
   readonly userContextData: Hex;
 }
 
+/** What the attester's Celo gate established before signing (decision 0004). */
+export interface CeloGateReceipt {
+  /** Celo chain id the gate read from (`42220`). */
+  readonly chainId: string;
+  /** Self's E_PASSPORT identity registry the roots were checked against. */
+  readonly registry: Hex;
+  /** `pubSignals[9]`, confirmed as a root Self published. */
+  readonly merkleRoot: string;
+  /** ISO `YYYY-MM-DD` decoded from the proof's date signals. */
+  readonly proofDate: string;
+}
+
 export interface SignBindResponse {
   readonly attesterAddress: Hex;
   readonly messageHash: Hex;
@@ -41,6 +53,9 @@ export interface SignBindResponse {
   readonly account: Hex;
   /** Echoed so the caller submits byte-identical bytes to `verifyAndBind`. */
   readonly userContextData: Hex;
+  /** Always `celo`: the attester signs only after re-verifying on Celo. */
+  readonly gate: 'celo';
+  readonly celo: CeloGateReceipt;
 }
 
 /**

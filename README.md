@@ -65,9 +65,12 @@ module address, used by the `checkOnChain` verification path.
 The Worker binds to `cofferdam-attester` via a Cloudflare service binding
 (`ATTESTER`). This is a private, same-account RPC channel — no public ingress.
 The attester Worker holds the Self.xyz attester ECDSA signing key and exposes
-a `signBind` RPC method. Local dev requires both Workers running under
-`wrangler dev`; Wrangler 4's local registry auto-discovers and wires the
-binding.
+a `signBind` RPC method, which signs only after re-verifying the proof's
+identity-commitment root, OFAC roots and date against Self's registry on Celo
+(`Cofferdam/decisions/0004`). `test-sign` therefore reads Celo's current
+roots (`CELO_RPC_URL`) into its synthetic signals so the gate passes without
+a proof. Local dev requires both Workers running under `wrangler dev`;
+Wrangler 4's local registry auto-discovers and wires the binding.
 
 ### Data sources
 

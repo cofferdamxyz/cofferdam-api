@@ -39,6 +39,10 @@
   "vars": {
     "ENVIRONMENT": "development",
     "BASE_SEPOLIA_RPC_URL": "https://sepolia.base.org",
+    // Celo mainnet, read-only: Self.xyz's identity registry lives there and
+    // the attester's bind gate checks every proof against it. Must agree with
+    // cofferdam-attester's CELO_RPC_URL chain (42220).
+    "CELO_RPC_URL": "https://forno.celo.org",
     "SQD_PORTAL_URL": "https://portal.sqd.dev/datasets/base-sepolia"
   },
 

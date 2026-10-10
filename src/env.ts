@@ -23,6 +23,14 @@ export interface Env {
   BASE_SEPOLIA_RPC_URL: string;
 
   /**
+   * Celo mainnet JSON-RPC, where Self.xyz anchors its identity registry.
+   * Read-only; used to build gate-passing synthetic signals for
+   * `/v1/attester/test-sign` and to pre-flight real proofs. Defaults to the
+   * public forno endpoint.
+   */
+  CELO_RPC_URL?: string;
+
+  /**
    * SQD Portal Stream API base URL for the /v1/activity route.
    * Defaults to the free public endpoint (20 req/10s rate limit).
    * Override with a Cloud Portal URL for production (higher rate limits).

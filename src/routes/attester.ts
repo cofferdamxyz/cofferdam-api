@@ -7,22 +7,26 @@
  * Smoke-test endpoint(s) that exercise the cross-Worker plumbing:
  *
  *   POST /v1/attester/test-sign  → builds a synthetic pubSignals array
- *                                  for `account`, calls the attester
- *                                  Worker via service binding, then
- *                                  verifies the resulting signature
- *                                  on-chain via
+ *                                  for `account` that carries Celo's
+ *                                  CURRENT identity root, OFAC roots and
+ *                                  today's date (so the attester's Celo
+ *                                  gate passes without a proof), calls
+ *                                  the attester Worker via service
+ *                                  binding, then verifies the resulting
+ *                                  signature on-chain via
  *                                  SelfAttesterRegistry.verifyAttesterSig.
  *
  * If `onchainValid: true` comes back, the full identity rail is wired:
  *   1. cofferdam-api → cofferdam-attester service binding works
- *   2. attester key signs the canonical preimage byte-for-byte
- *   3. attester address is allow-listed in SelfAttesterRegistry
- *   4. EIP-191 + ECDSA recovery agree between viem and Solidity
+ *   2. the attester's Celo gate reads Self's registry and accepts
+ *   3. attester key signs the canonical preimage byte-for-byte
+ *   4. attester address is allow-listed in SelfAttesterRegistry
+ *   5. EIP-191 + ECDSA recovery agree between viem and Solidity
  *
  * NOTE: this endpoint produces a real signature. It does NOT submit
- * `verifyAndBind` (the synthetic pubSignals would fail the Groth16
- * proof and the nullifier mappings), but a leaked pair would be a
- * minor info-disclosure (signed nonce + scope) — fine for α
+ * `verifyAndBind` and nothing can: there is no Groth16 proof behind the
+ * synthetic signals, so the registry would revert `InvalidProof`. A leaked
+ * pair is a minor info-disclosure (signed nonce + scope) — fine for α
  * development, gate behind ENVIRONMENT before mainnet.
  */
 
@@ -40,6 +44,7 @@ import {
 } from 'viem';
 import type { Env } from '../env.js';
 import { getBaseSepoliaClient } from '../chain/client.js';
+import { getCeloClient, readSelfRegistrySnapshot, todayProofDateSignals } from '../chain/celo.js';
 import { SEPOLIA_DEPLOYMENTS, BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 
 export const attesterRoutes = new Hono<{ Bindings: Env }>();
@@ -53,6 +58,11 @@ export const attesterRoutes = new Hono<{ Bindings: Env }>();
 const PUB_SIGNAL_INDEX = {
   NULLIFIER: 7,
   ATTESTATION_ID: 8,
+  MERKLE_ROOT: 9,
+  CURRENT_DATE_START: 10,
+  PASSPORT_NO_SMT_ROOT: 16,
+  NAMEDOB_SMT_ROOT: 17,
+  NAMEYOB_SMT_ROOT: 18,
   SCOPE: 19,
   USER_IDENTIFIER: 20,
 } as const;
@@ -172,9 +182,36 @@ attesterRoutes.post('/test-sign', async (c) => {
   // raw address — the registry recomputes it and rejects any mismatch.
   const userContextData = buildUserContextData(SELF_DEST_CHAIN_ID, account);
 
+  // The attester refuses anything whose Merkle root Self never published,
+  // whose OFAC roots are stale, or whose date is not within a day — so the
+  // smoke signals carry Celo's live values. This exercises the gate for real.
+  let snapshot: Awaited<ReturnType<typeof readSelfRegistrySnapshot>>;
+  try {
+    snapshot = await readSelfRegistrySnapshot(
+      getCeloClient(c.env.CELO_RPC_URL ?? 'https://forno.celo.org'),
+    );
+  } catch (err) {
+    return c.json(
+      {
+        ok: false,
+        stage: 'celo_snapshot',
+        error: 'celo_rpc_failed',
+        message: err instanceof Error ? err.message : String(err),
+      },
+      502,
+    );
+  }
+
   const pubSignals = new Array<bigint>(PUB_SIGNALS_LENGTH).fill(0n);
   pubSignals[PUB_SIGNAL_INDEX.NULLIFIER] = nullifier;
   pubSignals[PUB_SIGNAL_INDEX.ATTESTATION_ID] = E_PASSPORT_ATTESTATION_ID;
+  pubSignals[PUB_SIGNAL_INDEX.MERKLE_ROOT] = snapshot.merkleRoot;
+  todayProofDateSignals().forEach((d, i) => {
+    pubSignals[PUB_SIGNAL_INDEX.CURRENT_DATE_START + i] = d;
+  });
+  pubSignals[PUB_SIGNAL_INDEX.PASSPORT_NO_SMT_ROOT] = snapshot.passportNoOfacRoot;
+  pubSignals[PUB_SIGNAL_INDEX.NAMEDOB_SMT_ROOT] = snapshot.nameAndDobOfacRoot;
+  pubSignals[PUB_SIGNAL_INDEX.NAMEYOB_SMT_ROOT] = snapshot.nameAndYobOfacRoot;
   pubSignals[PUB_SIGNAL_INDEX.SCOPE] = COFFERDAM_BIND_V1_SCOPE;
   pubSignals[PUB_SIGNAL_INDEX.USER_IDENTIFIER] =
     calculateUserIdentifierHash(userContextData);
