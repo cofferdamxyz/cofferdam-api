@@ -21,6 +21,7 @@ import { attesterRoutes } from './routes/attester.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { healthRoutes } from './routes/health.js';
 import { relayerRoutes } from './routes/relayer.js';
+import { selfRoutes } from './routes/self.js';
 import { sepoliaRoutes } from './routes/sepolia.js';
 import { sessionRoutes } from './routes/session.js';
 
@@ -59,6 +60,8 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/enterprise/links/:companyAnchor/:consumerId/revoke' },
       { method: 'GET', path: '/v1/activity?address=' },
       { method: 'POST', path: '/v1/attester/test-sign' },
+      { method: 'POST', path: '/v1/self/verify' },
+      { method: 'GET', path: '/v1/self/bind-bundle/:account' },
       { method: 'POST', path: '/v1/session/verify-attestation' },
       { method: 'POST', path: '/v1/relayer/setup-investments' },
     ],
@@ -70,6 +73,7 @@ app.get('/', (c) => {
 app.route('/health', healthRoutes);
 app.route('/sepolia', sepoliaRoutes);
 app.route('/v1/attester', attesterRoutes);
+app.route('/v1/self', selfRoutes);
 app.route('/v1/enterprise', enterpriseRoutes);
 app.route('/v1/activity', activityRoutes);
 app.route('/v1/session', sessionRoutes);

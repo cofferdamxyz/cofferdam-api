@@ -73,6 +73,13 @@ export interface Env {
    * and the `/resolve` keystone works.
    */
   LINKS?: KVNamespace;
+  /**
+   * Signed Self bind bundles awaiting pickup by the app (routes/self.ts,
+   * services/selfBind.ts). OPTIONAL until the KV namespace is provisioned +
+   * uncommented in wrangler.jsonc — `/v1/self/*` returns 503
+   * `bind_store_unprovisioned` while it's absent.
+   */
+  BIND_BUNDLES?: KVNamespace;
 
   // ── R2 buckets (provisioned in later sessions) ──────────────────
   // VAULT: R2Bucket;

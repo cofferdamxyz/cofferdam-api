@@ -14,6 +14,7 @@ Cloudflare Workers API plane for Cofferdam.
 - `src/services/sessionAttestation.ts` verifies `csa1:` passkey-signed envelopes from `@cofferdam/sdk`. Must stay byte-compatible with SDK `sessionAttestation.ts`.
 - `src/services/activity.ts` fetches Base Sepolia USDC Transfer events. Pre-production uses viem `getLogs`; production uses SQD Portal Stream API.
 - `src/env.ts` declares optional `POLIS_DATABASE_URL` and `ACTIVITY_DATABASE_URL` as future fallbacks.
+- `src/routes/self.ts` + `src/services/selfBind.ts` receive Self.xyz's relayer proof (`POST /v1/self/verify`), pre-flight `NullifierRegistry`, call `ATTESTER.signBind` (Celo-gated), and store the bind bundle in the `BIND_BUNDLES` KV namespace for `GET /v1/self/bind-bundle/:account` (csa1-gated). The endpoint must stay on the `cofferdam.xyz` host (zone route): only the host enters the immutable scope. Returns `503 bind_store_unprovisioned` until the namespace exists.
 - `src/routes/enterprise.ts` + `src/services/company.ts` + `src/services/companyLinks.ts` implement the domain-anchored `companyRef` resolver and `CompanyConsumerLink` grants. Link routes return `503 link_store_unprovisioned` until the `LINKS` KV namespace is created.
 - The planned Assignment service is generic, account-pseudonym keyed, local-first, and escrow-optional. Port structural behavior from OffshoreSync `WorkAssignment`/`ScheduleOverride`; do not import Mongo IDs or maritime social dispatch into the plane.
 

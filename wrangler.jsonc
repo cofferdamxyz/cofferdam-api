@@ -21,10 +21,19 @@
     "enabled": true
   },
 
-  // Public-facing routes ship in a later session when DNS for
-  // api.cofferdam.xyz is provisioned. For now, the workers.dev
-  // hostname is enough for end-to-end testing from the RN app.
+  // The workers.dev hostname serves end-to-end testing from the RN app.
   "workers_dev": true,
+
+  // Self.xyz delivers the bind proof to `SelfApp.endpoint`, and only that
+  // URL's HOST enters the immutable NullifierRegistry.expectedScope
+  // (Poseidon(cofferdam.xyz × cofferdam-bind-v1)). The proof endpoint
+  // therefore lives on the apex, not on api.cofferdam.xyz: this zone route
+  // puts /v1/* of cofferdam.xyz on this Worker ahead of the Pages site.
+  // Requires the cofferdam.xyz zone in the same Cloudflare account as the
+  // Worker; `wrangler deploy` fails loudly otherwise.
+  "routes": [
+    { "pattern": "cofferdam.xyz/v1/*", "zone_name": "cofferdam.xyz" }
+  ],
 
   // Variables — non-secret. Secrets live in `wrangler secret put`.
   //
@@ -75,10 +84,18 @@
   // Until then the link routes return 503 link_store_unprovisioned and the
   // rest of the Worker (incl. /v1/enterprise/resolve) is unaffected.
   // ─────────────────────────────────────────────────────────────────
+  // To light up the Self bind path (/v1/self/verify + /v1/self/bind-bundle):
+  //   1. wrangler kv namespace create BIND_BUNDLES
+  //   2. paste the returned id below and uncomment the BIND_BUNDLES line
+  //   (env.ts declares `BIND_BUNDLES?: KVNamespace` as optional). Bundles carry
+  //   a 30-minute TTL and hold only data that becomes public at bind time.
+  // Until then /v1/self/* returns 503 bind_store_unprovisioned.
+  //
   // "kv_namespaces": [
   //   { "binding": "SESSIONS", "id": "<TBD-session-3>" },
   //   { "binding": "PROFILES", "id": "<TBD-after-T1.1>" },
-  //   { "binding": "LINKS",    "id": "<TBD-run-wrangler-kv-namespace-create-LINKS>" }
+  //   { "binding": "LINKS",    "id": "<TBD-run-wrangler-kv-namespace-create-LINKS>" },
+  //   { "binding": "BIND_BUNDLES", "id": "<TBD-run-wrangler-kv-namespace-create-BIND_BUNDLES>" }
   // ],
   //
   // ─────────────────────────────────────────────────────────────────

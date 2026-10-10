@@ -15,6 +15,9 @@
 - Reads on-chain state from Base (Sepolia today, mainnet later) via [viem](https://viem.sh).
 - Brokers cross-Worker calls to `cofferdam-attester` (Self.xyz signing), a
   private, service-binding-only Worker.
+- Receives the Self.xyz `disclose` proof from Self's relayer
+  (`POST /v1/self/verify`) and hands the attester-signed bind bundle to the
+  app (`GET /v1/self/bind-bundle/:account`) — see [Self.xyz bind path](#selfxyz-bind-path).
 
 It is **stateless** with respect to identity: no passport bytes, no biometric
 material, no private keys ever transit through this Worker. The trust model is
@@ -131,6 +134,8 @@ flag, not addresses. See `ENTERPRISE_MODULE_PLAN.md` §0 + §4.8.
 | GET    | `/v1/activity?address=&limit=&chainId=&fromBlock=&toBlock=` | ERC-20 Transfer history (SQD Portal + RPC fallback)   |
 | GET    | `/v1/activity/check?address=&sinceBlock=&chainId=`    | Lightweight reconciliation check (has new transactions?)  |
 | POST   | `/v1/attester/test-sign`                              | End-to-end smoke test of the attester binding              |
+| POST   | `/v1/self/verify`                                     | Self.xyz relayer callback: gate + sign the proof, store the bind bundle § |
+| GET    | `/v1/self/bind-bundle/:account`                       | App pickup of the signed bundle for `verifyAndBind` (csa1-gated) § |
 | POST   | `/v1/session/verify-attestation`                      | Verify a `SignInResponse.attestation` (`csa1:`) token ‡    |
 | GET    | `/v1/enterprise/resolve?domain=`                      | Domain → global `companyAnchor` (+ DNS challenge, on-chain status) |
 | GET    | `/v1/enterprise/companies/:companyAnchor`                | On-chain registration status for a `companyAnchor`            |
@@ -140,6 +145,9 @@ flag, not addresses. See `ENTERPRISE_MODULE_PLAN.md` §0 + §4.8.
 | POST   | `/v1/enterprise/links/:companyAnchor/:consumerId/revoke` | Revoke a link †                                            |
 | POST   | `/v1/relayer/setup-investments`                       | EIP-7702 sponsored tx: delegate EOA → CoinbaseSmartWallet  |
 
+> § The `self/*` routes require the `BIND_BUNDLES` KV namespace; until it's
+> provisioned they return `503 bind_store_unprovisioned`.
+>
 > † The `links/*` routes require the `LINKS` KV namespace; until it's
 > provisioned they return `503 link_store_unprovisioned` (see
 > [Provisioning](#provisioning)). `resolve` works with no storage —
@@ -263,6 +271,45 @@ node packages/core/scripts/gen-attestation-fixtures.mjs
 # writes ../cofferdam-api/test/fixtures/sdk-attestations.json directly.
 ```
 
+## Self.xyz bind path
+
+Self proves the passport in its own enclave and, for a SelfApp with
+`endpointType: 'https'`, its relayer POSTs the finished `vc_and_disclose`
+proof to `SelfApp.endpoint` — the phone only receives
+`VERIFICATION_COMPLETE {success}`. That endpoint is this Worker:
+
+1. **`POST /v1/self/verify`** receives `{attestationId, proof, publicSignals,
+   userContextData}` (bigints as decimal or bare hex, `userContextData` as
+   bare hex), recovers the target account from `userContextData[32..64]`,
+   and pre-flights `NullifierRegistry` on Base so an already-bound account or
+   nullifier gets `409 account_already_bound` / `409 nullifier_already_bound`
+   (the multi-device reconciliation signal) before any signature is spent.
+2. It calls `ATTESTER.signBind`. The attester refuses unless Celo confirms the
+   proof's identity root, OFAC roots and date (`Cofferdam/decisions/0004`);
+   rejections come back as `400 {code: 'CELO_ROOT_UNKNOWN', …}` and so on,
+   RPC trouble as `503 {retryable: true}`.
+3. The signed **bind bundle** — proof with `b` swapped into Solidity order,
+   `pubSignals`, `userContextData`, `attesterSig`, the Celo receipt — is
+   stored in the `BIND_BUNDLES` KV namespace under `bind:<account>` with a
+   30-minute TTL, and the relayer gets `200 {status: 'success', result: true}`
+   so the app sees a successful verification.
+4. **`GET /v1/self/bind-bundle/:account`** hands the bundle to the app, which
+   submits `NullifierRegistry.verifyAndBind` through its ERC-4337 account with
+   paymaster sponsorship. The pickup requires `Authorization: Bearer csa1:…`
+   (a session attestation pinned to the account, ≤10 min old); only
+   `ENVIRONMENT=development` tolerates its absence.
+
+Only the **host** of `SelfApp.endpoint` enters the immutable
+`NullifierRegistry.expectedScope`, so the endpoint must be served on
+`cofferdam.xyz`, not `api.cofferdam.xyz`: `wrangler.jsonc` declares the zone
+route `cofferdam.xyz/v1/*` for this Worker. The app's SelfApp config therefore
+uses `endpoint: 'https://cofferdam.xyz/v1/self/verify'`.
+
+Nothing in this path is load-bearing for security: the attester's Celo gate
+decides whether a bundle exists and `verifyAndBind` re-verifies the Groth16
+proof, scope, attestation id, user context and one-shot rule on Base. Rate
+limiting of `/verify` is a staging prerequisite (`routes/self.ts` TODO).
+
 ## Provisioning
 
 The `/v1/enterprise/resolve` and `/companies/:companyAnchor` routes work with no
@@ -276,7 +323,16 @@ wrangler kv namespace create LINKS
 # `LINKS?: KVNamespace` (optional), so no code change is needed.
 ```
 
-Until then the link routes return `503 link_store_unprovisioned`. On-chain
+The Self bind path needs its own namespace:
+
+```bash
+wrangler kv namespace create BIND_BUNDLES
+# Paste the id into the commented `kv_namespaces` block and uncomment the
+# BIND_BUNDLES line. env.ts declares `BIND_BUNDLES?: KVNamespace` (optional).
+```
+
+Until then the `self/*` routes return `503 bind_store_unprovisioned` and the
+link routes `503 link_store_unprovisioned`. On-chain
 registration lookups stay `registry_not_deployed` until
 `CofferdamCorporateRegistry` (rev-7.4 redeploy, `ENTERPRISE_MODULE_PLAN.md`
 §6.C) is vendored into `src/chain/deployments.ts` + `CORPORATE_REGISTRY_ADDRESS`
@@ -290,6 +346,7 @@ src/
 ├── env.ts                Typed environment bindings (vars, secrets, KV, services)
 ├── chain/
 │   ├── client.ts         viem Base Sepolia public client (getBaseSepoliaClient)
+│   ├── celo.ts           Read-only Celo client + Self registry snapshot (test-sign fixtures)
 │   └── deployments.ts    Vendored contract addresses from base-contracts/deployments/baseSepolia.json
 │                         + PASSKEY_AUTHORITY_MODULE_BY_SCHEME map
 ├── routes/
@@ -297,6 +354,7 @@ src/
 │   ├── sepolia.ts        GET /sepolia/block-height, /sepolia/contracts
 │   ├── activity.ts       GET /v1/activity, /v1/activity/check
 │   ├── attester.ts       POST /v1/attester/test-sign
+│   ├── self.ts           POST /v1/self/verify, GET /v1/self/bind-bundle/:account
 │   ├── session.ts        POST /v1/session/verify-attestation
 │   ├── enterprise.ts     GET/POST /v1/enterprise/* (rev-7.4 company plane)
 │   └── relayer.ts        POST /v1/relayer/setup-investments (EIP-7702)
@@ -304,6 +362,7 @@ src/
     ├── attester.ts       Local copy of @cofferdam/attester RPC contract
     │                     (must stay in sync with that repo's src/rpc.ts;
     │                     a future @cofferdam/types package will absorb)
+    ├── selfBind.ts       Self relayer payload normalisation, bind bundle, KV store
     ├── sessionAttestation.ts  csa1: verifier — byte-compatible (viem + @noble)
     │                     re-impl of @cofferdam/sdk's sessionAttestation.ts
     ├── activity.ts       Dual-source ERC-20 Transfer fetcher
@@ -313,6 +372,7 @@ src/
     └── companyLinks.ts   CompanyConsumerLink types + KV-backed store
 
 test/
+├── selfBind.test.ts             Self intake + /v1/self routes (fake attester, in-memory KV)
 ├── sessionAttestation.test.ts   Cross-repo verifier suite (Vitest)
 └── fixtures/
     └── sdk-attestations.json     Real @cofferdam/sdk-signed csa1: tokens
@@ -324,10 +384,12 @@ test/
 |----------|------|-------------|
 | `ENVIRONMENT` | var | `development` \| `staging` \| `production` |
 | `BASE_SEPOLIA_RPC_URL` | var | Base Sepolia RPC endpoint (default: `https://sepolia.base.org`) |
+| `CELO_RPC_URL` | var (optional) | Celo mainnet RPC for Self registry reads (default: `https://forno.celo.org`) |
 | `SQD_PORTAL_URL` | var (optional) | SQD Portal Stream API base URL (default: `https://portal.sqd.dev/datasets/base-sepolia`) |
 | `RELAYER_PRIVATE_KEY` | secret (optional) | EIP-7702 relayer signing key for `setup-investments` |
 | `POLIS_DATABASE_URL` | secret (optional) | Neon Postgres connection string for enterprise SSO |
 | `ATTESTER` | service binding | `cofferdam-attester` Worker (Self.xyz signing) |
+| `BIND_BUNDLES` | KV (optional until provisioned) | Signed Self bind bundles awaiting app pickup (30-min TTL) |
 
 KV, R2, and D1 bindings are declared in `wrangler.jsonc` but commented out
 until provisioned. See [Provisioning](#provisioning) for instructions.
