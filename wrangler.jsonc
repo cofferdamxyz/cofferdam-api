@@ -67,7 +67,18 @@
   // ─────────────────────────────────────────────────────────────────
   "services": [
     { "binding": "ATTESTER", "service": "cofferdam-attester" }
-    // PROVER service binding lights up in Session 4-5.
+  ],
+
+  // ─────────────────────────────────────────────────────────────────
+  // KV — provisioned namespaces.
+  //
+  // BIND_BUNDLES: attester-signed Self bind bundles awaiting pickup by the
+  // app (routes/self.ts, services/selfBind.ts). 30-minute TTL; holds only
+  // data that becomes public at bind time. Created 2026-10-10 in the
+  // Cofferdam account with `wrangler kv namespace create BIND_BUNDLES`.
+  // ─────────────────────────────────────────────────────────────────
+  "kv_namespaces": [
+    { "binding": "BIND_BUNDLES", "id": "69731266425143ab9fb883e6ce6637b9" }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources
@@ -84,19 +95,11 @@
   // Until then the link routes return 503 link_store_unprovisioned and the
   // rest of the Worker (incl. /v1/enterprise/resolve) is unaffected.
   // ─────────────────────────────────────────────────────────────────
-  // To light up the Self bind path (/v1/self/verify + /v1/self/bind-bundle):
-  //   1. wrangler kv namespace create BIND_BUNDLES
-  //   2. paste the returned id below and uncomment the BIND_BUNDLES line
-  //   (env.ts declares `BIND_BUNDLES?: KVNamespace` as optional). Bundles carry
-  //   a 30-minute TTL and hold only data that becomes public at bind time.
-  // Until then /v1/self/* returns 503 bind_store_unprovisioned.
-  //
-  // "kv_namespaces": [
+  // Add further namespaces to the live `kv_namespaces` array above once
+  // provisioned (env.ts declares `LINKS?: KVNamespace` as optional):
   //   { "binding": "SESSIONS", "id": "<TBD-session-3>" },
   //   { "binding": "PROFILES", "id": "<TBD-after-T1.1>" },
-  //   { "binding": "LINKS",    "id": "<TBD-run-wrangler-kv-namespace-create-LINKS>" },
-  //   { "binding": "BIND_BUNDLES", "id": "<TBD-run-wrangler-kv-namespace-create-BIND_BUNDLES>" }
-  // ],
+  //   { "binding": "LINKS",    "id": "<TBD-run-wrangler-kv-namespace-create-LINKS>" }
   //
   // ─────────────────────────────────────────────────────────────────
   // R2 — encrypted blobs (vault docs, attachments, SRS)

@@ -24,6 +24,27 @@ material, no private keys ever transit through this Worker. The trust model is
 documented in
 [cofferdam-sdk/IDENTITY_LAYER_DESIGN.md](https://github.com/cofferdamxyz/cofferdam-sdk/blob/main/IDENTITY_LAYER_DESIGN.md).
 
+## Deployment
+
+Both Workers run in the Cofferdam Inc. Cloudflare account (the same account
+that hosts the `cofferdam.xyz` zone and the Cofferdam OS Workers), deployed
+with the account API token from the workspace `.envrc` (`CLOUDFLARE_ACCOUNT_ID`
++ `CLOUDFLARE_API_TOKEN`; wrangler's OAuth login is a different account and
+must not be used). Account-level permission groups (Workers Scripts Write,
+Workers KV Storage Write, Account Settings Read) must sit on the **account**
+resource of the token policy; Workers Routes Write sits on the zone.
+
+| Surface | URL |
+|---|---|
+| workers.dev | `https://cofferdam-api.shy-cell-424a.workers.dev` (every route) |
+| Zone route | `https://cofferdam.xyz/v1/*` (the Self relayer endpoint and the app's `/v1` calls; the Pages site keeps the rest of the host) |
+
+`cofferdam-attester` has no URL of its own; it is reached only through the
+`ATTESTER` service binding. Deploy order on a fresh account: attester, its
+`ATTESTER_PRIVATE_KEY` secret, then this Worker and `RELAYER_PRIVATE_KEY`.
+`ENVIRONMENT` is `development` on this deployment, so the bind-bundle pickup
+tolerates a missing `csa1:` attestation; flip it before any public build.
+
 ## Architecture
 
 ### Chain layer — Base Sepolia
@@ -148,8 +169,9 @@ flag, not addresses. See `ENTERPRISE_MODULE_PLAN.md` §0 + §4.8.
 | POST   | `/v1/enterprise/links/:companyAnchor/:consumerId/revoke` | Revoke a link †                                            |
 | POST   | `/v1/relayer/setup-investments`                       | EIP-7702 sponsored tx: delegate EOA → CoinbaseSmartWallet  |
 
-> § The `self/*` routes require the `BIND_BUNDLES` KV namespace; until it's
-> provisioned they return `503 bind_store_unprovisioned`.
+> § The `self/*` routes require the `BIND_BUNDLES` KV namespace (provisioned
+> in the Cofferdam account 2026-10-10); a deployment without it returns
+> `503 bind_store_unprovisioned`.
 >
 > † The `links/*` routes require the `LINKS` KV namespace; until it's
 > provisioned they return `503 link_store_unprovisioned` (see
@@ -326,16 +348,12 @@ wrangler kv namespace create LINKS
 # `LINKS?: KVNamespace` (optional), so no code change is needed.
 ```
 
-The Self bind path needs its own namespace:
-
-```bash
-wrangler kv namespace create BIND_BUNDLES
-# Paste the id into the commented `kv_namespaces` block and uncomment the
-# BIND_BUNDLES line. env.ts declares `BIND_BUNDLES?: KVNamespace` (optional).
-```
-
-Until then the `self/*` routes return `503 bind_store_unprovisioned` and the
-link routes `503 link_store_unprovisioned`. On-chain
+The Self bind path's namespace is live: `BIND_BUNDLES`
+(`69731266425143ab9fb883e6ce6637b9`, created 2026-10-10 with
+`wrangler kv namespace create BIND_BUNDLES`) is bound in `wrangler.jsonc`.
+A deployment that drops the binding returns `503 bind_store_unprovisioned`;
+the link routes return `503 link_store_unprovisioned` until `LINKS` exists.
+On-chain
 registration lookups stay `registry_not_deployed` until
 `CofferdamCorporateRegistry` (rev-7.4 redeploy, `ENTERPRISE_MODULE_PLAN.md`
 §6.C) is vendored into `src/chain/deployments.ts` + `CORPORATE_REGISTRY_ADDRESS`
@@ -392,7 +410,7 @@ test/
 | `RELAYER_PRIVATE_KEY` | secret (optional) | EIP-7702 relayer signing key for `setup-investments` |
 | `POLIS_DATABASE_URL` | secret (optional) | Neon Postgres connection string for enterprise SSO |
 | `ATTESTER` | service binding | `cofferdam-attester` Worker (Self.xyz signing) |
-| `BIND_BUNDLES` | KV (optional until provisioned) | Signed Self bind bundles awaiting app pickup (30-min TTL) |
+| `BIND_BUNDLES` | KV | Signed Self bind bundles awaiting app pickup (30-min TTL); provisioned |
 
 KV, R2, and D1 bindings are declared in `wrangler.jsonc` but commented out
 until provisioned. See [Provisioning](#provisioning) for instructions.
