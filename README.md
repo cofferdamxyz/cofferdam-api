@@ -81,7 +81,7 @@ Wrangler 4's local registry auto-discovers and wires the binding.
 |-------|---------|--------|
 | **Base Sepolia RPC** | Block height, contract reads, on-chain authority verification | ✅ Live |
 | **SQD Portal Stream API** | ERC-20 Transfer history for `/v1/activity` | ✅ Live (archival for Sepolia, real-time for mainnet) |
-| **Base Sepolia RPC (eth_getLogs)** | Recent transaction fallback for activity (Sepolia only) | ✅ Live |
+| **Base RPC (eth_getLogs)** | Sepolia activity source; mainnet fallback when the Portal returns 429/529/502/503 | ✅ Live |
 | **Workers KV (`LINKS`)** | CompanyConsumerLink grants | 🟡 Declared, not yet provisioned |
 | **Neon Postgres (`POLIS_DATABASE_URL`)** | Enterprise SSO/SCIM identity | 🟡 Declared, not yet provisioned |
 | **R2 (`VAULT`, `SRS`)** | Encrypted blobs, SRS | 🟡 Declared, not yet provisioned |
@@ -95,7 +95,10 @@ Wrangler 4's local registry auto-discovers and wires the binding.
   (15 chunks × 2000 = 30K blocks ≈ 24h lookback). SQD Portal's base-sepolia
   dataset is archival-only and lags ~10 days, so RPC is the only way to get
   recent testnet transactions.
-- **Base Mainnet (8453):** SQD Portal Stream API (real-time, 7-day lookback).
+- **Base Mainnet (8453):** SQD Portal Stream API (real-time, 7-day lookback),
+  public and unkeyed while bootstrapping (SQD licenses it for development and
+  evaluation). On 429/529/502/503 or a network failure the same query runs
+  over RPC (24h lookback) and the Portal is skipped for `Retry-After`.
   Portal's base-mainnet dataset has `real_time=true`.
 
 USDC addresses are chain-specific: MockUSDC on Sepolia, native USDC on mainnet.

@@ -12,7 +12,7 @@ Cloudflare Workers API plane for Cofferdam.
 ## Key Services
 
 - `src/services/sessionAttestation.ts` verifies `csa1:` passkey-signed envelopes from `@cofferdam/sdk`. Must stay byte-compatible with SDK `sessionAttestation.ts`.
-- `src/services/activity.ts` fetches Base Sepolia USDC Transfer events. Pre-production uses viem `getLogs`; production uses SQD Portal Stream API.
+- `src/services/activity.ts` fetches USDC Transfer events per chain: Base Sepolia (84532) uses viem `getLogs` (the Portal's Sepolia dataset lags ~10 days); Base mainnet (8453) uses the SQD Portal Stream API (public, unkeyed) and falls back to RPC on 429/529/502/503.
 - `src/env.ts` declares optional `POLIS_DATABASE_URL` and `ACTIVITY_DATABASE_URL` as future fallbacks.
 - `src/routes/self.ts` + `src/services/selfBind.ts` receive Self.xyz's relayer proof (`POST /v1/self/verify`), pre-flight `NullifierRegistry`, call `ATTESTER.signBind` (Celo-gated), and store the bind bundle in the `BIND_BUNDLES` KV namespace for `GET /v1/self/bind-bundle/:account` (csa1-gated). The endpoint must stay on the `cofferdam.xyz` host (zone route): only the host enters the immutable scope. Returns `503 bind_store_unprovisioned` until the namespace exists.
 - `src/routes/enterprise.ts` + `src/services/company.ts` + `src/services/companyLinks.ts` implement the domain-anchored `companyRef` resolver and `CompanyConsumerLink` grants. Link routes return `503 link_store_unprovisioned` until the `LINKS` KV namespace is created.

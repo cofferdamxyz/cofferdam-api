@@ -12,7 +12,10 @@
  *   blocks ≈ 24h lookback at 2s block time.
  * - Base Mainnet (8453): SQD Portal Stream API (real-time, 7-day lookback).
  *   Portal's base-mainnet dataset has real_time=true, so the timestamp
- *   resolver and stream queries cover recent blocks.
+ *   resolver and stream queries cover recent blocks. The public Portal is
+ *   rate-limited and is used without an API key until SQD's paid plans launch;
+ *   on 429/529/502/503 or a network failure the same query runs over RPC
+ *   (24h lookback instead of 7 days) and Portal is skipped for `Retry-After`.
  *
  * Optimistic UI on the client side (addPendingTx) ensures transactions
  * appear instantly; this route fills in confirmed history.
@@ -56,6 +59,46 @@ const RPC_FALLBACK_CHAINS = new Set([84532]);
 
 function portalUrlFor(chainId: number, override?: string): string {
   return override || DEFAULT_PORTAL_URLS[chainId] || DEFAULT_PORTAL_URLS[84532]!;
+}
+
+/** Portal refused for capacity or availability; the caller falls back to RPC. */
+class PortalUnavailableError extends Error {}
+
+/** `rate_limit_error` (429/529) and `availability_error` (502/503) are retryable; the rest are not. */
+const PORTAL_RETRYABLE_STATUSES = new Set([429, 502, 503, 529]);
+const PORTAL_DEFAULT_BACKOFF_SECONDS = 5;
+
+/** Per-isolate circuit breaker: skip Portal until `Retry-After` has elapsed. */
+let portalBackoffUntil = 0;
+
+async function portalFetch(url: string, init?: RequestInit): Promise<Response> {
+  if (Date.now() < portalBackoffUntil) {
+    throw new PortalUnavailableError('Portal backoff active');
+  }
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    throw new PortalUnavailableError(err instanceof Error ? err.message : String(err));
+  }
+  if (PORTAL_RETRYABLE_STATUSES.has(res.status)) {
+    const retryAfter = Number(res.headers.get('Retry-After'));
+    const seconds = retryAfter > 0 ? retryAfter : PORTAL_DEFAULT_BACKOFF_SECONDS;
+    portalBackoffUntil = Date.now() + seconds * 1000;
+    throw new PortalUnavailableError(`Portal HTTP ${res.status}`);
+  }
+  return res;
+}
+
+/** Run a Portal query; on capacity/availability refusal run the RPC equivalent instead. */
+async function withRpcFallback<T>(portal: () => Promise<T>, rpc: () => Promise<T>): Promise<T> {
+  try {
+    return await portal();
+  } catch (err) {
+    if (!(err instanceof PortalUnavailableError)) throw err;
+    console.warn(`activity: ${err.message}; falling back to RPC`);
+    return rpc();
+  }
 }
 
 export interface ActivityTx {
@@ -126,7 +169,7 @@ async function resolveBlockAtTimestamp(
   // Try the requested timestamp, then step back in 7-day increments.
   for (let attempt = 0; attempt < 4; attempt++) {
     const ts = timestamp - attempt * LOOKBACK_SECONDS;
-    const res = await fetch(`${portalBase}/timestamps/${ts}/block`);
+    const res = await portalFetch(`${portalBase}/timestamps/${ts}/block`);
     if (res.ok) {
       const data = (await res.json()) as { block_number: number };
       return data.block_number;
@@ -163,7 +206,11 @@ export async function checkActivity(
   if (RPC_FALLBACK_CHAINS.has(chainId)) {
     return checkActivityViaRpc(address, sinceBlock, chainId, rpcUrl);
   }
-  return checkActivityViaPortal(portalUrl, address, sinceBlock, chainId);
+  // The public RPC fallback uses the chain's default endpoint: BASE_SEPOLIA_RPC_URL is Sepolia-only.
+  return withRpcFallback(
+    () => checkActivityViaPortal(portalUrl, address, sinceBlock, chainId),
+    () => checkActivityViaRpc(address, sinceBlock, chainId),
+  );
 }
 
 /** RPC-based check: eth_getLogs from sinceBlock+1 to chain head. */
@@ -230,7 +277,7 @@ async function checkActivityViaPortal(
   const MAX_ITERATIONS = 10;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const res = await fetch(`${portalBase}/stream`, {
+    const res = await portalFetch(`${portalBase}/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, fromBlock: currentFrom }),
@@ -276,7 +323,10 @@ export async function getActivity(
   if (RPC_FALLBACK_CHAINS.has(chainId)) {
     return getActivityViaRpc(address, limit, fromBlock, chainId, rpcUrl, toBlock);
   }
-  return getActivityViaPortal(portalUrl, address, limit, fromBlock, chainId, toBlock);
+  return withRpcFallback(
+    () => getActivityViaPortal(portalUrl, address, limit, fromBlock, chainId, toBlock),
+    () => getActivityViaRpc(address, limit, fromBlock, chainId, undefined, toBlock),
+  );
 }
 
 /**
@@ -434,7 +484,7 @@ async function getActivityViaPortal(
       body.toBlock = toBlockOverride;
     }
 
-    const res = await fetch(`${portalBase}/stream`, {
+    const res = await portalFetch(`${portalBase}/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
