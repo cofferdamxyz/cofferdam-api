@@ -24,9 +24,9 @@ Cloudflare Workers API plane for Cofferdam.
 
 ## References
 
-- Workspace rules: `AGENTS.md` (workspace root)
-- `.devin/rules/cofferdam-infrastructure.md`
-- `.devin/rules/cofferdam-identity.md`
-- `.devin/rules/cofferdam-sdk.md`
-- `.devin/rules/cofferdam-enterprise.md`
-- `.devin/rules/cofferdam-messaging.md`
+- Workspace rules: `../AGENTS.md` (Cofferdam workspace) and the cross-entity index one level above
+- `../rules/cofferdam-infrastructure.md`
+- `../rules/cofferdam-identity.md`
+- `../rules/cofferdam-sdk.md`
+- `../rules/cofferdam-enterprise.md`
+- `../rules/cofferdam-messaging.md`
