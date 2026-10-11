@@ -369,6 +369,17 @@ describe('GET /v1/self/bind-bundle/:account', () => {
     expect(missing.json.error).toBe('bind_bundle_not_found');
   });
 
+  it('refuses and drops a bundle once the registry shows the account bound', async () => {
+    const { kv, data } = memoryKv();
+    await harness({ kv }).post(relayerBody());
+    expect(data.size).toBe(1);
+    const bound = harness({ kv, bindStatus: { kind: 'account_already_bound', nullifier: '777' } });
+    const res = await bound.call(`/v1/self/bind-bundle/${ACCOUNT}`);
+    expect(res.status).toBe(409);
+    expect(res.json).toMatchObject({ error: 'account_already_bound', nullifier: '777' });
+    expect(data.size).toBe(0);
+  });
+
   it('serves a stored bundle without a token in development only', async () => {
     const { kv } = memoryKv();
     const dev = harness({ kv });

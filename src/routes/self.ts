@@ -20,7 +20,10 @@
  *     to `NullifierRegistry.verifyAndBind` (proof already in Solidity order).
  *     Gated by a `csa1:` session attestation for the account
  *     (`Authorization: Bearer csa1:…`); absent attestations are tolerated only
- *     when ENVIRONMENT=development.
+ *     when ENVIRONMENT=development. An account the registry already shows as
+ *     bound gets `409 account_already_bound` and its stale bundle is dropped:
+ *     the first device run (2026-10-11) showed Self reporting completion
+ *     twice and the app re-submitting a bundle whose bind had just landed.
  *
  * The endpoint must be served on the `cofferdam.xyz` host: only the host of
  * `SelfApp.endpoint` enters the immutable `NullifierRegistry.expectedScope`
@@ -292,6 +295,16 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     const bundle = await store.get(account);
     if (!bundle) {
       return c.json({ ok: false, error: 'bind_bundle_not_found', account }, 404);
+    }
+
+    // One-shot on-chain: once bound, the bundle can only produce a revert.
+    const status = await deps.bindStatus(c.env, account, BigInt(bundle.nullifier));
+    if (status.kind === 'account_already_bound') {
+      await store.delete(account);
+      return c.json(
+        { ok: false, error: 'account_already_bound', account, nullifier: status.nullifier },
+        409,
+      );
     }
     return c.json({ ok: true, bundle });
   });
