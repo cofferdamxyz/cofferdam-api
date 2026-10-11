@@ -42,8 +42,9 @@ resource of the token policy; Workers Routes Write sits on the zone.
 `cofferdam-attester` has no URL of its own; it is reached only through the
 `ATTESTER` service binding. Deploy order on a fresh account: attester, its
 `ATTESTER_PRIVATE_KEY` secret, then this Worker and `RELAYER_PRIVATE_KEY`.
-`ENVIRONMENT` is `development` on this deployment, so the bind-bundle pickup
-tolerates a missing `csa1:` attestation; flip it before any public build.
+`ENVIRONMENT` is `staging` on this deployment, so the bind-bundle pickup
+requires the `csa1:` attestation; local `wrangler dev` runs `development`
+through `.dev.vars`.
 
 ## Architecture
 
@@ -169,9 +170,9 @@ flag, not addresses. See `ENTERPRISE_MODULE_PLAN.md` §0 + §4.8.
 | POST   | `/v1/enterprise/links/:companyAnchor/:consumerId/revoke` | Revoke a link †                                            |
 | POST   | `/v1/relayer/setup-investments`                       | EIP-7702 sponsored tx: delegate EOA → CoinbaseSmartWallet  |
 
-> § The `self/*` routes require the `BIND_BUNDLES` KV namespace (provisioned
-> in the Cofferdam account 2026-10-10); a deployment without it returns
-> `503 bind_store_unprovisioned`.
+> § The `self/*` routes store bundles in the `BIND_BUNDLES_DO` Durable Object
+> (one per account); a deployment without the binding returns
+> `503 bind_store_unprovisioned`. Both routes are rate-limited (429).
 >
 > † The `links/*` routes require the `LINKS` KV namespace; until it's
 > provisioned they return `503 link_store_unprovisioned` (see
@@ -315,14 +316,25 @@ proof to `SelfApp.endpoint` — the phone only receives
    RPC trouble as `503 {retryable: true}`.
 3. The signed **bind bundle** — proof with `b` swapped into Solidity order,
    `pubSignals`, `userContextData`, `attesterSig`, the Celo receipt — is
-   stored in the `BIND_BUNDLES` KV namespace under `bind:<account>` with a
-   30-minute TTL, and the relayer gets `200 {status: 'success', result: true}`
-   so the app sees a successful verification.
+   stored in a per-account **Durable Object** (`BindBundleDO`, SQLite-backed,
+   alarm-enforced 30-minute TTL; decision 0010). The object is strongly
+   consistent, so the app's pickup sees the relayer's write immediately —
+   the KV namespace used on the first device run propagated in up to a
+   minute and cached negative lookups. The relayer gets
+   `200 {status: 'success', result: true}` so the app sees a successful
+   verification; an account or nullifier the registry already holds gets
+   409 before any signature is spent.
 4. **`GET /v1/self/bind-bundle/:account`** hands the bundle to the app, which
    submits `NullifierRegistry.verifyAndBind` through its ERC-4337 account with
    paymaster sponsorship. The pickup requires `Authorization: Bearer csa1:…`
    (a session attestation pinned to the account, ≤10 min old); only
-   `ENVIRONMENT=development` tolerates its absence.
+   `ENVIRONMENT=development` tolerates its absence — the deployment runs
+   `staging`. A bound account gets 409 and its stale bundle is dropped.
+
+Rate limits (Workers rate-limiting binding, permissive and per-colo):
+`/verify` 30 per minute per account plus a global brake, `/bind-bundle`
+60 per minute per account. A legitimate bind is two relayer posts and about
+fifteen polls.
 
 Only the **host** of `SelfApp.endpoint` enters the immutable
 `NullifierRegistry.expectedScope`, so the endpoint must be served on
@@ -348,12 +360,13 @@ wrangler kv namespace create LINKS
 # `LINKS?: KVNamespace` (optional), so no code change is needed.
 ```
 
-The Self bind path's namespace is live: `BIND_BUNDLES`
-(`69731266425143ab9fb883e6ce6637b9`, created 2026-10-10 with
-`wrangler kv namespace create BIND_BUNDLES`) is bound in `wrangler.jsonc`.
-A deployment that drops the binding returns `503 bind_store_unprovisioned`;
-the link routes return `503 link_store_unprovisioned` until `LINKS` exists.
-On-chain
+The Self bind path needs no provisioning: the `BindBundleDO` Durable Object
+and the two rate-limit bindings are declared in `wrangler.jsonc` and created
+on deploy (`migrations` tag `v1-bind-bundles`). The `BIND_BUNDLES` KV
+namespace from the first device run (`69731266425143ab9fb883e6ce6637b9`) is
+unused and can be deleted. A deployment without the Durable Object binding
+returns `503 bind_store_unprovisioned`; the link routes return
+`503 link_store_unprovisioned` until `LINKS` exists. On-chain
 registration lookups stay `registry_not_deployed` until
 `CofferdamCorporateRegistry` (rev-7.4 redeploy, `ENTERPRISE_MODULE_PLAN.md`
 §6.C) is vendored into `src/chain/deployments.ts` + `CORPORATE_REGISTRY_ADDRESS`
@@ -375,7 +388,7 @@ src/
 │   ├── sepolia.ts        GET /sepolia/block-height, /sepolia/contracts
 │   ├── activity.ts       GET /v1/activity, /v1/activity/check
 │   ├── attester.ts       POST /v1/attester/test-sign
-│   ├── self.ts           POST /v1/self/verify, GET /v1/self/bind-bundle/:account
+│   ├── self.ts           POST /v1/self/verify, GET /v1/self/bind-bundle/:account (rate-limited)
 │   ├── session.ts        POST /v1/session/verify-attestation
 │   ├── enterprise.ts     GET/POST /v1/enterprise/* (rev-7.4 company plane)
 │   └── relayer.ts        POST /v1/relayer/setup-investments (EIP-7702)
@@ -383,7 +396,9 @@ src/
     ├── attester.ts       Local copy of @cofferdam/attester RPC contract
     │                     (must stay in sync with that repo's src/rpc.ts;
     │                     a future @cofferdam/types package will absorb)
-    ├── selfBind.ts       Self relayer payload normalisation, bind bundle, KV store
+    ├── selfBind.ts       Self relayer payload normalisation, bind bundle shape
+    ├── bundleStore.ts    BundleStore interface + Durable Object adapter
+    ├── bindBundleDO.ts   BindBundleDO — per-account bundle with alarm TTL
     ├── sessionAttestation.ts  csa1: verifier — byte-compatible (viem + @noble)
     │                     re-impl of @cofferdam/sdk's sessionAttestation.ts
     ├── activity.ts       Dual-source ERC-20 Transfer fetcher
@@ -403,14 +418,15 @@ test/
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `ENVIRONMENT` | var | `development` \| `staging` \| `production` |
+| `ENVIRONMENT` | var | `development` \| `staging` \| `production` (deployed: `staging`; `.dev.vars` sets `development` locally) |
 | `BASE_SEPOLIA_RPC_URL` | var | Base Sepolia RPC endpoint (default: `https://sepolia.base.org`) |
 | `CELO_RPC_URL` | var (optional) | Celo mainnet RPC for Self registry reads (default: `https://forno.celo.org`) |
 | `SQD_PORTAL_URL` | var (optional) | SQD Portal Stream API base URL (default: `https://portal.sqd.dev/datasets/base-sepolia`) |
 | `RELAYER_PRIVATE_KEY` | secret (optional) | EIP-7702 relayer signing key for `setup-investments` |
 | `POLIS_DATABASE_URL` | secret (optional) | Neon Postgres connection string for enterprise SSO |
 | `ATTESTER` | service binding | `cofferdam-attester` Worker (Self.xyz signing) |
-| `BIND_BUNDLES` | KV | Signed Self bind bundles awaiting app pickup (30-min TTL); provisioned |
+| `BIND_BUNDLES_DO` | Durable Object | Per-account Self bind bundle hand-off (`BindBundleDO`, 30-min alarm TTL) |
+| `SELF_VERIFY_RL` / `SELF_PICKUP_RL` | rate limit | `/v1/self/verify` and `/v1/self/bind-bundle` brakes |
 
 KV, R2, and D1 bindings are declared in `wrangler.jsonc` but commented out
 until provisioned. See [Provisioning](#provisioning) for instructions.

@@ -26,7 +26,7 @@ export const E_PASSPORT_ATTESTATION_ID = 1;
 export const PUB_SIGNALS_LENGTH = 21;
 /** `vc_and_disclose` (E_PASSPORT) nullifier index. */
 export const NULLIFIER_INDEX = 7;
-/** How long a signed bundle waits in KV for the app to submit it. */
+/** How long a signed bundle waits for the app to submit it (the Durable Object's alarm). */
 export const BIND_BUNDLE_TTL_SECONDS = 30 * 60;
 export const BIND_BUNDLE_VERSION = 1 as const;
 
@@ -242,32 +242,4 @@ export function buildBindBundle(
   };
 }
 
-/**
- * KV-backed bundle store. One pending bundle per account:
- *
- *   bind:<account, lower-case>  → BindBundle (JSON), TTL `BIND_BUNDLE_TTL_SECONDS`
- */
-export class BindBundleStore {
-  constructor(private readonly kv: KVNamespace) {}
-
-  static key(account: Address): string {
-    return `bind:${account.toLowerCase()}`;
-  }
-
-  async put(bundle: BindBundle): Promise<void> {
-    await this.kv.put(BindBundleStore.key(bundle.account), JSON.stringify(bundle), {
-      expirationTtl: BIND_BUNDLE_TTL_SECONDS,
-    });
-  }
-
-  async get(account: Address): Promise<BindBundle | null> {
-    const raw = await this.kv.get(BindBundleStore.key(account), 'json');
-    if (!raw || typeof raw !== 'object') return null;
-    const b = raw as BindBundle;
-    return b.version === BIND_BUNDLE_VERSION ? b : null;
-  }
-
-  async delete(account: Address): Promise<void> {
-    await this.kv.delete(BindBundleStore.key(account));
-  }
-}
+// The bundle store lives in `bundleStore.ts` (interface + Durable Object adapter).

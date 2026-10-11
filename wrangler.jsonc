@@ -46,7 +46,9 @@
   // ACTIVITY_DATABASE_URL is retained as optional future fallback but is NOT
   // required — `/v1/activity` uses the SQD Portal Stream API directly.
   "vars": {
-    "ENVIRONMENT": "development",
+    // Deployed value. Local `wrangler dev` overrides it to "development" via
+    // .dev.vars (bind-bundle pickup then tolerates a missing csa1 token).
+    "ENVIRONMENT": "staging",
     "BASE_SEPOLIA_RPC_URL": "https://sepolia.base.org",
     // Celo mainnet, read-only: Self.xyz's identity registry lives there and
     // the attester's bind gate checks every proof against it. Must agree with
@@ -70,15 +72,23 @@
   ],
 
   // ─────────────────────────────────────────────────────────────────
-  // KV — provisioned namespaces.
-  //
-  // BIND_BUNDLES: attester-signed Self bind bundles awaiting pickup by the
-  // app (routes/self.ts, services/selfBind.ts). 30-minute TTL; holds only
-  // data that becomes public at bind time. Created 2026-10-10 in the
-  // Cofferdam account with `wrangler kv namespace create BIND_BUNDLES`.
+  // Durable Objects — the Self bind-bundle hand-off (decision 0010).
+  // One SQLite-backed object per account; strongly consistent, so the app's
+  // pickup sees the relayer's write at once. Replaced the BIND_BUNDLES KV
+  // namespace (69731266425143ab9fb883e6ce6637b9, now unused) on 2026-10-11.
   // ─────────────────────────────────────────────────────────────────
-  "kv_namespaces": [
-    { "binding": "BIND_BUNDLES", "id": "69731266425143ab9fb883e6ce6637b9" }
+  "durable_objects": {
+    "bindings": [{ "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" }]
+  },
+  "migrations": [{ "tag": "v1-bind-bundles", "new_sqlite_classes": ["BindBundleDO"] }],
+
+  // ─────────────────────────────────────────────────────────────────
+  // Rate limits — permissive, per-colo, keyed in routes/self.ts. A bind is
+  // at most two relayer posts and ~15 pickup polls a minute.
+  // ─────────────────────────────────────────────────────────────────
+  "ratelimits": [
+    { "name": "SELF_VERIFY_RL", "namespace_id": "1101", "simple": { "limit": 30, "period": 60 } },
+    { "name": "SELF_PICKUP_RL", "namespace_id": "1102", "simple": { "limit": 60, "period": 60 } }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources
@@ -95,8 +105,8 @@
   // Until then the link routes return 503 link_store_unprovisioned and the
   // rest of the Worker (incl. /v1/enterprise/resolve) is unaffected.
   // ─────────────────────────────────────────────────────────────────
-  // Add further namespaces to the live `kv_namespaces` array above once
-  // provisioned (env.ts declares `LINKS?: KVNamespace` as optional):
+  // Add a `kv_namespaces` array once these are provisioned (env.ts declares
+  // `LINKS?: KVNamespace` as optional):
   //   { "binding": "SESSIONS", "id": "<TBD-session-3>" },
   //   { "binding": "PROFILES", "id": "<TBD-after-T1.1>" },
   //   { "binding": "LINKS",    "id": "<TBD-run-wrangler-kv-namespace-create-LINKS>" }

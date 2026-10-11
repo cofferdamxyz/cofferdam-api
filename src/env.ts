@@ -11,6 +11,7 @@
  */
 
 import type { AttesterRpc } from './services/attester.js';
+import type { BindBundleDO } from './services/bindBundleDO.js';
 
 export interface Env {
   // ── vars ────────────────────────────────────────────────────────
@@ -73,13 +74,20 @@ export interface Env {
    * and the `/resolve` keystone works.
    */
   LINKS?: KVNamespace;
+  // ── Durable Objects ─────────────────────────────────────────────
   /**
-   * Signed Self bind bundles awaiting pickup by the app (routes/self.ts,
-   * services/selfBind.ts). OPTIONAL until the KV namespace is provisioned +
-   * uncommented in wrangler.jsonc — `/v1/self/*` returns 503
-   * `bind_store_unprovisioned` while it's absent.
+   * Per-account bind-bundle hand-off (services/bindBundleDO.ts, decision
+   * 0010). Strongly consistent, so the app's pickup sees the relayer's write
+   * immediately. Declared in wrangler.jsonc `durable_objects`; without it
+   * `/v1/self/*` returns 503 `bind_store_unprovisioned`.
    */
-  BIND_BUNDLES?: KVNamespace;
+  BIND_BUNDLES_DO?: DurableObjectNamespace<BindBundleDO>;
+
+  // ── Rate limits (wrangler.jsonc `ratelimits`; permissive, per-colo) ──
+  /** `POST /v1/self/verify`: per account and a global flood brake. */
+  SELF_VERIFY_RL?: RateLimit;
+  /** `GET /v1/self/bind-bundle/:account`: per account. */
+  SELF_PICKUP_RL?: RateLimit;
 
   // ── R2 buckets (provisioned in later sessions) ──────────────────
   // VAULT: R2Bucket;

@@ -13,6 +13,9 @@
  */
 
 import { Hono } from 'hono';
+
+// Durable Object classes must be exported from the Worker entry module.
+export { BindBundleDO } from './services/bindBundleDO.js';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { Env } from './env.js';

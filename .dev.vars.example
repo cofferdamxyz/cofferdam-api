@@ -1,0 +1,20 @@
+# Cofferdam API Worker — local dev secrets.
+# Copy to `.dev.vars` and fill in. NEVER commit `.dev.vars`.
+# In production, set via `wrangler secret put NAME`.
+
+# ── EIP-7702 Relayer ──────────────────────────────────────────────────────────
+# Private key for the relayer account on Base Sepolia.
+# This account pays gas for Investments Account setup (type-4 sponsored tx).
+# Use the SAME account as the CDP Paymaster on Sepolia to consolidate gas costs.
+# Fund it with a small amount of ETH on Base Sepolia (~$1 covers ~1000 setups).
+#
+# Generate a new key: `node -e "console.log('0x' + require('crypto').randomBytes(32).toString('hex'))"`
+# Fund on Sepolia:    https://www.alchemy.com/faucets/base-sepolia
+# Set as secret:      `wrangler secret put RELAYER_PRIVATE_KEY`
+#
+# Migration path: replace with CDP Server-Side Wallets for production.
+RELAYER_PRIVATE_KEY=
+
+# Local override: the deployed Worker runs ENVIRONMENT=staging (wrangler.jsonc).
+# development relaxes the csa1 requirement on GET /v1/self/bind-bundle.
+ENVIRONMENT=development

@@ -3,7 +3,8 @@
 
 /**
  * Self proof intake: payload normalisation, bundle shaping, and the
- * `/v1/self/*` routes against a fake attester binding and an in-memory KV.
+ * `/v1/self/*` routes against a fake attester binding and an in-memory
+ * bundle store (the deployment uses a Durable Object per account).
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -12,9 +13,9 @@ import { concat, encodePacked, pad, ripemd160, sha256, type Address, type Hex } 
 
 import type { Env } from '../src/env.js';
 import type { SignBindRequest, SignBindResponse } from '../src/services/attester.js';
+import type { BundleStore } from '../src/services/bundleStore.js';
 import {
   BIND_BUNDLE_TTL_SECONDS,
-  BindBundleStore,
   SelfVerifyRequestError,
   accountFromUserContextData,
   buildBindBundle,
@@ -76,39 +77,59 @@ function signedFor(req: SignBindRequest): SignBindResponse {
   };
 }
 
-/** Enough of KVNamespace for the store: get(key,'json') / put(key, value, {expirationTtl}) / delete. */
-function memoryKv() {
-  const data = new Map<string, { value: string; ttl?: number }>();
-  const kv = {
-    async get(key: string, type?: string) {
-      const hit = data.get(key);
-      if (!hit) return null;
-      return type === 'json' ? JSON.parse(hit.value) : hit.value;
+/** In-memory BundleStore with the Durable Object's semantics (one bundle per account). */
+function memoryStore(): BundleStore & { data: Map<string, any> } {
+  const data = new Map<string, any>();
+  return {
+    data,
+    async put(bundle) {
+      data.set(bundle.account.toLowerCase(), JSON.parse(JSON.stringify(bundle)));
     },
-    async put(key: string, value: string, opts?: { expirationTtl?: number }) {
-      data.set(key, { value, ttl: opts?.expirationTtl });
+    async get(account) {
+      return data.get(account.toLowerCase()) ?? null;
     },
-    async delete(key: string) {
-      data.delete(key);
+    async delete(account) {
+      data.delete(account.toLowerCase());
     },
   };
-  return { kv: kv as unknown as KVNamespace, data };
+}
+
+/**
+ * Rate-limit binding stub counting per key: `allow[key]` successes for listed
+ * keys, `fallback` for the rest, then refusals.
+ */
+function rateLimit(fallback: number, allow: Record<string, number> = {}): RateLimit & { calls: string[] } {
+  const calls: string[] = [];
+  const counts = new Map<string, number>();
+  return {
+    calls,
+    async limit({ key }) {
+      calls.push(key);
+      const n = (counts.get(key) ?? 0) + 1;
+      counts.set(key, n);
+      return { success: n <= (allow[key] ?? fallback) };
+    },
+  };
 }
 
 function harness(opts: {
-  kv?: KVNamespace;
+  store?: BundleStore | null;
   environment?: Env['ENVIRONMENT'];
   signBind?: (req: SignBindRequest) => Promise<SignBindResponse>;
   bindStatus?: BindStatus;
   now?: number;
+  verifyLimit?: RateLimit;
+  pickupLimit?: RateLimit;
 } = {}) {
   const signBind = vi.fn(opts.signBind ?? (async (req: SignBindRequest) => signedFor(req)));
   const env = {
     ENVIRONMENT: opts.environment ?? 'development',
     BASE_SEPOLIA_RPC_URL: 'https://sepolia.base.org',
     ATTESTER: { signBind } as unknown as Env['ATTESTER'],
-    BIND_BUNDLES: opts.kv,
+    SELF_VERIFY_RL: opts.verifyLimit,
+    SELF_PICKUP_RL: opts.pickupLimit,
   } as unknown as Env;
+  const store = opts.store === undefined ? null : opts.store;
   const app = new Hono<{ Bindings: Env }>();
   app.route(
     '/v1/self',
@@ -116,6 +137,7 @@ function harness(opts: {
       bindStatus: async () => opts.bindStatus ?? { kind: 'unbound' },
       now: () => opts.now ?? 1_760_000_000_000,
       attestationMaxAgeMs: 10 * 60 * 1000,
+      store: () => store,
     }),
   );
   const call = async (path: string, init?: RequestInit) => {
@@ -242,20 +264,15 @@ describe('toSolidityProof / buildBindBundle', () => {
     expect(bundle.proof.b[0]).toEqual(['22', '21']);
   });
 
-  it('stores and reads bundles by lower-cased account with the TTL', async () => {
-    const { kv, data } = memoryKv();
-    const store = new BindBundleStore(kv);
+  it('gives the bundle the TTL window the Durable Object alarm enforces', () => {
     const req = parseSelfVerifyBody(relayerBody());
+    const now = 1_760_000_000_000;
     const bundle = buildBindBundle(
       req,
       signedFor({ registry: REGISTRY, account: req.account, pubSignals: req.publicSignals, userContextData: req.userContextData }),
+      now,
     );
-    await store.put(bundle);
-    expect([...data.keys()]).toEqual([`bind:${ACCOUNT.toLowerCase()}`]);
-    expect(data.get(`bind:${ACCOUNT.toLowerCase()}`)?.ttl).toBe(BIND_BUNDLE_TTL_SECONDS);
-    expect(await store.get(ACCOUNT)).toEqual(bundle);
-    await store.delete(ACCOUNT);
-    expect(await store.get(ACCOUNT)).toBeNull();
+    expect(bundle.expiresAt - bundle.createdAt).toBe(BIND_BUNDLE_TTL_SECONDS * 1000);
   });
 });
 
@@ -281,7 +298,7 @@ describe('POST /v1/self/verify', () => {
   });
 
   it('rejects non-JSON and malformed payloads with 400', async () => {
-    const h = harness({ kv: memoryKv().kv });
+    const h = harness({ store: memoryStore() });
     expect((await h.post('{nope')).json.code).toBe('invalid_json');
     const bad = await h.post(relayerBody(ACCOUNT, { attestationId: 2 }));
     expect(bad.status).toBe(400);
@@ -290,14 +307,14 @@ describe('POST /v1/self/verify', () => {
   });
 
   it('refuses already-bound accounts and nullifiers before the attester', async () => {
-    const a = harness({ kv: memoryKv().kv, bindStatus: { kind: 'account_already_bound', nullifier: '5' } });
+    const a = harness({ store: memoryStore(), bindStatus: { kind: 'account_already_bound', nullifier: '5' } });
     const ra = await a.post(relayerBody());
     expect(ra.status).toBe(409);
     expect(ra.json.code).toBe('account_already_bound');
     expect(a.signBind).not.toHaveBeenCalled();
 
     const other: Address = '0x000000000000000000000000000000000000dEaD';
-    const n = harness({ kv: memoryKv().kv, bindStatus: { kind: 'nullifier_already_bound', boundAccount: other } });
+    const n = harness({ store: memoryStore(), bindStatus: { kind: 'nullifier_already_bound', boundAccount: other } });
     const rn = await n.post(relayerBody());
     expect(rn.status).toBe(409);
     expect(rn.json).toMatchObject({ code: 'nullifier_already_bound', boundAccount: other });
@@ -305,7 +322,7 @@ describe('POST /v1/self/verify', () => {
 
   it('maps attester rejections to 400 with the attester code, RPC trouble to 503', async () => {
     const rejected = harness({
-      kv: memoryKv().kv,
+      store: memoryStore(),
       signBind: async () => {
         // Exactly what the runtime hands the caller over the service binding.
         throw new Error('AttesterError: CELO_ROOT_UNKNOWN: identity-commitment root 1 was never published');
@@ -316,7 +333,7 @@ describe('POST /v1/self/verify', () => {
     expect(r1.json).toMatchObject({ status: 'error', result: false, code: 'CELO_ROOT_UNKNOWN', retryable: false });
 
     const flaky = harness({
-      kv: memoryKv().kv,
+      store: memoryStore(),
       signBind: async () => {
         throw new Error('CELO_RPC_UNAVAILABLE: Celo read failed: timeout');
       },
@@ -326,7 +343,7 @@ describe('POST /v1/self/verify', () => {
     expect(r2.json.retryable).toBe(true);
 
     const misconfigured = harness({
-      kv: memoryKv().kv,
+      store: memoryStore(),
       signBind: async () => {
         throw new Error('BAD_SELF_HUB_VAR: SELF_HUB_ADDRESS var is malformed');
       },
@@ -335,8 +352,9 @@ describe('POST /v1/self/verify', () => {
   });
 
   it('signs, stores the Solidity-ordered bundle and answers in Self success shape', async () => {
-    const { kv, data } = memoryKv();
-    const h = harness({ kv });
+    const store = memoryStore();
+    const { data } = store;
+    const h = harness({ store });
     const { status, json } = await h.post(relayerBody());
     expect(status).toBe(200);
     expect(json).toMatchObject({ status: 'success', result: true, account: ACCOUNT, nullifier: '777' });
@@ -348,12 +366,29 @@ describe('POST /v1/self/verify', () => {
     expect(sent.account).toBe(ACCOUNT);
     expect(sent.userContextData).toBe(userContextData(ACCOUNT).toLowerCase());
 
-    const stored = JSON.parse(data.get(`bind:${ACCOUNT.toLowerCase()}`)!.value);
+    const stored = data.get(ACCOUNT.toLowerCase())!;
     expect(stored.proof.b).toEqual([
       ['22', '21'],
       ['24', '23'],
     ]);
     expect(stored.attesterSig).toBe(`0x${'cd'.repeat(65)}`);
+  });
+
+  it('rate-limits per account and globally in Self error shape, and never calls the attester when limited', async () => {
+    // Per account: the global key is generous, the account key allows one.
+    const rl = rateLimit(1, { 'verify:all': 100 });
+    const perAccount = harness({ store: memoryStore(), verifyLimit: rl });
+    expect((await perAccount.post(relayerBody())).status).toBe(200);
+    const second = await perAccount.post(relayerBody());
+    expect(second.status).toBe(429);
+    expect(second.json).toMatchObject({ status: 'error', result: false, code: 'rate_limited' });
+    expect(perAccount.signBind).toHaveBeenCalledTimes(1);
+    expect(rl.calls).toEqual(['verify:all', `verify:${ACCOUNT.toLowerCase()}`, 'verify:all', `verify:${ACCOUNT.toLowerCase()}`]);
+
+    // Global brake: refused before the body is even parsed.
+    const global = harness({ store: memoryStore(), verifyLimit: rateLimit(0) });
+    expect((await global.post(relayerBody())).status).toBe(429);
+    expect(global.signBind).not.toHaveBeenCalled();
   });
 });
 
@@ -362,7 +397,7 @@ describe('GET /v1/self/bind-bundle/:account', () => {
   const fxAccount = fixtures.fields.accountAddress as Address;
 
   it('validates the address and reports missing bundles', async () => {
-    const h = harness({ kv: memoryKv().kv });
+    const h = harness({ store: memoryStore() });
     expect((await h.call('/v1/self/bind-bundle/nope')).status).toBe(400);
     const missing = await h.call(`/v1/self/bind-bundle/${ACCOUNT}`);
     expect(missing.status).toBe(404);
@@ -370,10 +405,11 @@ describe('GET /v1/self/bind-bundle/:account', () => {
   });
 
   it('refuses and drops a bundle once the registry shows the account bound', async () => {
-    const { kv, data } = memoryKv();
-    await harness({ kv }).post(relayerBody());
+    const store = memoryStore();
+    const { data } = store;
+    await harness({ store }).post(relayerBody());
     expect(data.size).toBe(1);
-    const bound = harness({ kv, bindStatus: { kind: 'account_already_bound', nullifier: '777' } });
+    const bound = harness({ store, bindStatus: { kind: 'account_already_bound', nullifier: '777' } });
     const res = await bound.call(`/v1/self/bind-bundle/${ACCOUNT}`);
     expect(res.status).toBe(409);
     expect(res.json).toMatchObject({ error: 'account_already_bound', nullifier: '777' });
@@ -381,24 +417,34 @@ describe('GET /v1/self/bind-bundle/:account', () => {
   });
 
   it('serves a stored bundle without a token in development only', async () => {
-    const { kv } = memoryKv();
-    const dev = harness({ kv });
+    const store = memoryStore();
+    const dev = harness({ store });
     await dev.post(relayerBody());
     const ok = await dev.call(`/v1/self/bind-bundle/${ACCOUNT}`);
     expect(ok.status).toBe(200);
     expect(ok.json.bundle).toMatchObject({ account: ACCOUNT, nullifier: '777' });
 
-    const staging = harness({ kv, environment: 'staging' });
+    const staging = harness({ store, environment: 'staging' });
     const denied = await staging.call(`/v1/self/bind-bundle/${ACCOUNT}`);
     expect(denied.status).toBe(401);
     expect(denied.json.error).toBe('attestation_required');
   });
 
+  it('rate-limits pickups per account', async () => {
+    const store = memoryStore();
+    await harness({ store }).post(relayerBody());
+    const h = harness({ store, pickupLimit: rateLimit(1) });
+    expect((await h.call(`/v1/self/bind-bundle/${ACCOUNT}`)).status).toBe(200);
+    const limited = await h.call(`/v1/self/bind-bundle/${ACCOUNT}`);
+    expect(limited.status).toBe(429);
+    expect(limited.json.error).toBe('rate_limited');
+  });
+
   it('accepts a csa1 attestation pinned to the account and rejects others', async () => {
-    const { kv } = memoryKv();
+    const store = memoryStore();
     const issuedAt = fixtures.fields.issuedAt as number;
-    const h = harness({ kv, environment: 'staging', now: issuedAt + 5_000 });
-    await harness({ kv }).post(relayerBody(fxAccount));
+    const h = harness({ store, environment: 'staging', now: issuedAt + 5_000 });
+    await harness({ store }).post(relayerBody(fxAccount));
 
     const ok = await h.call(`/v1/self/bind-bundle/${fxAccount}`, {
       headers: { authorization: `Bearer ${fx.token}` },
@@ -407,7 +453,7 @@ describe('GET /v1/self/bind-bundle/:account', () => {
     expect(ok.json.bundle.account.toLowerCase()).toBe(fxAccount.toLowerCase());
 
     // Same valid token, different account → the accountAddress pin fails.
-    await harness({ kv }).post(relayerBody(ACCOUNT));
+    await harness({ store }).post(relayerBody(ACCOUNT));
     const wrongAccount = await h.call(`/v1/self/bind-bundle/${ACCOUNT}`, {
       headers: { authorization: `Bearer ${fx.token}` },
     });
@@ -415,7 +461,7 @@ describe('GET /v1/self/bind-bundle/:account', () => {
     expect(wrongAccount.json.error).toBe('attestation_rejected');
 
     // Stale token (issued long before `now`).
-    const stale = harness({ kv, environment: 'staging', now: issuedAt + 11 * 60 * 1000 });
+    const stale = harness({ store, environment: 'staging', now: issuedAt + 11 * 60 * 1000 });
     expect(
       (await stale.call(`/v1/self/bind-bundle/${fxAccount}`, { headers: { authorization: `Bearer ${fx.token}` } }))
         .status,
