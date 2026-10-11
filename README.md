@@ -125,7 +125,22 @@ Wrangler 4's local registry auto-discovers and wires the binding.
 
 USDC addresses are chain-specific: MockUSDC on Sepolia, native USDC on mainnet.
 
-### Relayer — EIP-7702 sponsored transactions
+### Relayer — ERC-4337 UserOperations and EIP-7702 setup
+
+`POST /v1/aa/user-operation` (decision 0012) takes a `PackedUserOperation`
+signed by the app's passkey (`{ entryPoint?, userOp }`, bigints as decimal
+strings), checks the policy in `src/services/userOp.ts` — the Cofferdam
+paymaster, the Cofferdam factory in any `initCode`, gas, fee and prefund
+caps — simulates `handleOps` from the relayer so a failing op costs nothing,
+submits it with `RELAYER_PRIVATE_KEY` and answers `202 { ok, txHash }`; the
+client waits for the receipt. The first op of a new account carries
+`initCode`, so this is how accounts get deployed: no app holds a funded key.
+Rate-limited per sender and globally (`AA_RELAY_RL`). The relayer EOA's
+nonce is read per request; serialise it through a Durable Object before real
+traffic. The paymaster's EntryPoint deposit is what the policy protects — top
+it up as ops accumulate.
+
+#### EIP-7702 sponsored transactions
 
 `POST /v1/relayer/setup-investments` submits a type-4 EIP-7702 transaction on
 behalf of a user's new EOA, atomically delegating to EIP7702Proxy and calling
@@ -169,6 +184,7 @@ flag, not addresses. See `ENTERPRISE_MODULE_PLAN.md` §0 + §4.8.
 | GET    | `/v1/enterprise/links/check?companyAnchor=&consumerId=`  | Route-guard check for a consumer †                         |
 | POST   | `/v1/enterprise/links/:companyAnchor/:consumerId/revoke` | Revoke a link †                                            |
 | POST   | `/v1/relayer/setup-investments`                       | EIP-7702 sponsored tx: delegate EOA → CoinbaseSmartWallet  |
+| POST   | `/v1/aa/user-operation`                               | Relay a passkey-signed ERC-4337 op (first op deploys the account) § |
 
 > § The `self/*` routes store bundles in the `BIND_BUNDLES_DO` Durable Object
 > (one per account); a deployment without the binding returns
@@ -422,7 +438,7 @@ test/
 | `BASE_SEPOLIA_RPC_URL` | var | Base Sepolia RPC endpoint (default: `https://sepolia.base.org`) |
 | `CELO_RPC_URL` | var (optional) | Celo mainnet RPC for Self registry reads (default: `https://forno.celo.org`) |
 | `SQD_PORTAL_URL` | var (optional) | SQD Portal Stream API base URL (default: `https://portal.sqd.dev/datasets/base-sepolia`) |
-| `RELAYER_PRIVATE_KEY` | secret (optional) | EIP-7702 relayer signing key for `setup-investments` |
+| `RELAYER_PRIVATE_KEY` | secret (optional) | Relayer key: submits `handleOps` for `/v1/aa/user-operation` and the EIP-7702 `setup-investments` tx |
 | `POLIS_DATABASE_URL` | secret (optional) | Neon Postgres connection string for enterprise SSO |
 | `ATTESTER` | service binding | `cofferdam-attester` Worker (Self.xyz signing) |
 | `BIND_BUNDLES_DO` | Durable Object | Per-account Self bind bundle hand-off (`BindBundleDO`, 30-min alarm TTL) |

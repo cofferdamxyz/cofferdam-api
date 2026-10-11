@@ -24,6 +24,7 @@ import { attesterRoutes } from './routes/attester.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { healthRoutes } from './routes/health.js';
 import { relayerRoutes } from './routes/relayer.js';
+import { aaRoutes } from './routes/aa.js';
 import { selfRoutes } from './routes/self.js';
 import { sepoliaRoutes } from './routes/sepolia.js';
 import { sessionRoutes } from './routes/session.js';
@@ -67,6 +68,7 @@ app.get('/', (c) => {
       { method: 'GET', path: '/v1/self/bind-bundle/:account' },
       { method: 'POST', path: '/v1/session/verify-attestation' },
       { method: 'POST', path: '/v1/relayer/setup-investments' },
+      { method: 'POST', path: '/v1/aa/user-operation' },
     ],
     docs: 'See cofferdam-app/backend/README.md',
   });
@@ -81,6 +83,7 @@ app.route('/v1/enterprise', enterpriseRoutes);
 app.route('/v1/activity', activityRoutes);
 app.route('/v1/session', sessionRoutes);
 app.route('/v1/relayer', relayerRoutes);
+app.route('/v1/aa', aaRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ ok: false, error: 'not_found' }, 404));

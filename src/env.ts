@@ -40,8 +40,9 @@ export interface Env {
   SQD_PORTAL_URL?: string;
 
   /**
-   * Private key for the EIP-7702 relayer account on Base Sepolia.
-   * Funds the gas for Investments Account setup (type-4 sponsored tx).
+   * Private key for the relayer account on Base Sepolia: submits ERC-4337
+   * `handleOps` for the app's sponsored ops (`/v1/aa/user-operation`, refunded
+   * by the paymaster) and funds the EIP-7702 Investments Account setup.
    * Same account used for the CDP Paymaster on Sepolia.
    * Set via `wrangler secret put RELAYER_PRIVATE_KEY`.
    * Migration path: replace with CDP Server-Side Wallets for production.
@@ -88,6 +89,8 @@ export interface Env {
   SELF_VERIFY_RL?: RateLimit;
   /** `GET /v1/self/bind-bundle/:account`: per account. */
   SELF_PICKUP_RL?: RateLimit;
+  /** `POST /v1/aa/user-operation`: per sender and a global brake (decision 0012). */
+  AA_RELAY_RL?: RateLimit;
 
   // ── R2 buckets (provisioned in later sessions) ──────────────────
   // VAULT: R2Bucket;
