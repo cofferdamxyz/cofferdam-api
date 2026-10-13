@@ -151,7 +151,9 @@ submits the type-4 tx, paying gas from its own account. The user's EOA needs
 zero ETH.
 
 The relayer key is configured via `wrangler secret put RELAYER_PRIVATE_KEY`.
-Migration path: replace with CDP Server-Side Wallets for production.
+Migration path: replace with CDP Server-Side Wallets for production. On
+mainnet this is the hot-key tier of `cofferdam/decisions/0017`: a small
+balance topped up from the Cofferdam Inc. Safe, never the hardware wallet.
 
 ### Data boundaries — the plane never touches consumer data
 
