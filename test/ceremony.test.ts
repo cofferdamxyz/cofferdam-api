@@ -24,10 +24,10 @@ import {
 import type { SignCeremonyRequest, SignCeremonyResponse } from '../src/services/attester.js';
 
 const ACCOUNT: Address = '0x80967a159A00dcabe2DeAF86b68249acfc45C265';
-const HIGH_MODULE: Address = '0xB20d91Cc70cDDbccF57fA9CA9C16FDb01978A471';
-const MODULE_REGISTRY: Address = '0x2C974835449AF2E5bFA76eeE151a2222Ce0f3eD1';
-const CEREMONY_REGISTRY: Address = '0x28824840A8f5a764E797578291FD4377Ca13126b';
-const PARTNER_MODULE: Address = '0x41c9bCaB8D074FdC364455479E31496cb689a349';
+const HIGH_MODULE: Address = '0xd62c4deDeD3E2fEF52c8733aa1c899C7714a87C5';
+const MODULE_REGISTRY: Address = '0x5b437804978116fECe00DC1c983C9aDa24d4A8Ad';
+const CEREMONY_REGISTRY: Address = '0x44A2B59d5D39f773C2e65469e0Dd3217E53823Af';
+const PARTNER_MODULE: Address = '0xf1a9E1c2411DeaBA6F45630754dB1824779eC129';
 const ATTESTER: Address = '0xC912bFE0AD345035606182c23495b6883AA0934D';
 const PARTNER_ID: Hex = keccak256(new TextEncoder().encode('offshoresync'));
 const CHALLENGE: Hex = `0x${'ab'.repeat(32)}`;

@@ -26,9 +26,11 @@ import {
 } from '../src/services/selfBind.js';
 import { attesterErrorCode, createSelfRoutes, type BindStatus } from '../src/routes/self.js';
 import fixtures from './fixtures/sdk-attestations.json';
+import { SEPOLIA_DEPLOYMENTS } from '../src/chain/deployments.js';
 
 const ACCOUNT: Address = '0xfa4D920d5592289A1A0F73CA49D626EF8FE4D695';
-const REGISTRY: Hex = '0x2843F55C9E1491a6d47F65f041E68F96E3aeB3d4';
+/** The registry the route pins; the fixture follows the deployments table so a redeploy cannot drift it. */
+const REGISTRY: Hex = SEPOLIA_DEPLOYMENTS.NullifierRegistry.address;
 
 function userContextData(account: Address, destChainId = 42220n): Hex {
   return concat([encodePacked(['uint256'], [destChainId]), pad(account, { size: 32 })]);

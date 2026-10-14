@@ -118,12 +118,17 @@ export const SEPOLIA_DEPLOYMENTS = {
    * this exactly or `signBind` rejects with `REGISTRY_NOT_ALLOWED`.
    *
    * v2 (2026-10-14, decision 0022): `rebind` moves a bound nullifier to a new
-   * account on a fresh proof, `rebindDelay` 0 on Sepolia. The v1 registry
+   * account on a fresh proof, `rebindDelay` 0 on Sepolia. v3 (same day,
+   * decision 0023) keeps that surface and adds `provenNullifier` and
+   * `recoveryMessageHash`, which `CofferdamAccount4337.recoverHigh` checks a
+   * fresh proof against. The v1 registry
    * `0x2843F55C9E1491a6d47F65f041E68F96E3aeB3d4` is retired; its bindings were
-   * not migrated, those accounts bind fresh here.
+   * not migrated, those accounts bind fresh here. v2
+   * `0xC4931d4492a9E7124735dd040890BC2cc427505F` was retired before it held a
+   * binding.
    */
   NullifierRegistry: {
-    address: '0xC4931d4492a9E7124735dd040890BC2cc427505F',
+    address: '0xF025204964A355D3125CF15Bd606B8CFc92FbDB6',
   },
   /** ERC-4337 EntryPoint (canonical address on Base). */
   EntryPoint: {
@@ -134,29 +139,33 @@ export const SEPOLIA_DEPLOYMENTS = {
     address: '0x8c05Df95F91De2D70e0436B774fc9D1f86FF1f51',
   },
 
-  // ── Account layer (decision 0016), deployed on Base Sepolia 2026-10-14 ──
+  // ── Account layer (decisions 0016 and 0023), deployed on Base Sepolia 2026-10-14 ──
   // deploy-auth.ts from CofferdamDev, which owns both registries and the
-  // paymaster on testnet. Accounts created through the pre-0016 factory
-  // (`0x35CeBf87…1F3D`) are orphaned, not migrated.
+  // paymaster on testnet. The factory pins the NullifierRegistry above,
+  // `RECOVERY_DELAY` 0 and `PROBATION_PERIOD` 600 seconds. Accounts created
+  // through the pre-0016 factory (`0x35CeBf87…1F3D`) and the decision 0016
+  // factory of the same day (`0xC0F4EEd3…bF3E`) are orphaned, not migrated.
 
-  /** CREATE2 factory for per-user `CofferdamAccount4337` instances; pins both registries below. */
+  /** CREATE2 factory for per-user `CofferdamAccount4337` instances; pins the NullifierRegistry above and both registries below. */
   CofferdamAccountFactory4337: {
-    address: '0xC0F4EEd3EF9a17382Dac877468a8fA0Cc397bF3E',
+    address: '0xbfe7c71A3D423316bc8B7C40858eC6B9736847E2',
   },
   /** Authority modules an account may install (`MODULE_REGISTRY` of the factory). */
   CofferdamModuleRegistry: {
-    address: '0x2C974835449AF2E5bFA76eeE151a2222Ce0f3eD1',
+    address: '0x5b437804978116fECe00DC1c983C9aDa24d4A8Ad',
   },
   /**
-   * Keys that co-sign first-High enrolment and Partner recovery. Empty on
-   * Sepolia until the ceremony Worker exists, so both flows are paused.
+   * Keys that co-sign first-High enrolment, Partner recovery and hard
+   * recovery. The ceremony attester
+   * `0xC912bFE0AD345035606182c23495b6883AA0934D` (cofferdam-attester
+   * `signCeremony`) is listed from the constructor.
    */
   CofferdamCeremonyAttesterRegistry: {
-    address: '0x28824840A8f5a764E797578291FD4377Ca13126b',
+    address: '0x44A2B59d5D39f773C2e65469e0Dd3217E53823Af',
   },
   /** Stub paymaster sponsoring every op; owner-only withdrawals (decision 0014). */
   CofferdamPaymaster: {
-    address: '0xa24651292DFd346A4da0298583b114543771d867',
+    address: '0x85657a56b23525047cF67d462c6Bf2B3C6d66B18',
   },
   /**
    * High-tier platform-passkey authority (WebAuthn assertion), pinned to the
@@ -165,7 +174,7 @@ export const SEPOLIA_DEPLOYMENTS = {
    * to this address.
    */
   WebAuthnPasskeyAuthority: {
-    address: '0xB20d91Cc70cDDbccF57fA9CA9C16FDb01978A471',
+    address: '0xd62c4deDeD3E2fEF52c8733aa1c899C7714a87C5',
     tier: 'High',
     kind: 'passkey',
     requireUserVerification: true,
@@ -176,19 +185,19 @@ export const SEPOLIA_DEPLOYMENTS = {
    * not list it. The verifier maps `alg === 'p256'` to this address.
    */
   PasskeyAuthority: {
-    address: '0xebe2d02a07859a50Ae9f3f54B9F327aeD0EB6F93',
+    address: '0xcc5ef249E501127fBD43c26ee4ea943aC743Af33',
     tier: 'High',
     kind: 'passkey',
   },
   /** Partner tier: the user's passkey on a partner app's RP, scoped by a `Permission`. */
   PartnerPasskeyAuthority: {
-    address: '0x41c9bCaB8D074FdC364455479E31496cb689a349',
+    address: '0xf1a9E1c2411DeaBA6F45630754dB1824779eC129',
     tier: 'Partner',
     kind: 'partner_passkey',
   },
   /** Managed tier: employer bridge ECDSA key (enterprise SSO / Polis), scoped by a `Permission`. */
   SessionKeyAuthorityLowManaged: {
-    address: '0xD468774BDE3E2a1705b51791424432abD01CbaCE',
+    address: '0x7c6801603C34FEc9D13c350388f35920FdD8bb6E',
     tier: 'LowManaged',
     kind: 'polis_sso',
   },
