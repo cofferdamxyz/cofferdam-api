@@ -5,7 +5,7 @@
  * Base Sepolia contract deployments.
  *
  * **Source of truth.** Vendored from
- * `/Users/hoff/OffshoreSync/base-contracts/deployments/baseSepolia.json`,
+ * `base-contracts/deployments/baseSepolia.json` (this workspace),
  * which is updated by the deploy scripts in `base-contracts/scripts/`.
  *
  * Re-vendor (manually for now) when a new contract deploys. A later
@@ -26,11 +26,12 @@ export interface ContractDeployment {
   /** Deployer EOA. */
   readonly deployer?: Address;
   /**
-   * Authority tier, for the v2 authority-module singletons
-   * (`PasskeyAuthority` / `WebAuthnPasskeyAuthority` / `SessionKeyAuthority`).
-   * Mirrors the on-chain `Tier` enum. Absent for non-authority contracts.
+   * Authority tier of an authority-module singleton. Mirrors the on-chain
+   * `Tier` enum (`None, LowUntrusted, LowManaged, High, Partner`; decision
+   * 0016 retired LowUntrusted from the module registry). Absent for
+   * non-authority contracts.
    */
-  readonly tier?: 'High' | 'LowManaged' | 'LowUntrusted';
+  readonly tier?: 'High' | 'Partner' | 'LowManaged';
   /** Authority `kind()` discriminator (e.g. `passkey`, `session`, `polis_sso`). */
   readonly kind?: string;
   /** WebAuthn authority only: whether assertions must carry the UV bit (always true). */
@@ -128,46 +129,61 @@ export const SEPOLIA_DEPLOYMENTS = {
     address: '0x8c05Df95F91De2D70e0436B774fc9D1f86FF1f51',
   },
 
-  // ── v2 native account-abstraction (passkey-authority) stack ────────────
+  // ── Account layer (decision 0016), deployed on Base Sepolia 2026-10-14 ──
+  // deploy-auth.ts from CofferdamDev, which owns both registries and the
+  // paymaster on testnet. Accounts created through the pre-0016 factory
+  // (`0x35CeBf87…1F3D`) are orphaned, not migrated.
 
-  /** create2 factory for per-user CofferdamSmartAccount instances. */
+  /** CREATE2 factory for per-user `CofferdamAccount4337` instances; pins both registries below. */
   CofferdamAccountFactory4337: {
-    address: '0x35CeBf87f5DAE7be7cf755067d30fC65Fa541F3D',
+    address: '0xC0F4EEd3EF9a17382Dac877468a8fA0Cc397bF3E',
   },
-  /** Open paymaster sponsoring account ops (gasless UX). */
-  CofferdamPaymaster: {
-    address: '0x5ffb8bA851DCf7A592B85fc2567e72449214204e',
+  /** Authority modules an account may install (`MODULE_REGISTRY` of the factory). */
+  CofferdamModuleRegistry: {
+    address: '0x2C974835449AF2E5bFA76eeE151a2222Ce0f3eD1',
   },
   /**
-   * High-tier REAL platform-passkey authority (WebAuthn assertion). This is
-   * the module the RN app registers (signature scheme `webauthn`); the
-   * session-attestation verifier maps `alg === 'webauthn'` to this address.
+   * Keys that co-sign first-High enrolment and Partner recovery. Empty on
+   * Sepolia until the ceremony Worker exists, so both flows are paused.
+   */
+  CofferdamCeremonyAttesterRegistry: {
+    address: '0x28824840A8f5a764E797578291FD4377Ca13126b',
+  },
+  /** Stub paymaster sponsoring every op; owner-only withdrawals (decision 0014). */
+  CofferdamPaymaster: {
+    address: '0xa24651292DFd346A4da0298583b114543771d867',
+  },
+  /**
+   * High-tier platform-passkey authority (WebAuthn assertion), pinned to the
+   * `cofferdam.xyz` RP. The module the RN app registers (signature scheme
+   * `webauthn`); the session-attestation verifier maps `alg === 'webauthn'`
+   * to this address.
    */
   WebAuthnPasskeyAuthority: {
-    address: '0x279Cf7DF840a76EE9EcC1C177698E6EaB490Eea8',
+    address: '0xB20d91Cc70cDDbccF57fA9CA9C16FDb01978A471',
     tier: 'High',
     kind: 'passkey',
     requireUserVerification: true,
   },
   /**
    * High-tier RAW P-256 passkey authority (bare `r||s` over the digest, used
-   * by the software DeterministicPasskeySigner / PoC). The verifier maps
-   * `alg === 'p256'` to this address.
+   * by the software DeterministicPasskeySigner). Testnet only: mainnet does
+   * not list it. The verifier maps `alg === 'p256'` to this address.
    */
   PasskeyAuthority: {
-    address: '0x25338619e03e92511feB63cc66Dfd9CAFB5654E6',
+    address: '0xebe2d02a07859a50Ae9f3f54B9F327aeD0EB6F93',
     tier: 'High',
     kind: 'passkey',
   },
-  /** Low-tier untrusted session-key authority (cannot manage authorities). */
-  SessionKeyAuthorityLowUntrusted: {
-    address: '0xc76337F62D298831deEeE8f4063567884680A14b',
-    tier: 'LowUntrusted',
-    kind: 'session',
+  /** Partner tier: the user's passkey on a partner app's RP, scoped by a `Permission`. */
+  PartnerPasskeyAuthority: {
+    address: '0x41c9bCaB8D074FdC364455479E31496cb689a349',
+    tier: 'Partner',
+    kind: 'partner_passkey',
   },
-  /** Low-tier managed (enterprise SSO / Polis) session-key authority. */
+  /** Managed tier: employer bridge ECDSA key (enterprise SSO / Polis), scoped by a `Permission`. */
   SessionKeyAuthorityLowManaged: {
-    address: '0x4780DEc3E132E835C36895BFBbb71Bb63C638e54',
+    address: '0xD468774BDE3E2a1705b51791424432abD01CbaCE',
     tier: 'LowManaged',
     kind: 'polis_sso',
   },
