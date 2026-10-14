@@ -21,6 +21,7 @@ import { logger } from 'hono/logger';
 import type { Env } from './env.js';
 import { activityRoutes } from './routes/activity.js';
 import { attesterRoutes } from './routes/attester.js';
+import { ceremonyRoutes } from './routes/ceremony.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { healthRoutes } from './routes/health.js';
 import { relayerRoutes } from './routes/relayer.js';
@@ -69,6 +70,7 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/session/verify-attestation' },
       { method: 'POST', path: '/v1/relayer/setup-investments' },
       { method: 'POST', path: '/v1/aa/user-operation' },
+      { method: 'POST', path: '/v1/ceremony/first-high' },
     ],
     docs: 'See cofferdam-app/backend/README.md',
   });
@@ -84,6 +86,7 @@ app.route('/v1/activity', activityRoutes);
 app.route('/v1/session', sessionRoutes);
 app.route('/v1/relayer', relayerRoutes);
 app.route('/v1/aa', aaRoutes);
+app.route('/v1/ceremony', ceremonyRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ ok: false, error: 'not_found' }, 404));

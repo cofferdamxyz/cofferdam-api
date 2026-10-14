@@ -62,6 +62,39 @@ export interface SignBindResponse {
  * `extends Rpc.WorkerEntrypointBranded` is required to satisfy the
  * generic constraint on Cloudflare's `Service<T>` helper.
  */
+/** Ceremony actions, named as `CofferdamAccount4337.ACTION_*` hash them. */
+export type CeremonyAction = 'enroll-first-high' | 'replace-partner';
+
+/** Request payload for `signCeremony` (decision 0016); bigints as decimal strings. */
+export interface SignCeremonyRequest {
+  readonly chainId: string;
+  readonly account: Hex;
+  readonly action: CeremonyAction;
+  /** `keccak256(newConfig)` of the authority config the account will store. */
+  readonly newKeyHash: Hex;
+  /** The signing Partner authority's `partnerId`, or 32 zero bytes for Managed. */
+  readonly partnerId: Hex;
+  readonly nonce: string;
+  readonly notBefore: string;
+  readonly expiry: string;
+}
+
+/** Response from `signCeremony`: the `CeremonyAttestation` the account takes. */
+export interface SignCeremonyResponse {
+  readonly attesterAddress: Hex;
+  /** Equals `CofferdamAccount4337.ceremonyHash(...)`. */
+  readonly messageHash: Hex;
+  /** 65-byte EIP-191 personal_sign signature. */
+  readonly signature: Hex;
+  readonly chainId: string;
+  readonly account: Hex;
+  readonly action: CeremonyAction;
+  readonly nonce: string;
+  readonly notBefore: string;
+  readonly expiry: string;
+}
+
 export interface AttesterRpc extends Rpc.WorkerEntrypointBranded {
   signBind(req: SignBindRequest): Promise<SignBindResponse>;
+  signCeremony(req: SignCeremonyRequest): Promise<SignCeremonyResponse>;
 }

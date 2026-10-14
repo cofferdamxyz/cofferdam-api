@@ -155,6 +155,27 @@ Migration path: replace with CDP Server-Side Wallets for production. On
 mainnet this is the hot-key tier of `cofferdam/decisions/0017`: a small
 balance topped up from the Cofferdam Inc. Safe, never the hardware wallet.
 
+### Ceremony co-sign — the first High passkey (decision 0016)
+
+`POST /v1/ceremony/first-high` takes `{ account, signerId, highConfig,
+highAssertion, highModule? }` and answers the `CeremonyAttestation`
+(`notBefore`, `expiry`, `signature`) that `CofferdamAccount4337.enrollFirstHigh`
+consumes next to the Partner or Managed authority's own op signature and the
+new passkey's assertion. The gate (`src/services/ceremony.ts`) reads the
+account on Base Sepolia and refuses before touching the attester when: the
+account has no code (404); it does not pin our module and ceremony-attester
+registries (409 `not_a_cofferdam_account`); a High already exists (409);
+`signerId` is not an active Partner or Managed authority (409); `highModule`
+is not the pinned `WebAuthnPasskeyAuthority` (409); or the assertion does not
+verify through that module's `isValidSignature` over
+`firstHighChallenge(ceremonyNonce)`, which enforces the `cofferdam.xyz` RP
+and UV on-chain (422). It then asks `cofferdam-attester` `signCeremony` for a
+ten-minute window and fails closed if the attester's hash differs from the
+account's `ceremonyHash` (500). Rate-limited per account and globally
+(`CEREMONY_RL`, 429). The nonce makes each attestation single-use. Not yet
+gated: the partner `csa1:` session and the 72-hour cooldown after a recovery,
+both waiting on the partner registry.
+
 ### Data boundaries — the plane never touches consumer data
 
 `cofferdam-api` is the **Cofferdam company plane**. Its stateful stores are
@@ -187,6 +208,7 @@ flag, not addresses. See `ENTERPRISE_MODULE_PLAN.md` §0 + §4.8.
 | POST   | `/v1/enterprise/links/:companyAnchor/:consumerId/revoke` | Revoke a link †                                            |
 | POST   | `/v1/relayer/setup-investments`                       | EIP-7702 sponsored tx: delegate EOA → CoinbaseSmartWallet  |
 | POST   | `/v1/aa/user-operation`                               | Relay a passkey-signed ERC-4337 op (first op deploys the account) § |
+| POST   | `/v1/ceremony/first-high`                             | Cofferdam co-sign for `enrollFirstHigh` (decision 0016) ¶          |
 
 > § The `self/*` routes store bundles in the `BIND_BUNDLES_DO` Durable Object
 > (one per account); a deployment without the binding returns

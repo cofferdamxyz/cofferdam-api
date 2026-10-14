@@ -91,6 +91,8 @@ export interface Env {
   SELF_PICKUP_RL?: RateLimit;
   /** `POST /v1/aa/user-operation`: per sender and a global brake (decision 0012). */
   AA_RELAY_RL?: RateLimit;
+  /** Rate limit for `/v1/ceremony/*` (decision 0016 co-signs): per account and global. */
+  CEREMONY_RL?: RateLimit;
 
   // ── R2 buckets (provisioned in later sessions) ──────────────────
   // VAULT: R2Bucket;
