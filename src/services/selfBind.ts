@@ -199,9 +199,19 @@ export function toSolidityProof(p: ProofPoints): ProofPoints {
   };
 }
 
-/** Everything the app needs to call `NullifierRegistry.verifyAndBind`. */
+/** What the bundle authorises on the registry (decision 0022). */
+export type BindKind = 'bind' | 'rebind';
+
+/**
+ * Everything the app needs to call `NullifierRegistry.verifyAndBind`, or
+ * `rebind` when `kind` is `'rebind'` (the nullifier is bound to another
+ * account; `epoch` is the `rebindCount` the attester signed).
+ */
 export interface BindBundle {
   readonly version: typeof BIND_BUNDLE_VERSION;
+  /** Absent on bundles stored before decision 0022; read as `'bind'`. */
+  readonly kind?: BindKind;
+  readonly epoch?: Decimal;
   readonly account: Address;
   /** Base chain id the attester signed for. */
   readonly chainId: string;
@@ -223,9 +233,12 @@ export function buildBindBundle(
   req: SelfVerifyRequest,
   signed: SignBindResponse,
   now: number = Date.now(),
+  rebind?: { epoch: Decimal },
 ): BindBundle {
   return {
     version: BIND_BUNDLE_VERSION,
+    kind: rebind ? 'rebind' : 'bind',
+    ...(rebind ? { epoch: rebind.epoch } : {}),
     account: req.account,
     chainId: signed.chainId,
     registry: signed.registry,

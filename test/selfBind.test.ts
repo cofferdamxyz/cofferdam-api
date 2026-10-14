@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import { concat, encodePacked, pad, ripemd160, sha256, type Address, type Hex } from 'viem';
 
 import type { Env } from '../src/env.js';
-import type { SignBindRequest, SignBindResponse } from '../src/services/attester.js';
+import type { SignBindRequest, SignBindResponse, SignRebindRequest, SignRebindResponse } from '../src/services/attester.js';
 import type { BundleStore } from '../src/services/bundleStore.js';
 import {
   BIND_BUNDLE_TTL_SECONDS,
@@ -116,16 +116,21 @@ function harness(opts: {
   store?: BundleStore | null;
   environment?: Env['ENVIRONMENT'];
   signBind?: (req: SignBindRequest) => Promise<SignBindResponse>;
+  signRebind?: (req: SignRebindRequest) => Promise<SignRebindResponse>;
   bindStatus?: BindStatus;
+  rebindEpoch?: () => Promise<bigint>;
   now?: number;
   verifyLimit?: RateLimit;
   pickupLimit?: RateLimit;
 } = {}) {
   const signBind = vi.fn(opts.signBind ?? (async (req: SignBindRequest) => signedFor(req)));
+  const signRebind = vi.fn(
+    opts.signRebind ?? (async (req: SignRebindRequest) => ({ ...signedFor(req), epoch: req.epoch })),
+  );
   const env = {
     ENVIRONMENT: opts.environment ?? 'development',
     BASE_SEPOLIA_RPC_URL: 'https://sepolia.base.org',
-    ATTESTER: { signBind } as unknown as Env['ATTESTER'],
+    ATTESTER: { signBind, signRebind } as unknown as Env['ATTESTER'],
     SELF_VERIFY_RL: opts.verifyLimit,
     SELF_PICKUP_RL: opts.pickupLimit,
   } as unknown as Env;
@@ -135,6 +140,7 @@ function harness(opts: {
     '/v1/self',
     createSelfRoutes({
       bindStatus: async () => opts.bindStatus ?? { kind: 'unbound' },
+      rebindEpoch: opts.rebindEpoch ?? (async () => 0n),
       now: () => opts.now ?? 1_760_000_000_000,
       attestationMaxAgeMs: 10 * 60 * 1000,
       store: () => store,
@@ -150,7 +156,7 @@ function harness(opts: {
       headers: { 'content-type': 'application/json' },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     });
-  return { app, env, signBind, call, post };
+  return { app, env, signBind, signRebind, call, post };
 }
 
 describe('toDecimal', () => {
@@ -313,11 +319,33 @@ describe('POST /v1/self/verify', () => {
     expect(ra.json.code).toBe('account_already_bound');
     expect(a.signBind).not.toHaveBeenCalled();
 
+    // A passport bound to another account is the recovery case (decision 0022):
+    // the attester co-signs a rebind bound to the registry epoch instead.
     const other: Address = '0x000000000000000000000000000000000000dEaD';
-    const n = harness({ store: memoryStore(), bindStatus: { kind: 'nullifier_already_bound', boundAccount: other } });
+    const n = harness({
+      store: memoryStore(),
+      bindStatus: { kind: 'nullifier_already_bound', boundAccount: other },
+      rebindEpoch: async () => 2n,
+    });
     const rn = await n.post(relayerBody());
-    expect(rn.status).toBe(409);
-    expect(rn.json).toMatchObject({ code: 'nullifier_already_bound', boundAccount: other });
+    expect(rn.status).toBe(200);
+    expect(rn.json).toMatchObject({ status: 'success', result: true, kind: 'rebind' });
+    expect(n.signBind).not.toHaveBeenCalled();
+    expect(n.signRebind).toHaveBeenCalledTimes(1);
+    expect(n.signRebind.mock.calls[0]?.[0]).toMatchObject({ epoch: '2' });
+  });
+
+  it('answers 503 when the registry epoch cannot be read for a rebind', async () => {
+    const other: Address = '0x000000000000000000000000000000000000dEaD';
+    const n = harness({
+      store: memoryStore(),
+      bindStatus: { kind: 'nullifier_already_bound', boundAccount: other },
+      rebindEpoch: async () => { throw new Error('rpc down'); },
+    });
+    const rn = await n.post(relayerBody());
+    expect(rn.status).toBe(503);
+    expect(rn.json).toMatchObject({ code: 'registry_unavailable', retryable: true });
+    expect(n.signRebind).not.toHaveBeenCalled();
   });
 
   it('maps attester rejections to 400 with the attester code, RPC trouble to 503', async () => {

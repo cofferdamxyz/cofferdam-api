@@ -349,6 +349,7 @@ proof to `SelfApp.endpoint` — the phone only receives
    bare hex), recovers the target account from `userContextData[32..64]`,
    and pre-flights `NullifierRegistry` on Base so an already-bound account or
    nullifier gets `409 account_already_bound` / `409 nullifier_already_bound`
+   (since decision 0022 a nullifier bound to *another* account is a re-bind: the route reads `rebindCount`, asks the attester for `signRebind` and stores a bundle with `kind: 'rebind'` that the app submits to `NullifierRegistry.rebind`)
    (the multi-device reconciliation signal) before any signature is spent.
 2. It calls `ATTESTER.signBind`. The attester refuses unless Celo confirms the
    proof's identity root, OFAC roots and date (`Cofferdam/decisions/0004`);

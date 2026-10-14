@@ -74,6 +74,13 @@ const NULLIFIER_REGISTRY_ABI = [
     inputs: [{ name: 'nullifier', type: 'uint256' }],
     outputs: [{ type: 'address' }],
   },
+  {
+    type: 'function',
+    name: 'rebindCount',
+    stateMutability: 'view',
+    inputs: [{ name: 'nullifier', type: 'uint256' }],
+    outputs: [{ type: 'uint256' }],
+  },
 ] as const;
 
 export type BindStatus =
@@ -85,6 +92,8 @@ export type BindStatus =
 /** Injection seams so the routes unit-test without Base RPC, a clock or Durable Objects. */
 export interface SelfRouteDeps {
   bindStatus(env: Env, account: Address, nullifier: bigint): Promise<BindStatus>;
+  /** `NullifierRegistry.rebindCount(nullifier)`, the epoch a rebind co-sign is bound to (decision 0022). */
+  rebindEpoch(env: Env, nullifier: bigint): Promise<bigint>;
   now(): number;
   /** Max age of the `csa1:` attestation presented on pickup. */
   attestationMaxAgeMs: number;
@@ -105,6 +114,17 @@ async function overLimit(rl: RateLimit | undefined, key: string): Promise<boolea
 
 /** Legitimate traffic is a couple of posts per bind; anything near this is abuse. */
 const VERIFY_GLOBAL_KEY = 'verify:all';
+
+/** `rebindCount(nullifier)` on Base; the registry re-checks it, so a stale read only costs a retry. */
+async function readRebindEpoch(env: Env, nullifier: bigint): Promise<bigint> {
+  const client = getBaseSepoliaClient(env.BASE_SEPOLIA_RPC_URL);
+  return (await client.readContract({
+    address: SEPOLIA_DEPLOYMENTS.NullifierRegistry.address,
+    abi: NULLIFIER_REGISTRY_ABI,
+    functionName: 'rebindCount',
+    args: [nullifier],
+  })) as bigint;
+}
 
 /** Read the registry on Base. Failure is reported, not thrown: the attester and the chain still gate. */
 async function readBindStatus(env: Env, account: Address, nullifier: bigint): Promise<BindStatus> {
@@ -139,6 +159,7 @@ async function readBindStatus(env: Env, account: Address, nullifier: bigint): Pr
 
 export const defaultSelfRouteDeps: SelfRouteDeps = {
   bindStatus: readBindStatus,
+  rebindEpoch: readRebindEpoch,
   now: () => Date.now(),
   attestationMaxAgeMs: 10 * 60 * 1000,
   store: (env) => (env.BIND_BUNDLES_DO ? new DurableBindStore(env.BIND_BUNDLES_DO) : null),
@@ -219,20 +240,21 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
         409,
       );
     }
-    if (status.kind === 'nullifier_already_bound') {
-      // The multi-device reconciliation signal: this passport already has an
-      // account. Surfaced distinctly so the app can offer recovery instead of
-      // a dead-end error.
-      return c.json(
-        {
-          status: 'error',
-          result: false,
-          code: 'nullifier_already_bound',
-          boundAccount: status.boundAccount,
-          message: 'this passport is already bound to another account',
-        },
-        409,
-      );
+    // A passport already bound to another account is the recovery case
+    // (decision 0022): the fresh proof names the new account, so the attester
+    // co-signs a rebind bound to the registry's current epoch instead of a bind.
+    const rebind = status.kind === 'nullifier_already_bound';
+    let epoch: bigint | null = null;
+    if (rebind) {
+      try {
+        epoch = await deps.rebindEpoch(c.env, BigInt(req.nullifier));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json(
+          { status: 'error', result: false, code: 'registry_unavailable', message, retryable: true },
+          503,
+        );
+      }
     }
 
     const signReq: SignBindRequest = {
@@ -243,7 +265,9 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     };
     let signed: SignBindResponse;
     try {
-      signed = await c.env.ATTESTER.signBind(signReq);
+      signed = rebind
+        ? await c.env.ATTESTER.signRebind({ ...signReq, epoch: (epoch as bigint).toString() })
+        : await c.env.ATTESTER.signBind(signReq);
     } catch (err) {
       const code = attesterErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
@@ -264,12 +288,15 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
       );
     }
 
-    const bundle = buildBindBundle(req, signed, deps.now());
+    const bundle = buildBindBundle(req, signed, deps.now(), rebind ? { epoch: (epoch as bigint).toString() } : undefined);
     await store.put(bundle);
 
     console.log(
       JSON.stringify({
         kind: 'self.verify',
+        bundle: bundle.kind,
+        epoch: bundle.epoch,
+        previousAccount: status.kind === 'nullifier_already_bound' ? status.boundAccount : undefined,
         account: bundle.account,
         nullifier: bundle.nullifier,
         merkleRoot: signed.celo.merkleRoot,
@@ -282,6 +309,7 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     return c.json({
       status: 'success',
       result: true,
+      kind: bundle.kind,
       account: bundle.account,
       nullifier: bundle.nullifier,
       expiresAt: bundle.expiresAt,

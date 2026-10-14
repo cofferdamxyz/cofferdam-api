@@ -116,9 +116,14 @@ export const SEPOLIA_DEPLOYMENTS = {
    * Both are immutable, so changing either means redeploying and re-binding
    * every user. `cofferdam-attester`'s `NULLIFIER_REGISTRY_ADDRESS` must match
    * this exactly or `signBind` rejects with `REGISTRY_NOT_ALLOWED`.
+   *
+   * v2 (2026-10-14, decision 0022): `rebind` moves a bound nullifier to a new
+   * account on a fresh proof, `rebindDelay` 0 on Sepolia. The v1 registry
+   * `0x2843F55C9E1491a6d47F65f041E68F96E3aeB3d4` is retired; its bindings were
+   * not migrated, those accounts bind fresh here.
    */
   NullifierRegistry: {
-    address: '0x2843F55C9E1491a6d47F65f041E68F96E3aeB3d4',
+    address: '0xC4931d4492a9E7124735dd040890BC2cc427505F',
   },
   /** ERC-4337 EntryPoint (canonical address on Base). */
   EntryPoint: {

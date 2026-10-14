@@ -62,6 +62,17 @@ export interface SignBindResponse {
  * `extends Rpc.WorkerEntrypointBranded` is required to satisfy the
  * generic constraint on Cloudflare's `Service<T>` helper.
  */
+/** Request for `signRebind` (decision 0022): a bind request plus the registry epoch. */
+export interface SignRebindRequest extends SignBindRequest {
+  /** `NullifierRegistry.rebindCount[nullifier]` as read on Base; decimal string. */
+  readonly epoch: string;
+}
+
+/** Response from `signRebind`; `messageHash` equals `NullifierRegistry.rebindMessageHash`. */
+export interface SignRebindResponse extends SignBindResponse {
+  readonly epoch: string;
+}
+
 /** Ceremony actions, named as `CofferdamAccount4337.ACTION_*` hash them. */
 export type CeremonyAction = 'enroll-first-high' | 'replace-partner';
 
@@ -97,4 +108,5 @@ export interface SignCeremonyResponse {
 export interface AttesterRpc extends Rpc.WorkerEntrypointBranded {
   signBind(req: SignBindRequest): Promise<SignBindResponse>;
   signCeremony(req: SignCeremonyRequest): Promise<SignCeremonyResponse>;
+  signRebind(req: SignRebindRequest): Promise<SignRebindResponse>;
 }
