@@ -24,7 +24,6 @@ import { attesterRoutes } from './routes/attester.js';
 import { ceremonyRoutes } from './routes/ceremony.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { healthRoutes } from './routes/health.js';
-import { relayerRoutes } from './routes/relayer.js';
 import { aaRoutes } from './routes/aa.js';
 import { selfRoutes } from './routes/self.js';
 import { sepoliaRoutes } from './routes/sepolia.js';
@@ -68,7 +67,6 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/self/verify' },
       { method: 'GET', path: '/v1/self/bind-bundle/:account' },
       { method: 'POST', path: '/v1/session/verify-attestation' },
-      { method: 'POST', path: '/v1/relayer/setup-investments' },
       { method: 'POST', path: '/v1/aa/user-operation' },
       { method: 'POST', path: '/v1/ceremony/first-high' },
     ],
@@ -84,7 +82,6 @@ app.route('/v1/self', selfRoutes);
 app.route('/v1/enterprise', enterpriseRoutes);
 app.route('/v1/activity', activityRoutes);
 app.route('/v1/session', sessionRoutes);
-app.route('/v1/relayer', relayerRoutes);
 app.route('/v1/aa', aaRoutes);
 app.route('/v1/ceremony', ceremonyRoutes);
 

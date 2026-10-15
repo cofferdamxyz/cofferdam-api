@@ -42,7 +42,7 @@ export interface Env {
   /**
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
    * `handleOps` for the app's sponsored ops (`/v1/aa/user-operation`, refunded
-   * by the paymaster) and funds the EIP-7702 Investments Account setup.
+   * by the paymaster).
    * Same account used for the CDP Paymaster on Sepolia.
    * Set via `wrangler secret put RELAYER_PRIVATE_KEY`.
    * Migration path: replace with CDP Server-Side Wallets for production.
