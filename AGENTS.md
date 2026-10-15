@@ -14,16 +14,18 @@ Cloudflare Workers API plane for Cofferdam.
 - `src/services/sessionAttestation.ts` verifies `csa1:` passkey-signed envelopes from `@cofferdam/sdk`. Must stay byte-compatible with SDK `sessionAttestation.ts`.
 - `src/services/activity.ts` fetches USDC Transfer events per chain: Base Sepolia (84532) uses viem `getLogs` (the Portal's Sepolia dataset lags ~10 days); Base mainnet (8453) uses the SQD Portal Stream API (public, unkeyed) and falls back to RPC on 429/529/502/503.
 - `src/env.ts` declares optional `POLIS_DATABASE_URL` and `ACTIVITY_DATABASE_URL` as future fallbacks.
-- `src/routes/self.ts` + `src/services/selfBind.ts` receive Self.xyz's relayer proof (`POST /v1/self/verify`), pre-flight `NullifierRegistry`, call `ATTESTER.signBind` (Celo-gated), and store the bind bundle in the `BIND_BUNDLES` KV namespace for `GET /v1/self/bind-bundle/:account` (csa1-gated). The endpoint must stay on the `cofferdam.xyz` host (zone route): only the host enters the immutable scope. Returns `503 bind_store_unprovisioned` until the namespace exists.
+- `src/routes/self.ts` + `src/services/selfBind.ts` receive Self.xyz's relayer proof (`POST /v1/self/verify`), pre-flight `NullifierRegistry`, call `ATTESTER.signBind` (Celo-gated) or, for a passport bound to another account, read `rebindCount` and call `ATTESTER.signRebind` (bundle `kind: 'rebind'`, decision 0022), and store the bundle in the per-account `BindBundleDO` Durable Object (decision 0010) for `GET /v1/self/bind-bundle/:account` (csa1-gated outside development). The endpoint must stay on the `cofferdam.xyz` host (zone route): only the host enters the immutable scope.
 - `src/routes/ceremony.ts` + `src/services/ceremony.ts` issue the decision 0016 ceremony co-sign (`POST /v1/ceremony/first-high`): the gate is pure and tested against fakes; chain reads and the `ATTESTER.signCeremony` call are injected.
 - `src/routes/aa.ts` + `src/services/userOp.ts` relay the app's signed ERC-4337 ops (`POST /v1/aa/user-operation`): policy (our paymaster, our factory in `initCode`, gas/fee/prefund caps) → `handleOps` simulation from the relayer → submission with `RELAYER_PRIVATE_KEY`. The first op of an account carries `initCode`, so this is also deployment (decision 0012).
-- `src/routes/enterprise.ts` + `src/services/company.ts` + `src/services/companyLinks.ts` implement the domain-anchored `companyRef` resolver and `CompanyConsumerLink` grants. Link routes return `503 link_store_unprovisioned` until the `LINKS` KV namespace is created.
+- `src/routes/enterprise.ts` + `src/services/company.ts` + `src/services/companyLinks.ts` implement the domain-anchored `companyAnchor` resolver and `CompanyConsumerLink` grants. Link routes return `503 link_store_unprovisioned` until the `LINKS` KV namespace is created.
 - The planned Assignment service is generic, account-pseudonym keyed, local-first, and escrow-optional. Port structural behavior from OffshoreSync `WorkAssignment`/`ScheduleOverride`; do not import Mongo IDs or maritime social dispatch into the plane.
 
-## Validation
+## Validation and deploys
 
-- `yarn typecheck` must pass.
+- `yarn test` and `yarn typecheck` must pass.
 - Verify on-chain authority config matches SDK encoding before deploying.
+- Deploys run only from the Mac with the workspace `.envrc` loaded (`direnv exec .. yarn deploy`), never from a cloud session; when a contract pin moves, deploy the attester first. Runbook: `docs/runbooks/cloudflare-deploys.md` in the workspace. `src/chain/deployments.ts` mirrors `base-contracts/deployments/baseSepolia.json`.
+- Design: `docs/architecture/plane.md` in the workspace.
 
 ## References
 

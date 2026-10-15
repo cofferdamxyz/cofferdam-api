@@ -17,7 +17,7 @@ const DEFAULT_CHAIN_ID = 84532;
  * address on Base Sepolia. Queries the SQD Portal Stream API — full history,
  * no indexer process, SQD manages all node infrastructure.
  *
- * See ENTERPRISE_MODULE_PLAN.md §3 (decision 2026-06-26).
+ * See workspace decision 0009.
  */
 activityRoutes.get('/', async (c) => {
   const address = c.req.query('address');

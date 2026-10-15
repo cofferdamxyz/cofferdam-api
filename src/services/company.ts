@@ -3,7 +3,7 @@
 
 /**
  * Company-plane service — the shared, domain-anchored company identity
- * primitives for the Cofferdam enterprise module (ENTERPRISE_MODULE_PLAN.md
+ * primitives for the Cofferdam enterprise module (workspace `docs/product/enterprise.md`
  * rev-7.4, §3 "thin shared company plane" + §4.1 + §6.C).
  *
  * The keystone is `deriveCompanyAnchor`: a company's GLOBAL, immutable
@@ -95,7 +95,7 @@ export function canonicalizeDomain(input: string): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// DNS challenge surface (ENTERPRISE_MODULE_PLAN.md §4.4 / §12.1)
+// DNS challenge surface (workspace `docs/product/enterprise.md`)
 //
 // The proof is to the SHARED Cofferdam plane, so the record is
 // Cofferdam-branded regardless of which consumer's UI initiates it.

@@ -3,7 +3,7 @@
 
 /**
  * `CompanyConsumerLink` — the vertical → global-company grant
- * (ENTERPRISE_MODULE_PLAN.md §4.11, rev-7.4c).
+ * (workspace `docs/product/enterprise.md`, rev-7.4c).
  *
  * This is the one record that lives in the SHARED Cofferdam company plane
  * (this Worker), NOT in any per-consumer database. A consumer (OffshoreSync

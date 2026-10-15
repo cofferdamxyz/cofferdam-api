@@ -6,7 +6,7 @@ This product includes software developed at Cofferdam Inc
 
 cofferdam-api is the public-edge HTTP Worker for the Cofferdam wallet
 stack. It is part of the Cofferdam identity rail described in:
-  https://github.com/cofferdamxyz/cofferdam-sdk/blob/main/IDENTITY_LAYER_DESIGN.md
+  https://github.com/cofferdamxyz/cofferdam-sdk (documentation: https://docs.cofferdam.xyz)
 
 Sibling repositories:
   cofferdam-attester  https://github.com/cofferdamxyz/cofferdam-attester

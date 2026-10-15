@@ -35,7 +35,7 @@ export interface Env {
    * SQD Portal Stream API base URL for the /v1/activity route.
    * Defaults to the free public endpoint (20 req/10s rate limit).
    * Override with a Cloud Portal URL for production (higher rate limits).
-   * See ENTERPRISE_MODULE_PLAN.md §3 (decision 2026-06-26).
+   * See workspace decision 0009.
    */
   SQD_PORTAL_URL?: string;
 
@@ -59,7 +59,7 @@ export interface Env {
    *
    * ACTIVITY_DATABASE_URL is retained as an optional future fallback but is
    * NOT required — `/v1/activity` uses the SQD Portal Stream API directly
-   * (decision 2026-06-26, ENTERPRISE_MODULE_PLAN.md §3).
+   * (workspace decision 0009).
    */
   POLIS_DATABASE_URL?: string;
   ACTIVITY_DATABASE_URL?: string;

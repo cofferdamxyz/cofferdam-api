@@ -3,7 +3,7 @@
 
 /**
  * /v1/enterprise routes — the shared Cofferdam company-plane resolver +
- * grant API (ENTERPRISE_MODULE_PLAN.md rev-7.4 §3 + §4.11).
+ * grant API (workspace `docs/product/enterprise.md`).
  *
  *   GET  /v1/enterprise/resolve?domain=<d>                  domain → global companyAnchor (+ DNS challenge, on-chain status)
  *   GET  /v1/enterprise/companies/:companyAnchor               on-chain registration status for a companyAnchor

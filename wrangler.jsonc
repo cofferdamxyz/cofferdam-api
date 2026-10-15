@@ -37,7 +37,7 @@
 
   // Variables — non-secret. Secrets live in `wrangler secret put`.
   //
-  // Neon Postgres — `polis` DB only (ENTERPRISE_MODULE_PLAN.md §3, decision
+  // Neon Postgres — `polis` DB only (workspace `docs/product/enterprise.md`, decision
   // 2026-06-26). Secret, set with:
   //   wrangler secret put POLIS_DATABASE_URL      # `polis` DB (enterprise identity)
   // Use Neon's POOLED HTTP endpoint URL (the Worker reads via
