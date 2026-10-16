@@ -32,10 +32,11 @@ export interface Env {
   CELO_RPC_URL?: string;
 
   /**
-   * SQD Portal Stream API base URL for the /v1/activity route.
-   * Defaults to the free public endpoint (20 req/10s rate limit).
-   * Override with a Cloud Portal URL for production (higher rate limits).
-   * See workspace decision 0009.
+   * SQD Portal dataset URL for the /v1/activity routes. It overrides the
+   * per-chain default only for the chain whose dataset it names
+   * (`…/datasets/base-mainnet` → 8453), so a Sepolia value never serves
+   * mainnet. Defaults to the free public endpoint (20 req/10s); a Cloud Portal
+   * URL for production raises the limit. See workspace decision 0009.
    */
   SQD_PORTAL_URL?: string;
 

@@ -418,7 +418,22 @@ describe('POST /v1/self/verify', () => {
     expect(second.status).toBe(429);
     expect(second.json).toMatchObject({ status: 'error', result: false, code: 'rate_limited' });
     expect(perAccount.signBind).toHaveBeenCalledTimes(1);
-    expect(rl.calls).toEqual(['verify:all', `verify:${ACCOUNT.toLowerCase()}`, 'verify:all', `verify:${ACCOUNT.toLowerCase()}`]);
+    expect(rl.calls).toEqual([
+      'verify:all',
+      `verify:${ACCOUNT.toLowerCase()}`,
+      'verify:nullifier:777',
+      'verify:all',
+      `verify:${ACCOUNT.toLowerCase()}`,
+    ]);
+
+    // Per nullifier (decision 0022): the same passport again is braked even when the account key allows it.
+    const perNullifier = rateLimit(1, { 'verify:all': 100, [`verify:${ACCOUNT.toLowerCase()}`]: 100 });
+    const braked = harness({ store: memoryStore(), verifyLimit: perNullifier });
+    expect((await braked.post(relayerBody())).status).toBe(200);
+    const sprayed = await braked.post(relayerBody());
+    expect(sprayed.status).toBe(429);
+    expect(sprayed.json).toMatchObject({ code: 'rate_limited', message: 'too many proofs for this passport; retry shortly' });
+    expect(braked.signBind).toHaveBeenCalledTimes(1);
 
     // Global brake: refused before the body is even parsed.
     const global = harness({ store: memoryStore(), verifyLimit: rateLimit(0) });

@@ -231,6 +231,14 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
         429,
       );
     }
+    // One passport cannot spray proofs across accounts (decision 0022): the
+    // nullifier gets its own brake, with the same ceiling as the account key.
+    if (await overLimit(c.env.SELF_VERIFY_RL, `verify:nullifier:${req.nullifier}`)) {
+      return c.json(
+        { status: 'error', result: false, code: 'rate_limited', message: 'too many proofs for this passport; retry shortly' },
+        429,
+      );
+    }
 
     // Pre-flight on Base: a bound account or nullifier can never bind again,
     // so do not ask the attester to sign something the chain will revert.

@@ -48,17 +48,30 @@ const MAX_RESULTS = 50;
 const RPC_BLOCK_BATCH = 2000;
 const RPC_MAX_CHUNKS = 15; // 15 × 2000 = 30K blocks ≈ 24h at 2s block time
 
-/** Default Portal base URLs per chain. */
-const DEFAULT_PORTAL_URLS: Record<number, string> = {
-  84532: 'https://portal.sqd.dev/datasets/base-sepolia',
-  8453: 'https://portal.sqd.dev/datasets/base-mainnet',
+/** Portal dataset slugs per chain; the default URL and the override check derive from them. */
+const PORTAL_DATASETS: Record<number, string> = {
+  84532: 'base-sepolia',
+  8453: 'base-mainnet',
 };
+
+/** Default Portal base URLs per chain. */
+const DEFAULT_PORTAL_URLS: Record<number, string> = Object.fromEntries(
+  Object.entries(PORTAL_DATASETS).map(([chainId, slug]) => [chainId, `https://portal.sqd.dev/datasets/${slug}`]),
+);
 
 /** Chain IDs that use the RPC fallback (Portal not real-time). */
 const RPC_FALLBACK_CHAINS = new Set([84532]);
 
-function portalUrlFor(chainId: number, override?: string): string {
-  return override || DEFAULT_PORTAL_URLS[chainId] || DEFAULT_PORTAL_URLS[84532]!;
+/**
+ * The Portal URL for a chain. `SQD_PORTAL_URL` overrides the default only for
+ * the chain whose dataset it names (`…/datasets/base-mainnet` serves 8453 and
+ * nothing else), so a Sepolia value in the deployment can never send a
+ * `chainId=8453` request to the Sepolia dataset. Exported for its tests.
+ */
+export function portalUrlFor(chainId: number, override?: string): string {
+  const slug = PORTAL_DATASETS[chainId];
+  if (override && slug && override.includes(`/${slug}`)) return override;
+  return DEFAULT_PORTAL_URLS[chainId] || DEFAULT_PORTAL_URLS[84532]!;
 }
 
 /** Portal refused for capacity or availability; the caller falls back to RPC. */

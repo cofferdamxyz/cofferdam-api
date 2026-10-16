@@ -12,7 +12,7 @@
  * Deploy:     `yarn deploy` (wrangler deploy to Cloudflare).
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 
 // Durable Object classes must be exported from the Worker entry module.
 export { BindBundleDO } from './services/bindBundleDO.js';
@@ -32,12 +32,19 @@ import { sessionRoutes } from './routes/session.js';
 const app = new Hono<{ Bindings: Env }>();
 
 // ── Global middleware ──────────────────────────────────────────────
-// CORS — permissive for now (RN app fetches with no Origin header in
-// some environments; localhost dev uses arbitrary ports). Tightened to
-// an explicit allowlist (cofferdam-app + cofferdam-pages production
-// hosts) once those domains are live.
+// CORS: browser callers are Cofferdam's own hosts (the site, the hosted
+// ceremony page) plus local dev servers under ENVIRONMENT=development. The
+// native app, Self's relayer and other servers send no Origin header and are
+// unaffected. Any other origin gets no Access-Control-Allow-Origin header.
+const ALLOWED_ORIGINS = new Set(['https://cofferdam.xyz', 'https://www.cofferdam.xyz', 'https://id.cofferdam.xyz']);
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+export function allowOrigin(origin: string, c: Context<{ Bindings: Env }>): string | undefined {
+  if (ALLOWED_ORIGINS.has(origin)) return origin;
+  if (c.env.ENVIRONMENT === 'development' && LOCAL_ORIGIN.test(origin)) return origin;
+  return undefined;
+}
 app.use('*', cors({
-  origin: '*',
+  origin: allowOrigin,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   maxAge: 86400,
@@ -63,14 +70,15 @@ app.get('/', (c) => {
       { method: 'GET', path: '/v1/enterprise/links/check?companyAnchor=&consumerId=' },
       { method: 'POST', path: '/v1/enterprise/links/:companyAnchor/:consumerId/revoke' },
       { method: 'GET', path: '/v1/activity?address=' },
-      { method: 'POST', path: '/v1/attester/test-sign' },
+      { method: 'GET', path: '/v1/activity/check?address=&sinceBlock=' },
+      { method: 'POST', path: '/v1/attester/test-sign', environment: 'development' },
       { method: 'POST', path: '/v1/self/verify' },
       { method: 'GET', path: '/v1/self/bind-bundle/:account' },
       { method: 'POST', path: '/v1/session/verify-attestation' },
       { method: 'POST', path: '/v1/aa/user-operation' },
       { method: 'POST', path: '/v1/ceremony/first-high' },
     ],
-    docs: 'See cofferdam-app/backend/README.md',
+    docs: 'https://github.com/cofferdamxyz/cofferdam-api/blob/main/README.md',
   });
 });
 

@@ -27,7 +27,8 @@
  * `verifyAndBind` and nothing can: there is no Groth16 proof behind the
  * synthetic signals, so the registry would revert `InvalidProof`. A leaked
  * pair is a minor info-disclosure (signed nonce + scope) — fine for α
- * development, gate behind ENVIRONMENT before mainnet.
+ * development; since 2026-10-15 the route answers 404 outside
+ * ENVIRONMENT=development, so only `wrangler dev` serves it.
  */
 
 import { Hono } from 'hono';
@@ -147,6 +148,16 @@ interface TestSignBody {
 }
 
 attesterRoutes.post('/test-sign', async (c) => {
+  // A development smoke test: it spends real attester signatures (over
+  // synthetic signals nothing can bind with), so staging and production do
+  // not serve it. Run it against `wrangler dev` (ENVIRONMENT=development).
+  if (c.env.ENVIRONMENT !== 'development') {
+    return c.json(
+      { ok: false, error: 'not_found', message: 'test-sign is served only where ENVIRONMENT=development (wrangler dev)' },
+      404,
+    );
+  }
+
   // ── Parse body ──────────────────────────────────────────────
   let body: TestSignBody;
   try {
