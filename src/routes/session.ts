@@ -24,16 +24,10 @@
  */
 
 import { Hono } from 'hono';
-import { getAddress, type Address } from 'viem';
 import type { Env } from '../env.js';
-import { getBaseSepoliaClient } from '../chain/client.js';
-import {
-  PASSKEY_AUTHORITY_MODULE_BY_SCHEME,
-  BASE_SEPOLIA_CHAIN_ID,
-} from '../chain/deployments.js';
+import { checkOnChainAuthority } from '../services/authorityCheck.js';
 import {
   decodeAndVerifySessionAttestation,
-  encodePasskeyConfig,
   SessionAttestationDecodeError,
   SessionAttestationExpiredError,
   SessionAttestationVerificationError,
@@ -42,37 +36,6 @@ import {
 } from '../services/sessionAttestation.js';
 
 export const sessionRoutes = new Hono<{ Bindings: Env }>();
-
-/** Authority-registry read surface of `CofferdamSmartAccount` (contracts/v2/auth). */
-const COFFERDAM_ACCOUNT_ABI = [
-  {
-    type: 'function',
-    name: 'authorityCount',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'getAuthority',
-    stateMutability: 'view',
-    inputs: [{ name: 'authorityId', type: 'uint256' }],
-    outputs: [
-      { name: 'module', type: 'address' },
-      { name: 'tier', type: 'uint8' },
-      { name: 'active', type: 'bool' },
-      { name: 'config', type: 'bytes' },
-    ],
-  },
-] as const;
-
-/** Outcome of the optional on-chain authority cross-check. */
-type AuthorityCheck =
-  | { status: 'active'; authorityId: number; module: Address; tier: number }
-  | { status: 'not_found' }
-  | { status: 'account_not_deployed' }
-  | { status: 'chain_unsupported'; chainId: number }
-  | { status: 'check_failed'; message: string };
 
 interface VerifyBody {
   attestation?: unknown;
@@ -91,53 +54,6 @@ function parseExpect(raw: unknown): SessionAttestationExpectation | undefined {
   if (typeof o.accountAddress === 'string') out.accountAddress = o.accountAddress;
   if (typeof o.chainId === 'number') out.chainId = o.chainId;
   return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/** Read the account's authority registry and confirm the passkey is active. */
-async function checkOnChainAuthority(
-  att: SessionAttestation,
-  rpcUrl: string,
-): Promise<AuthorityCheck> {
-  if (att.chainId !== BASE_SEPOLIA_CHAIN_ID) {
-    return { status: 'chain_unsupported', chainId: att.chainId };
-  }
-  try {
-    const client = getBaseSepoliaClient(rpcUrl);
-    const address = getAddress(att.accountAddress) as Address;
-
-    const code = await client.getCode({ address });
-    if (!code || code === '0x') return { status: 'account_not_deployed' };
-
-    const expectedConfig = encodePasskeyConfig(att.publicKey).toLowerCase();
-    const expectedModule = PASSKEY_AUTHORITY_MODULE_BY_SCHEME[att.alg].toLowerCase();
-    const count = await client.readContract({
-      address,
-      abi: COFFERDAM_ACCOUNT_ABI,
-      functionName: 'authorityCount',
-    });
-
-    for (let id = 0n; id < count; id++) {
-      const [module, tier, active, config] = await client.readContract({
-        address,
-        abi: COFFERDAM_ACCOUNT_ABI,
-        functionName: 'getAuthority',
-        args: [id],
-      });
-      // The authority is THIS passkey iff it's active, holds the same public
-      // key (config), AND is verified by the module that matches the
-      // attestation's signature scheme (WebAuthn vs raw P-256).
-      if (
-        active &&
-        config.toLowerCase() === expectedConfig &&
-        module.toLowerCase() === expectedModule
-      ) {
-        return { status: 'active', authorityId: Number(id), module, tier };
-      }
-    }
-    return { status: 'not_found' };
-  } catch (err) {
-    return { status: 'check_failed', message: err instanceof Error ? err.message : String(err) };
-  }
 }
 
 sessionRoutes.post('/verify-attestation', async (c) => {

@@ -53,9 +53,12 @@ import {
   buildBindBundle,
   parseSelfVerifyBody,
 } from '../services/selfBind.js';
+import { checkOnChainAuthority, type AuthorityCheck } from '../services/authorityCheck.js';
+import { TIER } from '../services/ceremony.js';
 import {
   SessionAttestationError,
   decodeAndVerifySessionAttestation,
+  type SessionAttestation,
 } from '../services/sessionAttestation.js';
 
 /** Minimal read surface of `NullifierRegistry` for the pre-flight. */
@@ -99,6 +102,8 @@ export interface SelfRouteDeps {
   attestationMaxAgeMs: number;
   /** The bundle store for this request, or null when the deployment lacks one. */
   store(env: Env): BundleStore | null;
+  /** Is the token's key an active authority on the account it names? Read on Base. */
+  authorityCheck(env: Env, att: SessionAttestation): Promise<AuthorityCheck>;
 }
 
 /** Rate-limit helper: absent binding or a binding error never blocks. */
@@ -163,6 +168,7 @@ export const defaultSelfRouteDeps: SelfRouteDeps = {
   now: () => Date.now(),
   attestationMaxAgeMs: 10 * 60 * 1000,
   store: (env) => (env.BIND_BUNDLES_DO ? new DurableBindStore(env.BIND_BUNDLES_DO) : null),
+  authorityCheck: (env, att) => checkOnChainAuthority(att, env.BASE_SEPOLIA_RPC_URL),
 };
 
 /**
@@ -339,8 +345,9 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     const auth = c.req.header('authorization');
     const token = auth?.replace(/^Bearer\s+/i, '').trim();
     if (token) {
+      let att: SessionAttestation;
       try {
-        decodeAndVerifySessionAttestation(token, {
+        att = decodeAndVerifySessionAttestation(token, {
           expect: { accountAddress: account },
           maxAgeMs: deps.attestationMaxAgeMs,
           now: deps.now(),
@@ -350,6 +357,25 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
           return c.json({ ok: false, error: 'attestation_rejected', message: err.message }, 401);
         }
         throw err;
+      }
+      // The envelope proves that a passkey signed it, not that the passkey is
+      // on this account: anyone can mint one for any address. Read the account
+      // on Base and require an active High authority before handing out a
+      // bundle that links a nullifier to the account.
+      const check = await deps.authorityCheck(c.env, att);
+      if (check.status === 'check_failed') {
+        return c.json({ ok: false, error: 'authority_check_unavailable', message: check.message }, 503);
+      }
+      if (check.status !== 'active' || check.tier !== TIER.High) {
+        const why = check.status === 'active' ? `authority ${check.authorityId} is not High` : check.status;
+        return c.json(
+          {
+            ok: false,
+            error: 'attestation_rejected',
+            message: `the token's key is not an active High authority on ${account} (${why})`,
+          },
+          401,
+        );
       }
     } else if (c.env.ENVIRONMENT !== 'development') {
       return c.json(

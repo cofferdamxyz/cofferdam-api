@@ -25,6 +25,7 @@ import {
   toSolidityProof,
 } from '../src/services/selfBind.js';
 import { attesterErrorCode, createSelfRoutes, type BindStatus } from '../src/routes/self.js';
+import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import fixtures from './fixtures/sdk-attestations.json';
 import { SEPOLIA_DEPLOYMENTS } from '../src/chain/deployments.js';
 
@@ -124,6 +125,8 @@ function harness(opts: {
   now?: number;
   verifyLimit?: RateLimit;
   pickupLimit?: RateLimit;
+  /** What the on-chain authority check answers for a presented token (default: an active High). */
+  authorityCheck?: AuthorityCheck;
 } = {}) {
   const signBind = vi.fn(opts.signBind ?? (async (req: SignBindRequest) => signedFor(req)));
   const signRebind = vi.fn(
@@ -146,6 +149,8 @@ function harness(opts: {
       now: () => opts.now ?? 1_760_000_000_000,
       attestationMaxAgeMs: 10 * 60 * 1000,
       store: () => store,
+      authorityCheck: async () =>
+        opts.authorityCheck ?? { status: 'active', authorityId: 0, module: ACCOUNT, tier: 3 },
     }),
   );
   const call = async (path: string, init?: RequestInit) => {
@@ -425,6 +430,37 @@ describe('POST /v1/self/verify', () => {
 describe('GET /v1/self/bind-bundle/:account', () => {
   const fx = fixtures.p256;
   const fxAccount = fixtures.fields.accountAddress as Address;
+
+  it('refuses a valid token whose key is not an active High authority on the account', async () => {
+    const store = memoryStore();
+    const issuedAt = fixtures.fields.issuedAt as number;
+    await harness({ store }).post(relayerBody(fxAccount));
+    const bearer = { headers: { authorization: `Bearer ${fx.token}` } };
+    const at = (check: AuthorityCheck) =>
+      harness({ store, environment: 'staging', now: issuedAt + 5_000, authorityCheck: check });
+
+    const stranger = await at({ status: 'not_found' }).call(`/v1/self/bind-bundle/${fxAccount}`, bearer);
+    expect(stranger.status).toBe(401);
+    expect(stranger.json.error).toBe('attestation_rejected');
+    expect(stranger.json.message).toMatch(/authority/);
+
+    const partner = await at({ status: 'active', authorityId: 1, module: ACCOUNT, tier: 4 }).call(
+      `/v1/self/bind-bundle/${fxAccount}`,
+      bearer,
+    );
+    expect(partner.status).toBe(401);
+
+    const undeployed = await at({ status: 'account_not_deployed' }).call(`/v1/self/bind-bundle/${fxAccount}`, bearer);
+    expect(undeployed.status).toBe(401);
+
+    const rpcDown = await at({ status: 'check_failed', message: 'rpc down' }).call(
+      `/v1/self/bind-bundle/${fxAccount}`,
+      bearer,
+    );
+    expect(rpcDown.status).toBe(503);
+    expect(rpcDown.json.error).toBe('authority_check_unavailable');
+    expect(store.data.size).toBe(1);
+  });
 
   it('validates the address and reports missing bundles', async () => {
     const h = harness({ store: memoryStore() });
