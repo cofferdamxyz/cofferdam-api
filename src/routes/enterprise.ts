@@ -14,7 +14,8 @@
  *
  * MATURITY (α): `resolve` is fully live — `companyAnchor` is a pure function of
  * the domain. On-chain registration degrades to `registry_not_deployed`
- * until `CofferdamCorporateRegistry` is vendored (services/company.ts). The
+ * until the company and corporate registries are vendored (services/company.ts);
+ * responses carry `registered` and `orgGeneration`, never the company wallet. The
  * link endpoints require the `LINKS` KV namespace; until it's provisioned
  * they return 503 `link_store_unprovisioned`.
  *
@@ -30,6 +31,7 @@ import type { Env } from '../env.js';
 import { getBaseSepoliaClient } from '../chain/client.js';
 import { BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 import {
+  COMPANY_REGISTRY_ADDRESS,
   CORPORATE_REGISTRY_ADDRESS,
   DNS_CHALLENGE_VALUE_PREFIX,
   canonicalizeDomain,
@@ -61,7 +63,7 @@ async function registrationFor(
   c: Context<{ Bindings: Env }>,
   companyAnchor: CompanyAnchor,
 ): Promise<RegistrationResult> {
-  if (!CORPORATE_REGISTRY_ADDRESS) return { status: 'registry_not_deployed' };
+  if (!COMPANY_REGISTRY_ADDRESS || !CORPORATE_REGISTRY_ADDRESS) return { status: 'registry_not_deployed' };
   try {
     const client = getBaseSepoliaClient(c.env.BASE_SEPOLIA_RPC_URL);
     return await readCompanyRegistration(client, companyAnchor);

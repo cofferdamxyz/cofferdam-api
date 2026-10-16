@@ -14,7 +14,7 @@
  * `CompanyConsumerLink` grant (§4.11).
  *
  * CANONICAL PREIMAGE (must stay byte-for-byte identical across this Worker,
- * the future `CofferdamCorporateRegistry.registerCompany` Solidity, and the
+ * the `CofferdamCompanyRegistry.registerCompany` caller, and the
  * SDK):
  *
  *   companyAnchor = keccak256( utf8("cofferdam-company-v1") || utf8(canonicalDomain) )
@@ -120,87 +120,97 @@ export function mintChallengeToken(): string {
 export function formatChallengeValue(token: string): string {
   return `${DNS_CHALLENGE_VALUE_PREFIX}${token}`;
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// On-chain registration lookup (CofferdamCorporateRegistry, §6.C)
+// ─────────────────────────────────────────────────
+// On-chain registration lookup (CofferdamCompanyRegistry + CofferdamCorporateRegistry)
 //
-// NOTE: `CofferdamCorporateRegistry` is a rev-7.4 testnet redeploy that has
-// NOT landed yet (see the rev-7.4 change log + §14 migration note). Until
-// its address is vendored into `chain/deployments.ts`, this stays `null`
-// and registration lookups degrade gracefully (`readCompanyRegistration`
-// returns `null` → routes report `registry_not_deployed`).
-// ─────────────────────────────────────────────────────────────────────
+// Neither registry is deployed beyond a local Anvil node yet. Until their
+// addresses are vendored into `chain/deployments.ts` these stay `null` and
+// lookups degrade gracefully (`readCompanyRegistration` returns `null` →
+// routes report `registry_not_deployed`).
+//
+// Wallet isolation: the company's wallet (its Safe) is read server-side only,
+// through `readCompanyWallet`, and is never part of `CompanyRegistration`,
+// so no route can hand it to a caller.
+// ─────────────────────────────────────────────────
 
+export const COMPANY_REGISTRY_ADDRESS: Address | null = null;
 export const CORPORATE_REGISTRY_ADDRESS: Address | null = null;
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-/** Minimal read-only ABI for the registry getters we need. */
-export const CORPORATE_REGISTRY_ABI = [
+/** `CofferdamCompanyRegistry.companyWalletOf(companyAnchor)`: the company's wallet, or zero. */
+export const COMPANY_REGISTRY_ABI = [
   {
     type: 'function',
-    name: 'companyWallet',
+    name: 'companyWalletOf',
     stateMutability: 'view',
     inputs: [{ name: 'companyAnchor', type: 'bytes32' }],
     outputs: [{ type: 'address' }],
   },
+] as const;
+
+/** `CofferdamCorporateRegistry.getOrgRoot(companyAnchor)`: `(root, generation, updatedAt)`. */
+export const CORPORATE_REGISTRY_ABI = [
   {
     type: 'function',
-    name: 'orgRoots',
+    name: 'getOrgRoot',
     stateMutability: 'view',
     inputs: [{ name: 'companyAnchor', type: 'bytes32' }],
     outputs: [
       { name: 'root', type: 'bytes32' },
-      { name: 'generation', type: 'uint64' },
-      { name: 'rootUpdater', type: 'address' },
-      { name: 'updatedAt', type: 'uint64' },
-      { name: 'batchSummaryHash', type: 'bytes32' },
+      { name: 'generation', type: 'uint32' },
+      { name: 'updatedAt', type: 'uint48' },
     ],
   },
 ] as const;
 
+/** What a caller may learn about a company's on-chain state. Never the wallet. */
 export interface CompanyRegistration {
-  /** True iff a main Safe (companyWallet) is registered for this companyAnchor. */
+  /** True iff the registrar recorded this companyAnchor with a wallet. */
   registered: boolean;
-  /** The company's main Safe address, or `null` if unregistered. */
-  companyWallet: Address | null;
-  /** Current `OrgRoot.generation`, or `null` if unregistered / no root yet. */
+  /** Current org-root generation, or `null` if unregistered / no root yet. */
   orgGeneration: number | null;
 }
 
 /**
+ * Server-side only: the company's wallet (its Safe), or `null` when the
+ * registry is not deployed or the anchor is unregistered. Never serialise
+ * this into a response (wallet isolation, `docs/architecture/system.md`).
+ */
+export async function readCompanyWallet(
+  client: BaseSepoliaClient,
+  companyAnchor: CompanyAnchor,
+): Promise<Address | null> {
+  if (!COMPANY_REGISTRY_ADDRESS) return null;
+  const wallet = (await client.readContract({
+    address: COMPANY_REGISTRY_ADDRESS,
+    abi: COMPANY_REGISTRY_ABI,
+    functionName: 'companyWalletOf',
+    args: [companyAnchor],
+  })) as Address;
+  return wallet.toLowerCase() === ZERO_ADDRESS ? null : wallet;
+}
+
+/**
  * Read whether a `companyAnchor` is registered on-chain and its current org
- * generation. Returns `null` when the registry isn't deployed yet (caller
+ * generation. Returns `null` when the registries aren't deployed yet (caller
  * should surface `registry_not_deployed`).
  */
 export async function readCompanyRegistration(
   client: BaseSepoliaClient,
   companyAnchor: CompanyAnchor,
 ): Promise<CompanyRegistration | null> {
-  if (!CORPORATE_REGISTRY_ADDRESS) return null;
+  if (!COMPANY_REGISTRY_ADDRESS || !CORPORATE_REGISTRY_ADDRESS) return null;
 
-  const wallet = (await client.readContract({
+  const wallet = await readCompanyWallet(client, companyAnchor);
+  if (!wallet) return { registered: false, orgGeneration: null };
+
+  const [, generation] = (await client.readContract({
     address: CORPORATE_REGISTRY_ADDRESS,
     abi: CORPORATE_REGISTRY_ABI,
-    functionName: 'companyWallet',
+    functionName: 'getOrgRoot',
     args: [companyAnchor],
-  })) as Address;
+  })) as readonly [Hex, number, number];
 
-  const registered = wallet.toLowerCase() !== ZERO_ADDRESS;
-  if (!registered) {
-    return { registered: false, companyWallet: null, orgGeneration: null };
-  }
-
-  const org = (await client.readContract({
-    address: CORPORATE_REGISTRY_ADDRESS,
-    abi: CORPORATE_REGISTRY_ABI,
-    functionName: 'orgRoots',
-    args: [companyAnchor],
-  })) as readonly [Hex, bigint, Address, bigint, Hex];
-
-  return {
-    registered: true,
-    companyWallet: wallet,
-    orgGeneration: Number(org[1]),
-  };
+  return { registered: true, orgGeneration: Number(generation) };
 }
