@@ -25,11 +25,14 @@
  *   signature), so there is no session gate; the paymaster's deposit is what
  *   the policy and the per-sender / global rate limits protect. The relayer
  *   EOA's nonce is read per request (`pending`), which is fine at this volume;
- *   serialise it through a Durable Object before real traffic.
+ *   serialise it through a Durable Object before real traffic. The signed
+ *   transaction is sent with one retry (`services/relaySend.ts`): the same
+ *   bytes again on a transient node error, a fresh nonce on a nonce or fee
+ *   clash; every refused attempt and every failed simulation is logged.
  */
 
 import { Hono } from 'hono';
-import { BaseError, ContractFunctionRevertedError, createWalletClient, http, type Hex } from 'viem';
+import { BaseError, ContractFunctionRevertedError, createWalletClient, encodeFunctionData, http, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
 
@@ -46,6 +49,7 @@ import {
   type PackedUserOperationWire,
   type UserOpPolicy,
 } from '../services/userOp.js';
+import { sendWithRetry } from '../services/relaySend.js';
 
 export class UserOpSubmitError extends Error {
   constructor(
@@ -89,7 +93,12 @@ function revertReason(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Simulate from the relayer, then submit with it. */
+/** One structured log line per refused relay step (no signature, no key). */
+function logRelay(event: string, op: PackedUserOperationWire, fields: Record<string, unknown>): void {
+  console.warn(JSON.stringify({ event, sender: op.sender, nonce: op.nonce, ...fields }));
+}
+
+/** Simulate from the relayer, then submit with it (signed once, one retry). */
 export async function submitUserOperation(env: Env, op: PackedUserOperationWire): Promise<Hex> {
   const rpcUrl = env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org';
   const relayer = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as Hex);
@@ -104,11 +113,21 @@ export async function submitUserOperation(env: Env, op: PackedUserOperationWire)
       account: relayer,
     }));
   } catch (err) {
-    throw new UserOpSubmitError('simulation_failed', revertReason(err));
+    const reason = revertReason(err);
+    logRelay('aa_simulation_failed', op, { reason });
+    throw new UserOpSubmitError('simulation_failed', reason);
   }
+  const wallet = createWalletClient({ account: relayer, chain: baseSepolia, transport: http(rpcUrl) });
+  const data = encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args });
   try {
-    const wallet = createWalletClient({ account: relayer, chain: baseSepolia, transport: http(rpcUrl) });
-    return await wallet.writeContract(request);
+    return await sendWithRetry({
+      sign: async () => {
+        const prepared = await wallet.prepareTransactionRequest({ to: request.address, data, chain: baseSepolia });
+        return wallet.signTransaction(prepared);
+      },
+      send: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
+      onAttemptError: (attempt, cls, reason) => logRelay('aa_send_refused', op, { attempt, class: cls, reason }),
+    });
   } catch (err) {
     throw new UserOpSubmitError('relay_failed', revertReason(err));
   }
