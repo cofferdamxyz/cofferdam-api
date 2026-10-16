@@ -29,7 +29,8 @@ wrangler.jsonc       vars, zone route, service binding, Durable Object, rate lim
 | `POST /v1/ceremony/first-high` | the co-sign for a first-High enrolment (`enrollFirstHigh`): requires the signing authority's own session token (`Authorization: Bearer csa1:…` or `csa-sess1.…`), gated on the account's chain state, signed by the attester's ceremony key |
 | `POST /v1/session/verify-attestation` | verifies a `csa1:` envelope from `@cofferdam/sdk`, optionally against the account's on-chain authority |
 | `POST /v1/attester/test-sign` | rail smoke test (served only under `ENVIRONMENT=development`, so `wrangler dev`; 404 on the deployment): synthetic signals with Celo's current roots, signed by the attester, checked against `SelfAttesterRegistry` on Base |
-| `GET /v1/activity?address=`, `GET /v1/activity/check` | USDC transfers per chain (RPC logs on Sepolia, SQD Portal on mainnet) and a cheap "anything new" check |
+| `GET /v1/activity?address=`, `GET /v1/activity/check` | USDC transfers per chain (the webhook-fed record and 200-block RPC scans on Sepolia, SQD Portal on mainnet) and a cheap "anything new" check |
+| `POST /v1/activity/webhooks/cdp` | CDP onchain webhook: verifies `X-Hook0-Signature`, records each MockUSDC transfer in the sender's and recipient's `ActivityDO` |
 | `GET /v1/enterprise/resolve?domain=`, `GET /v1/enterprise/companies/:companyAnchor` | domain → `companyAnchor` with the DNS challenge; on-chain registration status |
 | `POST /v1/enterprise/links`, `GET /v1/enterprise/links`, `GET /v1/enterprise/links/check`, `POST /v1/enterprise/links/:companyAnchor/:consumerId/revoke` | company ↔ consumer-app link grants; `503 link_store_unprovisioned` until the `LINKS` KV namespace exists |
 
@@ -55,7 +56,7 @@ From the Mac with the workspace `.envrc` loaded, the attester first when a pin m
 ## Key facts
 
 - Hosts: `https://cofferdam-api.shy-cell-424a.workers.dev` (every route) and the zone route `cofferdam.xyz/v1/*`. The Self endpoint must stay on `cofferdam.xyz`: the host is part of the registry's immutable scope.
-- `ENVIRONMENT=staging` on the deployment. Secrets: `RELAYER_PRIVATE_KEY`; optional `POLIS_DATABASE_URL` (Neon `polis`) and `ACTIVITY_DATABASE_URL`, unused until provisioned.
+- `ENVIRONMENT=staging` on the deployment. Secrets: `RELAYER_PRIVATE_KEY`; optional `ACTIVITY_RPC_URL` (CDP Node URL for the activity scans) and `CDP_WEBHOOK_SECRET` (with the `ACTIVITY_INDEX_FROM_BLOCK` var, turns on the activity store); optional `POLIS_DATABASE_URL` (Neon `polis`) and `ACTIVITY_DATABASE_URL`, unused until provisioned.
 - `src/chain/deployments.ts` mirrors `base-contracts/deployments/baseSepolia.json` by hand; the relay policy, the ceremony gate and the Self routes read it. `NullifierRegistry` must equal the attester's `NULLIFIER_REGISTRY_ADDRESS`.
 - `src/services/sessionAttestation.ts` must stay byte-compatible with the SDK's `sessionAttestation.ts`.
 - No `account_id` in `wrangler.jsonc`. Stores: Durable Objects today; Neon Postgres, KV, R2 and D1 as surfaces need them. No MongoDB.

@@ -2,27 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Activity service — fetches ERC-20 Transfer events for a wallet address.
+ * Activity service — USDC Transfer events for a wallet address.
  *
- * Dual data source strategy (decision 2026-06-26):
- * - Base Sepolia (84532): direct RPC `eth_getLogs` with 2000-block pagination.
- *   SQD Portal's base-sepolia dataset is archival-only and lags ~10 days behind
- *   chain head, so RPC is the only way to get recent testnet transactions.
- *   Public RPC caps eth_getLogs at 2000 blocks/call; 15 chunks × 2000 = 30K
- *   blocks ≈ 24h lookback at 2s block time.
- * - Base Mainnet (8453): SQD Portal Stream API (real-time, 7-day lookback).
- *   Portal's base-mainnet dataset has real_time=true, so the timestamp
- *   resolver and stream queries cover recent blocks. The public Portal is
- *   rate-limited and is used without an API key until SQD's paid plans launch;
- *   on 429/529/502/503 or a network failure the same query runs over RPC
- *   (24h lookback instead of 7 days) and Portal is skipped for `Retry-After`.
+ * - Base Sepolia (84532): the plane's own record, fed by a Coinbase Developer
+ *   Platform onchain webhook (`activityStore.ts`, workspace decision 0032),
+ *   once `ACTIVITY_INDEX_FROM_BLOCK` and the `ACTIVITY_DO` binding are set.
+ *   Blocks older than the subscription, and every request while the store is
+ *   off, come from chunked `eth_getLogs` scans (`activityScan.ts`): the public
+ *   node caps one call at 201 blocks, so scans run in 200-block chunks within a
+ *   per-request call budget. SQD Portal's base-sepolia dataset is not
+ *   real-time, so it cannot serve recent testnet activity.
+ * - Base Mainnet (8453): SQD Portal Stream API (real-time dataset, 7-day
+ *   lookback). The public Portal is rate-limited and used without an API key;
+ *   on 429/529/502/503 or a network failure the same query runs as a chunked
+ *   RPC scan and Portal is skipped for `Retry-After`.
  *
- * Optimistic UI on the client side (addPendingTx) ensures transactions
- * appear instantly; this route fills in confirmed history.
+ * RPC refusals surface as errors (502 on the route), never as an empty list,
+ * so the app keeps its cache instead of showing no activity.
  */
 
-import { createPublicClient, http, parseAbiItem, type Log } from 'viem';
+import { createPublicClient, http, parseAbiItem } from 'viem';
 import { base, baseSepolia } from 'viem/chains';
+
+import {
+  MAX_LOG_CALLS,
+  PUBLIC_LOG_RANGE,
+  scanBackward,
+  scanForwardHasTransfer,
+  type LogReader,
+  type TransferLog,
+} from './activityScan.js';
+import type { ActivityStore, StoredTransfer } from './activityStore.js';
 
 /** USDC token addresses per chain. */
 const USDC_ADDRESSES: Record<number, { address: string; decimals: number }> = {
@@ -36,6 +46,14 @@ function usdcFor(chainId: number): { address: string; decimals: number } {
   return USDC_ADDRESSES[chainId] ?? USDC_ADDRESSES[84532]!;
 }
 
+/** The token the activity routes report on for a chain, or null for an unknown chain. */
+export function activityTokenFor(chainId: number): string | null {
+  return USDC_ADDRESSES[chainId]?.address ?? null;
+}
+
+/** Chains whose activity the webhook-fed store records. */
+export const STORE_CHAINS = new Set([84532]);
+
 /** ERC-20 Transfer event signature: keccak256("Transfer(address,address,uint256)"). */
 const TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -43,10 +61,6 @@ const TRANSFER_TOPIC =
 /** Default lookback window in seconds (7 days). */
 const LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 const MAX_RESULTS = 50;
-
-/** RPC pagination: Base Sepolia public RPC caps eth_getLogs at 2000 blocks/call. */
-const RPC_BLOCK_BATCH = 2000;
-const RPC_MAX_CHUNKS = 15; // 15 × 2000 = 30K blocks ≈ 24h at 2s block time
 
 /** Portal dataset slugs per chain; the default URL and the override check derive from them. */
 const PORTAL_DATASETS: Record<number, string> = {
@@ -130,27 +144,76 @@ export interface ActivityTx {
 /** Result of getActivity: txs + cursor for pagination. */
 export interface ActivityResult {
   transactions: ActivityTx[];
-  /** Oldest block in the result set; pass as `toBlock` for the next page. */
+  /** Pass as `toBlock` for the next (older) page; null when there is nothing older. */
   cursor: number | null;
+  /** Newest block the answer covers; the app keeps it as its next `sinceBlock`. */
+  headBlock?: number;
 }
 
-/** Build an ActivityTx from a raw ERC-20 Transfer log. */
-function logToTx(log: Log, addr: string, tokenAddress: string, decimals: number, timestamp: number): ActivityTx | null {
-  if (!log.topics || log.topics.length < 3 || !log.data) return null;
-  const from = '0x' + (log.topics[1] ?? '').slice(-40).toLowerCase();
-  const to = '0x' + (log.topics[2] ?? '').slice(-40).toLowerCase();
-  const value = BigInt(log.data as `0x${string}`);
+/** Options shared by the activity reads. */
+export interface ActivityOptions {
+  /** RPC endpoint for the chain (Sepolia: `ACTIVITY_RPC_URL`, else `BASE_SEPOLIA_RPC_URL`). */
+  rpcUrl?: string;
+  /** Inclusive block span per `eth_getLogs` call (default 200, the public node's cap). */
+  logRange?: number;
+  /** Webhook-fed store, used for `STORE_CHAINS` when `indexFromBlock` is set. */
+  store?: ActivityStore;
+  /** First block the store is complete from (the subscription's start). */
+  indexFromBlock?: number;
+}
+
+function toActivityTx(
+  t: { hash: string; logIndex: number; blockNumber: number; timestamp: number; from: string; to: string; value: bigint | string },
+  addr: string,
+  token: { address: string; decimals: number },
+): ActivityTx {
+  const value = BigInt(t.value);
   return {
-    hash: log.transactionHash ?? '',
-    direction: from === addr ? 'out' : 'in',
-    from,
-    to,
+    hash: t.hash,
+    direction: t.from === addr ? 'out' : 'in',
+    from: t.from,
+    to: t.to,
     value: value.toString(),
-    valueFormatted: Number(value) / 10 ** decimals,
-    tokenAddress: tokenAddress.toLowerCase(),
-    blockNumber: Number(log.blockNumber ?? 0),
-    timestamp,
-    logIndex: Number(log.logIndex ?? 0),
+    valueFormatted: Number(value) / 10 ** token.decimals,
+    tokenAddress: token.address.toLowerCase(),
+    blockNumber: t.blockNumber,
+    timestamp: t.timestamp,
+    logIndex: t.logIndex,
+  };
+}
+
+const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
+
+/** A `LogReader` over viem for the chain's USDC contract. */
+function viemReader(chainId: number, rpcUrl: string | undefined): LogReader {
+  const token = usdcFor(chainId);
+  const client = createPublicClient({ chain: chainId === 8453 ? base : baseSepolia, transport: http(rpcUrl) });
+  return {
+    head: async () => Number(await client.getBlockNumber()),
+    transfers: async (fromBlock, toBlock): Promise<TransferLog[]> => {
+      const logs = await client.getLogs({
+        address: token.address as `0x${string}`,
+        event: TRANSFER_EVENT,
+        fromBlock: BigInt(fromBlock),
+        toBlock: BigInt(toBlock),
+      });
+      const out: TransferLog[] = [];
+      for (const log of logs) {
+        if (!log.args.from || !log.args.to || log.args.value == null || !log.transactionHash) continue;
+        // Base logs carry `blockTimestamp` (an OP Stack extension); older nodes may not.
+        const ts = (log as { blockTimestamp?: bigint | string }).blockTimestamp;
+        out.push({
+          hash: log.transactionHash,
+          logIndex: Number(log.logIndex ?? 0),
+          blockNumber: Number(log.blockNumber ?? 0),
+          timestamp: ts != null ? Number(BigInt(ts)) : 0,
+          from: log.args.from.toLowerCase(),
+          to: log.args.to.toLowerCase(),
+          value: log.args.value,
+        });
+      }
+      return out;
+    },
   };
 }
 
@@ -214,51 +277,38 @@ export async function checkActivity(
   address: string,
   sinceBlock: number,
   chainId: number = 84532,
-  rpcUrl?: string,
+  opts: ActivityOptions = {},
 ): Promise<ActivityCheckResult> {
-  if (RPC_FALLBACK_CHAINS.has(chainId)) {
-    return checkActivityViaRpc(address, sinceBlock, chainId, rpcUrl);
+  if (STORE_CHAINS.has(chainId) && opts.store && opts.indexFromBlock != null) {
+    const latest = await opts.store.latestBlock(chainId, address);
+    return { hasNew: latest > sinceBlock, latestBlock: Math.max(latest, sinceBlock) };
   }
-  // The public RPC fallback uses the chain's default endpoint: BASE_SEPOLIA_RPC_URL is Sepolia-only.
+  if (RPC_FALLBACK_CHAINS.has(chainId)) {
+    return checkActivityViaRpc(address, sinceBlock, chainId, opts);
+  }
+  // The public RPC fallback uses the chain's default endpoint: the Sepolia URLs are Sepolia-only.
   return withRpcFallback(
     () => checkActivityViaPortal(portalUrl, address, sinceBlock, chainId),
-    () => checkActivityViaRpc(address, sinceBlock, chainId),
+    () => checkActivityViaRpc(address, sinceBlock, chainId, { logRange: opts.logRange }),
   );
 }
 
-/** RPC-based check: eth_getLogs from sinceBlock+1 to chain head. */
+/** RPC-based check: chunked `eth_getLogs` from `sinceBlock + 1` to head. */
 async function checkActivityViaRpc(
   address: string,
   sinceBlock: number,
   chainId: number,
-  rpcUrl?: string,
+  opts: ActivityOptions,
 ): Promise<ActivityCheckResult> {
-  const addr = address.toLowerCase();
-  const token = usdcFor(chainId);
-  const client = createPublicClient({
-    chain: chainId === 8453 ? base : baseSepolia,
-    transport: http(rpcUrl),
+  const reader = viemReader(chainId, opts.rpcUrl);
+  const latestBlock = await reader.head();
+  const hasNew = await scanForwardHasTransfer(reader, address, {
+    from: sinceBlock + 1,
+    to: latestBlock,
+    range: opts.logRange,
+    maxCalls: MAX_LOG_CALLS,
   });
-
-  const head = await client.getBlockNumber();
-  const latestBlock = Number(head);
-
-  const logs = await client.getLogs({
-    address: token.address as `0x${string}`,
-    events: [parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')],
-    fromBlock: BigInt(sinceBlock + 1),
-    toBlock: head,
-  }).catch(() => [] as Log[]);
-
-  // Filter for logs where the address is either from or to.
-  const matchingLogs = logs.filter((l) => {
-    if (!l.topics || l.topics.length < 3) return false;
-    const from = '0x' + l.topics[1]!.slice(-40).toLowerCase();
-    const to = '0x' + l.topics[2]!.slice(-40).toLowerCase();
-    return from === addr || to === addr;
-  });
-
-  return { hasNew: matchingLogs.length > 0, latestBlock };
+  return { hasNew, latestBlock };
 }
 
 /** Portal-based check (mainnet). */
@@ -330,108 +380,91 @@ export async function getActivity(
   limit: number = 10,
   fromBlock?: number,
   chainId: number = 84532,
-  rpcUrl?: string,
+  opts: ActivityOptions = {},
   toBlock?: number,
 ): Promise<ActivityResult> {
+  if (STORE_CHAINS.has(chainId) && opts.store && opts.indexFromBlock != null) {
+    const storeOpts = { ...opts, store: opts.store, indexFromBlock: opts.indexFromBlock };
+    return getActivityWithStore(address, limit, fromBlock, chainId, storeOpts, toBlock);
+  }
   if (RPC_FALLBACK_CHAINS.has(chainId)) {
-    return getActivityViaRpc(address, limit, fromBlock, chainId, rpcUrl, toBlock);
+    return getActivityViaRpc(address, limit, fromBlock, chainId, opts, toBlock);
   }
   return withRpcFallback(
     () => getActivityViaPortal(portalUrl, address, limit, fromBlock, chainId, toBlock),
-    () => getActivityViaRpc(address, limit, fromBlock, chainId, undefined, toBlock),
+    () => getActivityViaRpc(address, limit, fromBlock, chainId, { logRange: opts.logRange }, toBlock),
   );
 }
 
 /**
- * RPC-based activity fetch for Sepolia (or any chain in RPC_FALLBACK_CHAINS).
- * Paginates eth_getLogs in 2000-block chunks from chain head backwards.
- * 15 chunks × 2000 blocks = 30K blocks ≈ 24h lookback at 2s block time.
+ * Store first: the webhook-fed record covers blocks from `indexFromBlock`;
+ * older blocks, and the rest of a short page, come from a chunked RPC scan.
+ */
+async function getActivityWithStore(
+  address: string,
+  limit: number,
+  fromBlock: number | undefined,
+  chainId: number,
+  opts: ActivityOptions & { store: ActivityStore; indexFromBlock: number },
+  toBlock?: number,
+): Promise<ActivityResult> {
+  const addr = address.toLowerCase();
+  const token = usdcFor(chainId);
+  const cap = Math.min(limit, MAX_RESULTS);
+  const lower = Math.max(0, fromBlock ?? 0);
+  const upper = toBlock != null && toBlock >= 0 ? toBlock : null;
+
+  let stored: StoredTransfer[] = [];
+  if (upper == null || upper >= opts.indexFromBlock) {
+    stored = (await opts.store.list(chainId, addr, cap, upper)).filter(
+      (t) => t.blockNumber >= Math.max(lower, opts.indexFromBlock),
+    );
+  }
+  const txs = stored.map((t) => toActivityTx(t, addr, token));
+  const latest = upper == null ? await opts.store.latestBlock(chainId, addr) : undefined;
+  const headBlock = latest != null ? Math.max(latest, opts.indexFromBlock) : undefined;
+
+  if (txs.length >= cap) {
+    return { transactions: txs, cursor: txs[txs.length - 1]!.blockNumber, headBlock };
+  }
+  const rpcUpper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, opts.indexFromBlock - 1);
+  if (rpcUpper < lower) {
+    return { transactions: txs, cursor: null, headBlock };
+  }
+  const older = await getActivityViaRpc(addr, cap - txs.length, lower, chainId, opts, rpcUpper);
+  return { transactions: [...txs, ...older.transactions], cursor: older.cursor, headBlock };
+}
+
+/**
+ * RPC activity: walks back from `toBlock` (or head) in `logRange`-block chunks
+ * within the call budget; the cursor resumes below the last chunk scanned.
  */
 async function getActivityViaRpc(
   address: string,
   limit: number,
   fromBlock: number | undefined,
   chainId: number,
-  rpcUrl?: string,
+  opts: ActivityOptions,
   toBlockOverride?: number,
 ): Promise<ActivityResult> {
   const addr = address.toLowerCase();
   const token = usdcFor(chainId);
-  const client = createPublicClient({
-    chain: chainId === 8453 ? base : baseSepolia,
-    transport: http(rpcUrl),
+  const reader = viemReader(chainId, opts.rpcUrl);
+  const head = await reader.head();
+  const upper = toBlockOverride != null && toBlockOverride >= 0 ? Math.min(toBlockOverride, head) : head;
+
+  const { matches, cursor } = await scanBackward(reader, addr, {
+    upper,
+    lower: fromBlock != null && fromBlock >= 0 ? fromBlock : 0,
+    limit: Math.min(limit, MAX_RESULTS),
+    range: opts.logRange ?? PUBLIC_LOG_RANGE,
+    maxCalls: MAX_LOG_CALLS,
   });
-
-  const head = await client.getBlockNumber();
-  const headNum = Number(head);
-
-  // Determine block range: toBlock (cursor) or head; fromBlock or 24h lookback.
-  const upperBlock = toBlockOverride != null && toBlockOverride >= 0 ? toBlockOverride : headNum;
-  let startBlock: number;
-  if (fromBlock != null && fromBlock >= 0) {
-    startBlock = fromBlock;
-  } else {
-    // Estimate 24h lookback: 86400s / 2s per block = 43200 blocks.
-    startBlock = Math.max(0, upperBlock - 43200);
-  }
-
-  const cap = Math.min(limit, MAX_RESULTS);
-  const event = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
-  const allTxs: ActivityTx[] = [];
-
-  // Paginate from upperBlock backwards in 2000-block chunks.
-  let chunkToBlock = upperBlock;
-  for (let chunk = 0; chunk < RPC_MAX_CHUNKS; chunk++) {
-    const fromBn = Math.max(startBlock, chunkToBlock - RPC_BLOCK_BATCH + 1);
-    if (fromBn > chunkToBlock) break;
-
-    const logs = await client.getLogs({
-      address: token.address as `0x${string}`,
-      events: [event],
-      fromBlock: BigInt(fromBn),
-      toBlock: BigInt(chunkToBlock),
-    }).catch(() => [] as Log[]);
-
-    // Filter for logs where the address is either from or to.
-    const matchingLogs = logs.filter((l) => {
-      if (!l.topics || l.topics.length < 3) return false;
-      const from = '0x' + l.topics[1]!.slice(-40).toLowerCase();
-      const to = '0x' + l.topics[2]!.slice(-40).toLowerCase();
-      return from === addr || to === addr;
-    });
-
-    // Fetch block timestamps for unique blocks in this batch.
-    const blockNums = [...new Set(logs.map((l) => Number(l.blockNumber)))];
-    const blockTsMap = new Map<number, number>();
-    for (const bn of blockNums) {
-      const block = await client.getBlock({ blockNumber: BigInt(bn) }).catch(() => null);
-      if (block) blockTsMap.set(bn, Number(block.timestamp));
-    }
-
-    for (const log of matchingLogs) {
-      const bn = Number(log.blockNumber ?? 0);
-      const tx = logToTx(log, addr, token.address, token.decimals, blockTsMap.get(bn) ?? 0);
-      if (tx) allTxs.push(tx);
-    }
-
-    if (allTxs.length >= cap * 2) break;
-    chunkToBlock = fromBn - 1;
-    if (chunkToBlock < startBlock) break;
-  }
-
-  // Sort desc, dedup, cap.
-  allTxs.sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex);
-  const seen = new Set<string>();
-  const unique = allTxs.filter((t) => {
-    const key = `${t.hash}:${t.logIndex}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  const capped = unique.slice(0, cap);
-  const cursor = capped.length > 0 ? capped[capped.length - 1]!.blockNumber : null;
-  return { transactions: capped, cursor };
+  return {
+    transactions: matches.map((t) => toActivityTx(t, addr, token)),
+    cursor,
+    headBlock: toBlockOverride == null ? head : undefined,
+  };
 }
 
 /**

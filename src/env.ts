@@ -11,6 +11,7 @@
  */
 
 import type { AttesterRpc } from './services/attester.js';
+import type { ActivityDO } from './services/activityDO.js';
 import type { BindBundleDO } from './services/bindBundleDO.js';
 
 export interface Env {
@@ -39,6 +40,34 @@ export interface Env {
    * URL for production raises the limit. See workspace decision 0009.
    */
   SQD_PORTAL_URL?: string;
+
+  /**
+   * RPC endpoint for the Sepolia activity scans (workspace decision 0032),
+   * normally the CDP Node URL. A secret, because the URL carries a client API
+   * key. Unset: the scans use `BASE_SEPOLIA_RPC_URL`.
+   */
+  ACTIVITY_RPC_URL?: string;
+
+  /**
+   * Inclusive block span per `eth_getLogs` call in the activity scans. Default
+   * 200, the public Base Sepolia node's cap (it refuses 202). Raise it only
+   * after testing the provider behind `ACTIVITY_RPC_URL`.
+   */
+  ACTIVITY_LOG_RANGE?: string;
+
+  /**
+   * First block the webhook-fed activity store is complete from: the head
+   * block when the CDP subscription was created. Unset, the store is off and
+   * `/v1/activity` scans RPC only.
+   */
+  ACTIVITY_INDEX_FROM_BLOCK?: string;
+
+  /**
+   * Secret of the CDP onchain webhook subscription (`metadata.secret`); it keys
+   * the `X-Hook0-Signature` HMAC. Set with `wrangler secret put
+   * CDP_WEBHOOK_SECRET`. Unset, `POST /v1/activity/webhooks/cdp` answers 503.
+   */
+  CDP_WEBHOOK_SECRET?: string;
 
   /**
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
@@ -84,6 +113,12 @@ export interface Env {
    * `/v1/self/*` returns 503 `bind_store_unprovisioned`.
    */
   BIND_BUNDLES_DO?: DurableObjectNamespace<BindBundleDO>;
+
+  /**
+   * Per-(chain, address) transfer record fed by the CDP webhook
+   * (services/activityDO.ts, decision 0032).
+   */
+  ACTIVITY_DO?: DurableObjectNamespace<ActivityDO>;
 
   // ── Rate limits (wrangler.jsonc `ratelimits`; permissive, per-colo) ──
   /** `POST /v1/self/verify`: per account and a global flood brake. */

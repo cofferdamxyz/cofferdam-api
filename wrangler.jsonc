@@ -54,7 +54,14 @@
     // the attester's bind gate checks every proof against it. Must agree with
     // cofferdam-attester's CELO_RPC_URL chain (42220).
     "CELO_RPC_URL": "https://forno.celo.org",
-    "SQD_PORTAL_URL": "https://portal.sqd.dev/datasets/base-sepolia"
+    "SQD_PORTAL_URL": "https://portal.sqd.dev/datasets/base-sepolia",
+    // First block the webhook-fed activity store is complete from (decision
+    // 0032). Leave unset until the CDP subscription exists; then set it to the
+    // head block at creation. ACTIVITY_RPC_URL (the CDP Node URL, carrying a
+    // client key) and CDP_WEBHOOK_SECRET are secrets, never vars.
+    // "ACTIVITY_INDEX_FROM_BLOCK": "<head block at subscription creation>",
+    // Inclusive eth_getLogs span per call; 200 is the public node's cap.
+    "ACTIVITY_LOG_RANGE": "200"
   },
 
   // ─────────────────────────────────────────────────────────────────
@@ -77,10 +84,21 @@
   // pickup sees the relayer's write at once. Replaced the BIND_BUNDLES KV
   // namespace (69731266425143ab9fb883e6ce6637b9, now unused) on 2026-10-11.
   // ─────────────────────────────────────────────────────────────────
+  //
+  // ACTIVITY_DO (decision 0032): one SQLite-backed object per (chain, address)
+  // holding the token transfers the CDP onchain webhook delivers. It stays
+  // empty and unread until CDP_WEBHOOK_SECRET and ACTIVITY_INDEX_FROM_BLOCK
+  // are set.
   "durable_objects": {
-    "bindings": [{ "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" }]
+    "bindings": [
+      { "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" },
+      { "name": "ACTIVITY_DO", "class_name": "ActivityDO" }
+    ]
   },
-  "migrations": [{ "tag": "v1-bind-bundles", "new_sqlite_classes": ["BindBundleDO"] }],
+  "migrations": [
+    { "tag": "v1-bind-bundles", "new_sqlite_classes": ["BindBundleDO"] },
+    { "tag": "v2-activity", "new_sqlite_classes": ["ActivityDO"] }
+  ],
 
   // ─────────────────────────────────────────────────────────────────
   // Rate limits — permissive, per-colo, keyed in routes/self.ts. A bind is
