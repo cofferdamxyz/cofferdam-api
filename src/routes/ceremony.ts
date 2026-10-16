@@ -6,6 +6,10 @@
  *
  *   POST /v1/ceremony/first-high → the Cofferdam co-sign for
  *                                  `CofferdamAccount4337.enrollFirstHigh`.
+ *     `Authorization: Bearer <token>` is required: the signing authority's
+ *     own session, a `csa1:` passkey envelope (Partner) or a `csa-sess1.`
+ *     session-signer envelope (Managed), pinned to the account and at most
+ *     ten minutes old. The gate then requires that key to be `signerId`.
  *
  * The gate lives in `services/ceremony.ts`; this file wires it to Base reads
  * and to the attester Worker's `signCeremony`, and maps its errors.
@@ -26,11 +30,38 @@ import {
   type CeremonyDeps,
   type CeremonyHashArgs,
   type FirstHighAttestation,
+  type FirstHighCeremonyRequest,
   type FirstHighRequest,
+  type SessionEvidence,
 } from '../services/ceremony.js';
+import {
+  SESSION_SIGNER_PREFIX,
+  SessionAttestationError,
+  decodeAndVerifySessionAttestation,
+  decodeAndVerifySessionSignerAttestation,
+} from '../services/sessionAttestation.js';
 
 export interface CeremonyRouteDeps {
-  issue: (env: Env, req: FirstHighRequest) => Promise<FirstHighAttestation>;
+  issue: (env: Env, req: FirstHighCeremonyRequest) => Promise<FirstHighAttestation>;
+  /** Unix milliseconds for the session token's freshness; tests inject one. */
+  now?: () => number;
+}
+
+/** A session token presented on the ceremony route is good for ten minutes. */
+export const CEREMONY_SESSION_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Verify the `Authorization: Bearer` session token for `account` and reduce it
+ * to the evidence the gate matches against `signerId`.
+ */
+async function sessionEvidence(token: string, account: Address, now: number): Promise<SessionEvidence> {
+  const opts = { expect: { accountAddress: account }, maxAgeMs: CEREMONY_SESSION_MAX_AGE_MS, now };
+  if (token.startsWith(SESSION_SIGNER_PREFIX)) {
+    const { signer } = await decodeAndVerifySessionSignerAttestation(token, opts);
+    return { kind: 'session-signer', signer };
+  }
+  const att = decodeAndVerifySessionAttestation(token, opts);
+  return { kind: 'passkey', publicKey: att.publicKey };
 }
 
 const GLOBAL_KEY = 'ceremony:global';
@@ -125,12 +156,30 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
     if (await overLimit(c.env.CEREMONY_RL, `ceremony:${req.account.toLowerCase()}`)) {
       return c.json({ error: 'rate_limited', message: 'too many ceremony requests for this account' }, 429);
     }
+    // The signing authority's own session (decision 0016): without it, anyone
+    // who can read the chain could farm co-signs for any Partner account.
+    const token = c.req.header('authorization')?.replace(/^Bearer\s+/i, '').trim();
+    if (!token) {
+      return c.json(
+        { error: 'session_required', message: 'Authorization: Bearer csa1:… (Partner passkey) or csa-sess1.… (Managed signer)' },
+        401,
+      );
+    }
+    let session: SessionEvidence;
     try {
-      const issued = await deps.issue(c.env, req);
+      session = await sessionEvidence(token, req.account, deps.now ? deps.now() : Date.now());
+    } catch (err) {
+      if (err instanceof SessionAttestationError) {
+        return c.json({ error: 'session_rejected', message: err.message }, 401);
+      }
+      throw err;
+    }
+    try {
+      const issued = await deps.issue(c.env, { ...req, session });
       return c.json({ ok: true, ...issued }, 200);
     } catch (err) {
       if (err instanceof CeremonyRequestError) {
-        return c.json({ error: err.code, message: err.message }, err.status as 400 | 404 | 409 | 422 | 500);
+        return c.json({ error: err.code, message: err.message }, err.status as 400 | 403 | 404 | 409 | 422 | 500);
       }
       const message = err instanceof Error ? err.message : String(err);
       // The attester throws `CODE: detail`; a missing binding or key is a 503.

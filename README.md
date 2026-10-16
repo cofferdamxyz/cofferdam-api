@@ -26,7 +26,7 @@ wrangler.jsonc       vars, zone route, service binding, Durable Object, rate lim
 | `POST /v1/self/verify` | Self's relayer posts the `disclose` proof; pre-flights `NullifierRegistry`, calls the attester's Celo-gated `signBind` or `signRebind`, stores the bundle in the account's `BindBundleDO` (30 min) |
 | `GET /v1/self/bind-bundle/:account` | the app picks up its bundle; requires a `csa1:` attestation for the account from a key that is an active High authority on it (checked on Base), outside `development` |
 | `POST /v1/aa/user-operation` | relays a passkey-signed op: policy (our paymaster, our factory in `initCode`, gas and fee caps), simulation, `handleOps` from the relayer key; the first op deploys the account |
-| `POST /v1/ceremony/first-high` | the co-sign for a first-High enrolment (`enrollFirstHigh`), gated on the account's chain state, signed by the attester's ceremony key |
+| `POST /v1/ceremony/first-high` | the co-sign for a first-High enrolment (`enrollFirstHigh`): requires the signing authority's own session token (`Authorization: Bearer csa1:…` or `csa-sess1.…`), gated on the account's chain state, signed by the attester's ceremony key |
 | `POST /v1/session/verify-attestation` | verifies a `csa1:` envelope from `@cofferdam/sdk`, optionally against the account's on-chain authority |
 | `POST /v1/attester/test-sign` | rail smoke test: synthetic signals with Celo's current roots, signed by the attester, checked against `SelfAttesterRegistry` on Base |
 | `GET /v1/activity?address=`, `GET /v1/activity/check` | USDC transfers per chain (RPC logs on Sepolia, SQD Portal on mainnet) and a cheap "anything new" check |

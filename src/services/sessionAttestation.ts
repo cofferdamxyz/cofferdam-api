@@ -32,7 +32,9 @@ import {
   getAddress,
   hexToBytes,
   keccak256,
+  recoverMessageAddress,
   sha256,
+  type Address,
   type Hex,
 } from 'viem';
 
@@ -282,31 +284,7 @@ export interface VerifyOptions {
  * this `(scope, appPseudonym, accountAddress, …)`.
  */
 export function verifySessionAttestation(att: SessionAttestation, opts: VerifyOptions = {}): void {
-  const maxAgeMs = opts.maxAgeMs ?? 0;
-  const now = opts.now ?? Date.now();
-  if (maxAgeMs > 0 && (now - att.issuedAt > maxAgeMs || att.issuedAt - now > 60_000)) {
-    throw new SessionAttestationExpiredError(
-      `session attestation is stale or clock-skewed (issuedAt=${att.issuedAt}, now=${now}).`,
-    );
-  }
-
-  const expect = opts.expect;
-  if (expect) {
-    for (const key of ['scope', 'appPseudonym', 'accountAddress', 'chainId'] as const) {
-      const want = expect[key];
-      if (want === undefined) continue;
-      const got = att[key];
-      const matches =
-        key === 'accountAddress'
-          ? String(got).toLowerCase() === String(want).toLowerCase()
-          : got === want;
-      if (!matches) {
-        throw new SessionAttestationVerificationError(
-          `session attestation ${key} mismatch (expected ${String(want)}, got ${String(got)}).`,
-        );
-      }
-    }
-  }
+  checkFreshnessAndPins(att, opts);
 
   const digest = sessionAttestationDigest(att, att.publicKey);
   const ok =
@@ -335,6 +313,84 @@ export function encodePasskeyConfig(pub: P256PublicKey): Hex {
   return encodeAbiParameters([{ type: 'bytes32' }, { type: 'bytes32' }], [pub.qx, pub.qy]);
 }
 
+/** Freshness (`maxAgeMs`, 60 s of future skew) and the optional field pins, shared by both envelopes. */
+function checkFreshnessAndPins(fields: SessionAttestationFields, opts: VerifyOptions): void {
+  const maxAgeMs = opts.maxAgeMs ?? 0;
+  const now = opts.now ?? Date.now();
+  if (maxAgeMs > 0 && (now - fields.issuedAt > maxAgeMs || fields.issuedAt - now > 60_000)) {
+    throw new SessionAttestationExpiredError(
+      `session attestation is stale or clock-skewed (issuedAt=${fields.issuedAt}, now=${now}).`,
+    );
+  }
+
+  const expect = opts.expect;
+  if (expect) {
+    for (const key of ['scope', 'appPseudonym', 'accountAddress', 'chainId'] as const) {
+      const want = expect[key];
+      if (want === undefined) continue;
+      const got = fields[key];
+      const matches =
+        key === 'accountAddress'
+          ? String(got).toLowerCase() === String(want).toLowerCase()
+          : got === want;
+      if (!matches) {
+        throw new SessionAttestationVerificationError(
+          `session attestation ${key} mismatch (expected ${String(want)}, got ${String(got)}).`,
+        );
+      }
+    }
+  }
+}
+
+// ── the Managed lane's envelope: `csa-sess1.<base64url(json)>.<0x sig>` ─────
+
+/** Prefix of the SDK's session-lane envelope (`NativeAccountProvider.signSessionModeAttestation`). */
+export const SESSION_SIGNER_PREFIX = 'csa-sess1.';
+
+export interface SessionSignerAttestation {
+  fields: SessionAttestationFields;
+  /** The EIP-191 signer recovered from the envelope: the `SessionKeyAuthority` key. */
+  signer: Address;
+}
+
+/**
+ * Decode and verify the Managed lane's envelope. The SDK signs
+ * `keccak256(utf8(JSON.stringify(fields)))` with the server-held session signer
+ * through `signMessage` (EIP-191 over those 32 bytes). Applies the same
+ * freshness and pins as `verifySessionAttestation` and returns the recovered
+ * signer; the caller decides whether that signer is an authority on the account.
+ */
+export async function decodeAndVerifySessionSignerAttestation(
+  token: unknown,
+  opts: VerifyOptions = {},
+): Promise<SessionSignerAttestation> {
+  if (typeof token !== 'string' || !token.startsWith(SESSION_SIGNER_PREFIX)) {
+    throw new SessionAttestationDecodeError('not a Cofferdam session-signer attestation token.');
+  }
+  const parts = token.slice(SESSION_SIGNER_PREFIX.length).split('.');
+  const [payload, sig] = parts;
+  if (parts.length !== 2 || !payload || !sig || !/^0x[0-9a-fA-F]{130}$/.test(sig)) {
+    throw new SessionAttestationDecodeError('session-signer attestation must be csa-sess1.<payload>.<0x sig>.');
+  }
+  let bytes: Uint8Array;
+  let parsed: unknown;
+  try {
+    bytes = base64urlToBytes(payload);
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new SessionAttestationDecodeError('session-signer attestation payload is not valid base64url JSON.');
+  }
+  const fields = assertSessionFields(parsed);
+  checkFreshnessAndPins(fields, opts);
+  let signer: Address;
+  try {
+    signer = await recoverMessageAddress({ message: { raw: keccak256(bytes) }, signature: sig as Hex });
+  } catch {
+    throw new SessionAttestationVerificationError('session-signer attestation signature is not recoverable.');
+  }
+  return { fields, signer: getAddress(signer) };
+}
+
 function assertWellFormed(p: unknown): SessionAttestation {
   if (!p || typeof p !== 'object') {
     throw new SessionAttestationDecodeError('session-attestation payload is not an object.');
@@ -358,6 +414,25 @@ function assertWellFormed(p: unknown): SessionAttestation {
   ) {
     throw new SessionAttestationDecodeError('session-attestation publicKey (qx/qy) is malformed.');
   }
+  const fields = assertSessionFields(o);
+  if (typeof o.sig !== 'string' || !o.sig.startsWith('0x')) {
+    throw new SessionAttestationDecodeError('session-attestation sig is missing.');
+  }
+  return {
+    v: SESSION_ATTESTATION_VERSION,
+    alg: o.alg,
+    publicKey: { qx: pk.qx as Hex, qy: pk.qy as Hex },
+    ...fields,
+    sig: o.sig as Hex,
+  };
+}
+
+/** The six signed sign-in fields, as both envelopes carry them. */
+function assertSessionFields(p: unknown): SessionAttestationFields {
+  if (!p || typeof p !== 'object') {
+    throw new SessionAttestationDecodeError('session-attestation payload is not an object.');
+  }
+  const o = p as Record<string, unknown>;
   if (typeof o.scope !== 'string' || o.scope.length === 0) {
     throw new SessionAttestationDecodeError('session-attestation scope is missing.');
   }
@@ -376,19 +451,12 @@ function assertWellFormed(p: unknown): SessionAttestation {
   if (typeof o.issuedAt !== 'number' || !Number.isFinite(o.issuedAt) || o.issuedAt <= 0) {
     throw new SessionAttestationDecodeError('session-attestation issuedAt is missing or invalid.');
   }
-  if (typeof o.sig !== 'string' || !o.sig.startsWith('0x')) {
-    throw new SessionAttestationDecodeError('session-attestation sig is missing.');
-  }
   return {
-    v: SESSION_ATTESTATION_VERSION,
-    alg: o.alg,
-    publicKey: { qx: pk.qx as Hex, qy: pk.qy as Hex },
     scope: o.scope,
     appPseudonym: o.appPseudonym,
     accountAddress: o.accountAddress,
     chainId: o.chainId,
     verified: o.verified,
     issuedAt: o.issuedAt,
-    sig: o.sig as Hex,
   };
 }

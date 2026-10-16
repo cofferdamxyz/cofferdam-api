@@ -25,14 +25,19 @@
  *      inputs (encoding drift fails closed).
  * The window is short (ten minutes) and the nonce makes it single-use.
  *
- * Not yet here: the partner `csa1:` session check and the 72-hour cooldown
- * after a recovery (both need the partner registry and recovery records that
- * decision 0016 lists as plane work). The Partner authority still has to sign
- * the op itself, so an attestation alone moves nothing.
+ *   6. the request carries the signing authority's own session (2026-10-15):
+ *      a `csa1:` envelope whose passkey is the Partner config's `(qx, qy)`, or
+ *      a `csa-sess1.` envelope signed by the Managed config's session signer.
+ *      The route verifies the envelope; the gate matches it to `signerId`.
+ * Not yet here: the 72-hour cooldown after a partner-flow recovery, which
+ * needs the recovery records that arrive with the `replacePartnerAuthority`
+ * route. The Partner or Managed authority still has to sign the op itself, so
+ * an attestation alone moves nothing.
  */
 
 import { getAddress, isAddress, isHex, keccak256, size, slice, toBytes, type Address, type Hex } from 'viem';
 import type { SignCeremonyRequest, SignCeremonyResponse } from './attester.js';
+import { encodePasskeyConfig, type P256PublicKey } from './sessionAttestation.js';
 
 /** `CofferdamAccount4337.ACTION_ENROLL_FIRST_HIGH`. */
 export const ACTION_ENROLL_FIRST_HIGH: Hex = keccak256(toBytes('enroll-first-high'));
@@ -114,6 +119,7 @@ export class CeremonyRequestError extends Error {
       | 'signer_not_eligible'
       | 'high_module_not_allowed'
       | 'assertion_invalid'
+      | 'session_not_signer'
       | 'ceremony_hash_mismatch',
     message: string,
     readonly status: number,
@@ -138,6 +144,48 @@ export interface FirstHighRequest {
   readonly highConfig: Hex;
   /** `abi.encode(WebAuthnAuth)` over `firstHighChallenge(ceremonyNonce)`. */
   readonly highAssertion: Hex;
+}
+
+/**
+ * Who presented the request, as the route verified it from `Authorization`:
+ * the passkey behind a `csa1:` envelope, or the session signer behind a
+ * `csa-sess1.` envelope. The gate requires it to be the authority `signerId`.
+ */
+export type SessionEvidence =
+  | { readonly kind: 'passkey'; readonly publicKey: P256PublicKey }
+  | { readonly kind: 'session-signer'; readonly signer: Address };
+
+/** The parsed body plus the verified session evidence. */
+export type FirstHighCeremonyRequest = FirstHighRequest & { readonly session: SessionEvidence };
+
+/**
+ * The session must belong to the authority that will sign the op: a Partner
+ * config is `(qx, qy, rpIdHash, partnerId, partnerSigner)` and its passkey is
+ * the first 64 bytes; a Managed config is `abi.encode(address sessionSigner)`.
+ */
+export function assertSessionIsSigner(session: SessionEvidence, tier: number, config: Hex, signerId: bigint): void {
+  const refuse = (detail: string): never => {
+    throw new CeremonyRequestError(
+      'session_not_signer',
+      `the session token is not authority ${signerId.toString()}'s: ${detail}`,
+      403,
+    );
+  };
+  if (tier === TIER.Partner) {
+    if (session.kind !== 'passkey') refuse('a Partner authority needs its passkey (csa1:) session');
+    if (size(config) !== 160) refuse('Partner config is not 160 bytes');
+    const expected = encodePasskeyConfig((session as { publicKey: P256PublicKey }).publicKey).toLowerCase();
+    if (slice(config, 0, 64).toLowerCase() !== expected) refuse('the passkey differs from the Partner config');
+    return;
+  }
+  if (tier === TIER.LowManaged) {
+    if (session.kind !== 'session-signer') refuse('a Managed authority needs its session-signer (csa-sess1.) envelope');
+    if (size(config) !== 32) refuse('Managed config is not 32 bytes');
+    const signer = getAddress(slice(config, 12, 32));
+    if (signer !== getAddress((session as { signer: Address }).signer)) refuse('the signer differs from the Managed config');
+    return;
+  }
+  refuse('only Partner and Managed authorities enrol a first High');
 }
 
 export function parseFirstHighBody(body: unknown, defaultHighModule: Address): FirstHighRequest {
@@ -235,7 +283,10 @@ export function partnerIdOf(tier: number, config: Hex): Hex {
   return slice(config, 96, 128);
 }
 
-export async function issueFirstHighAttestation(deps: CeremonyDeps, req: FirstHighRequest): Promise<FirstHighAttestation> {
+export async function issueFirstHighAttestation(
+  deps: CeremonyDeps,
+  req: FirstHighCeremonyRequest,
+): Promise<FirstHighAttestation> {
   const { pins } = deps;
   if (getAddress(req.highModule) !== getAddress(pins.highModule)) {
     throw new CeremonyRequestError(
@@ -263,6 +314,7 @@ export async function issueFirstHighAttestation(deps: CeremonyDeps, req: FirstHi
       409,
     );
   }
+  assertSessionIsSigner(req.session, signer.tier, signer.config, req.signerId);
   const partnerId = partnerIdOf(signer.tier, signer.config);
 
   const ok = await deps.verifyAssertion(req.highModule, req.account, snap.challenge, req.highConfig, req.highAssertion);
