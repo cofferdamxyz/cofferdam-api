@@ -72,7 +72,7 @@ export const SEPOLIA_DEPLOYMENTS = {
    * escrows are not pre-deployed.
    */
   EscrowFactory: {
-    address: '0x6a1C08bf3c17DDbd021C2e4131c9dA85d976A737',
+    address: '0x37553ab271a0078F95032B35F5494Fbf25206Fd2',
   },
   /**
    * A single spot-escrow instance. NOTE: the shipped architecture is
@@ -81,7 +81,7 @@ export const SEPOLIA_DEPLOYMENTS = {
    * Resolve per-job addresses with `predictSpotEscrowAddress(policy, salt)`.
    */
   CofferdamSpotEscrow: {
-    address: '0xc46241fa872EFD91884E29244901cF3B266bE262',
+    address: '0xe6dCFc3Af1cB944b0Aa03f27325E7E47e390d9b1',
   },
   /**
    * v2 — allow-list of trusted Self TEE attester ECDSA addresses.
