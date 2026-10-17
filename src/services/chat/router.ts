@@ -27,29 +27,37 @@ export interface ChatActionDef {
   fields?: Record<string, { type: 'number' | 'string'; description: string }>;
 }
 
-/** The app's action registry, as the router and the action model see it. */
+/**
+ * The app's action registry, as the router and the action model see it. The
+ * descriptions name the verbs in Portuguese and Spanish: after an English
+ * greeting, "Manda 20 pro joao" scored none 0.26 and send 0.14 against the
+ * English-only wording, and send 0.66 against this one, with the other test
+ * prompts unchanged (checked 2026-10-17).
+ */
 export const CHAT_ACTIONS: ChatActionDef[] = [
   {
     id: 'send',
-    description: 'Send money to someone (a person, a handle such as @ana)',
+    description:
+      'Send or pay money to someone, in any language (send, pay, transfer; manda, envia, paga, transfere, passa; envía, paga, transfiere), to a person or a handle such as @ana',
     fields: {
-      amount: { type: 'number', description: 'The amount, only when the user typed it in US dollars (dollars, USD, $); leave it out for any other currency' },
+      amount: { type: 'number', description: 'The amount, only when the user typed it in US dollars (dollars, USD, USDC, $); leave it out for any other currency' },
       recipient: { type: 'string', description: 'The recipient handle without @, only if the user typed one' },
     },
   },
   {
     id: 'add_money',
-    description: 'Add money to the account',
-    fields: { amount: { type: 'number', description: 'The amount, only when the user typed it in US dollars (dollars, USD, $); leave it out for any other currency' } },
+    description:
+      'Add money to the account, in any language (add, top up, deposit; adicionar, depositar, colocar; añadir, depositar, recargar)',
+    fields: { amount: { type: 'number', description: 'The amount, only when the user typed it in US dollars (dollars, USD, USDC, $); leave it out for any other currency' } },
   },
   {
     id: 'find_document',
-    description: 'Find a document the user keeps in the app (a passport, a certificate, a contract)',
+    description: 'Find or show a document the user keeps in the app (a passport, a certificate, a contract)',
     fields: { query: { type: 'string', description: 'What to search for, in a few words' } },
   },
   {
     id: 'filter_activity',
-    description: 'Show past payments filtered by an app or a month',
+    description: 'Show past payments, filtered by an app or a month',
     fields: {
       app: { type: 'string', description: 'The app the payments came from, only if named' },
       month: { type: 'string', description: 'The month, as YYYY-MM, only if named' },
@@ -58,7 +66,7 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
   { id: 'import_cv', description: 'Import or update a CV or resume' },
   { id: 'add_document', description: 'Add or scan a new document' },
   { id: 'looking_for', description: 'Start, pause or change looking for work, or where the user can work' },
-  { id: 'message', description: 'Write a message to a friend or a contact' },
+  { id: 'message', description: 'Write a text message to a friend or a contact (tell someone something), not a payment' },
   { id: 'create_group', description: 'Create a group chat' },
 ];
 
@@ -86,7 +94,7 @@ export const ROUTER_THRESHOLDS = {
  * 0.69); split, Clef chose correctly on all eleven test prompts.
  */
 export function routerQuestions(actions: ChatActionDef[] = CHAT_ACTIONS) {
-  const actionCriteria: Record<string, string> = { none: 'Nothing to open; the user wants an answer or a chat' };
+  const actionCriteria: Record<string, string> = { none: 'Nothing to open: the user only wants information, an explanation or small talk' };
   for (const a of actions) actionCriteria[a.id] = a.description;
   return {
     action: {

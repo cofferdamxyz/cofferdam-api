@@ -41,7 +41,9 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   // glm-4.7-flash spiked to 7-11 s on the same call (checked 2026-10-17).
   'chat-action': { model: '@cf/google/gemma-4-26b-a4b-it', envVar: 'CHAT_ACTION_MODEL', timeoutMs: 6_000 },
   'chat-answer': { model: '@cf/google/gemma-4-26b-a4b-it', envVar: 'CHAT_ANSWER_MODEL', timeoutMs: 15_000 },
-  'chat-long': { model: '@cf/zai-org/glm-5.3-flash', envVar: 'CHAT_LONG_MODEL', timeoutMs: 30_000 },
+  // glm-5.3-flash took 1.8-2.9 s to its first token and 7-20 s in all on long
+  // answers, gemma-4 0.5-1.0 s and 4-7 s for as much text (2026-10-17).
+  'chat-long': { model: '@cf/google/gemma-4-26b-a4b-it', envVar: 'CHAT_LONG_MODEL', timeoutMs: 30_000 },
 };
 
 export interface InferenceEnv extends Partial<Record<InferenceModelVar, string>> {

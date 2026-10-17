@@ -73,7 +73,7 @@ export function parseChatRequest(body: unknown): { account: string; messages: Ch
 export const SYSTEM_PROMPT = [
   'You are the Cofferdam assistant inside the Cofferdam app.',
   'Cofferdam helps people get paid for their work, find work nearby, and keep their documents safe.',
-  'Answer in the language the user writes in. Be short, warm and plain: a few sentences unless asked for more.',
+  "Reply in the language of the user's latest message, even when earlier messages are in another language. Be short, warm and plain: a few sentences unless asked for more.",
   // The app shows replies as plain text (glm-5.3 answered in Markdown, checked 2026-10-17).
   'Write plain text only: no Markdown, asterisks, bold, headings or tables. For steps, use short numbered lines.',
   'Never use technical money jargon: do not say crypto, blockchain, web3, wallet, token, on-chain, gas, stablecoin, seed phrase or address. Say "your account" and "payment".',
@@ -126,7 +126,7 @@ export const CLARIFY_TEXT = FIXED_TEXT.en.clarify;
 export const CHOOSE_TEXT = FIXED_TEXT.en.choose;
 export const EMPTY_TEXT = FIXED_TEXT.en.empty;
 
-const USD = /(\$|\busd\b|\bdollars?\b|\bd[óo]lar(es)?\b)/i;
+const USD = /(\$|\busdc?\b|\bdollars?\b|\bd[óo]lar(es)?\b)/i;
 const OTHER_CURRENCY = /(r\$|€|£|¥|₹|\breais\b|\breal\b|\beuros?\b|\blibras?\b|\bpounds?\b|\bpesos?\b|\byen\b|\brupees?\b|\bsoles?\b)/i;
 
 /** Whether an amount in the text is in another currency than US dollars. */
@@ -316,8 +316,13 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     let decision: RouteDecision = { route: 'answer', action: null, confidence: 0, language: 'en', candidates: [] };
 
     // The everyday answer starts with the router and waits for its verdict.
+    // When long answers run on the same model (the default since gemma-4
+    // proved faster than glm-5.3-flash), it starts with the long cap and
+    // serves long turns too.
+    const [answerModel, longModel] = await Promise.all([inference.model('chat-answer'), inference.model('chat-long')]);
+    const shared = answerModel === longModel;
     const early = new AbortController();
-    const startAnswer = () => inference.run('chat-answer', answerInput(messages, false), { signal: early.signal });
+    const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared), { signal: early.signal });
     const earlyAnswer = opts.early === false ? null : startAnswer();
     earlyAnswer?.catch(() => {});
     const dropEarly = () => {
@@ -374,13 +379,16 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         case 'answer':
         case 'answer_long': {
           const long = decision.route === 'answer_long';
-          if (long) dropEarly();
-          else if (earlyAnswer) turn.early = 'used';
+          const useEarly = earlyAnswer !== null && (!long || shared);
+          if (useEarly) turn.early = 'used';
+          else dropEarly();
           // The early answer's call began with the turn.
-          const t2 = !long && earlyAnswer ? started : Date.now();
-          const res = long
-            ? await inference.run('chat-long', answerInput(messages, true))
-            : await (earlyAnswer ?? startAnswer());
+          const t2 = useEarly ? started : Date.now();
+          const res = useEarly
+            ? await earlyAnswer
+            : long && !shared
+              ? await inference.run('chat-long', answerInput(messages, true))
+              : await startAnswer();
           let sent = 0;
           let usage = usageOf(res);
           if (res instanceof ReadableStream) {

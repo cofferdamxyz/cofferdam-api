@@ -73,10 +73,14 @@ interface Call {
 }
 
 /** A fake seam keyed by op: a value, an Error to throw, or a function producing either. */
-function fakeInference(responses: Partial<Record<InferenceOp, unknown>>, calls: Call[] = []): ChatInference {
+function fakeInference(
+  responses: Partial<Record<InferenceOp, unknown>>,
+  calls: Call[] = [],
+  models: Partial<Record<InferenceOp, string>> = {},
+): ChatInference {
   return {
     async model(op) {
-      return OPS[op].model;
+      return models[op] ?? OPS[op].model;
     },
     async run(op, input, call: InferenceCall = {}) {
       calls.push({ op, input, signal: call.signal });
@@ -246,14 +250,28 @@ describe('runChat', () => {
     expect(events.some((e) => e.type === 'choices')).toBe(false);
   });
 
-  it('answers long turns on the larger model and drops the early answer', async () => {
+  it('serves long turns from the early answer when both run on the same model', async () => {
     const calls: Call[] = [];
     const inference = fakeInference(
-      { 'chat-router': clef('none', 0.76, 'long', 0.96), 'chat-answer': () => sse(['short']), 'chat-long': () => sse(['Step 1.']) },
+      { 'chat-router': clef('none', 0.76, 'long', 0.96), 'chat-answer': () => sse(['Step 1.']), 'chat-long': () => sse(['never']) },
       calls,
     );
     const events = await collect(runChat({ inference, messages: user('explain escrow step by step') }));
     expect(texts(events)).toBe('Step 1.');
+    expect(calls.map((c) => c.op)).toEqual(['chat-answer', 'chat-router']);
+    expect(calls[0]!.input).toMatchObject({ max_completion_tokens: 1_200, reasoning_effort: 'low' });
+  });
+
+  it('answers long turns on a pinned larger model and drops the early answer', async () => {
+    const calls: Call[] = [];
+    const inference = fakeInference(
+      { 'chat-router': clef('none', 0.76, 'long', 0.96), 'chat-answer': () => sse(['short']), 'chat-long': () => sse(['Step 1.']) },
+      calls,
+      { 'chat-long': '@cf/zai-org/glm-5.3-flash' },
+    );
+    const events = await collect(runChat({ inference, messages: user('explain escrow step by step') }));
+    expect(texts(events)).toBe('Step 1.');
+    expect(calls[0]!.input).toMatchObject({ max_completion_tokens: 400 });
     expect(calls.find((c) => c.op === 'chat-long')!.input).toMatchObject({ max_completion_tokens: 1_200, reasoning_effort: 'low' });
     expect(calls[0]!.signal?.aborted).toBe(true);
   });
@@ -416,6 +434,7 @@ describe('mentionsOtherCurrency', () => {
     expect(keepsAmount('send 20 to ana', 'en')).toBe(true);
     expect(keepsAmount('manda 20 pro joao', 'pt')).toBe(false);
     expect(keepsAmount('manda 20 dólares pro joao', 'pt')).toBe(true);
+    expect(keepsAmount('Send 20 USDC para @Ana', 'pt')).toBe(true);
     expect(keepsAmount('envía $20 a ana', 'es')).toBe(true);
     expect(keepsAmount('manda R$ 20 pro joao', 'pt')).toBe(false);
     expect(keepsAmount('send 20 euros to ana', 'en')).toBe(false);
