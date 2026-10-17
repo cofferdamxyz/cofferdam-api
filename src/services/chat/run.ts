@@ -8,14 +8,23 @@
  *   data: {"type":"route","route":"answer","action":null,"confidence":0.97}
  *   data: {"type":"text","delta":"…"}                 (zero or more)
  *   data: {"type":"action","request":{"id":"send","amount":20,"recipient":"ana"}}
+ *   data: {"type":"choices","requests":[{"id":"send","recipient":"joao"},{"id":"message"}]}
  *   data: {"type":"done"}            or   data: {"type":"error","message":"…"}
  *
+ * The everyday answer starts together with the router and is held until the
+ * router clears the turn: on a short answer its text streams at once, on any
+ * other route it is cancelled unread, so nothing reaches the user before the
+ * safety checks. Below the action floor the turn offers the likeliest screens
+ * as `choices` to tap, the first one prefilled, instead of guessing.
+ *
  * The text the app sends has already passed its on-device privacy gate;
- * placeholders such as [EMAIL_1] stay as written. Workers AI is injected
- * (`AiRun`), so the tests drive the whole turn with fakes. Thinking is off on
- * every routed call: reasoning tokens bill as output and delay the reply.
+ * placeholders such as [EMAIL_1] stay as written. Every model call goes
+ * through the inference seam (`services/inference`), injected so the tests
+ * drive the whole turn with fakes. Thinking is off on every routed call:
+ * reasoning tokens bill as output and delay the reply.
  */
 
+import type { Inference } from '../inference/index.js';
 import { actionTool, CHAT_ACTIONS, decideRoute, routerQuestions, type ChatLanguage, type RouteDecision } from './router.js';
 
 export interface ChatMessage {
@@ -27,28 +36,12 @@ export type ChatEvent =
   | { type: 'route'; route: RouteDecision['route']; action: string | null; confidence: number }
   | { type: 'text'; delta: string }
   | { type: 'action'; request: Record<string, unknown> }
+  | { type: 'choices'; requests: Record<string, unknown>[] }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
-/** Model pins; each is one setting (decision 0037). */
-export interface ChatModels {
-  router: string;
-  action: string;
-  answer: string;
-  answerLong: string;
-}
-
-export const DEFAULT_CHAT_MODELS: ChatModels = {
-  router: '@cf/cloudflare/clef-flash',
-  // gemma-4 fills the action fields as well as glm-4.7-flash and stays near 1 s;
-  // glm-4.7-flash spiked to 7-11 s on the same call (checked 2026-10-17).
-  action: '@cf/google/gemma-4-26b-a4b-it',
-  answer: '@cf/google/gemma-4-26b-a4b-it',
-  answerLong: '@cf/zai-org/glm-5.3-flash',
-};
-
-/** Workers AI's `run`, as the turn uses it. */
-export type AiRun = (model: string, input: Record<string, unknown>) => Promise<unknown>;
+/** The seam as the turn uses it. */
+export type ChatInference = Pick<Inference, 'run' | 'model'>;
 
 // ── Request ──────────────────────────────────────────────────────────────────
 
@@ -81,6 +74,8 @@ export const SYSTEM_PROMPT = [
   'You are the Cofferdam assistant inside the Cofferdam app.',
   'Cofferdam helps people get paid for their work, find work nearby, and keep their documents safe.',
   'Answer in the language the user writes in. Be short, warm and plain: a few sentences unless asked for more.',
+  // The app shows replies as plain text (glm-5.3 answered in Markdown, checked 2026-10-17).
+  'Write plain text only: no Markdown, asterisks, bold, headings or tables. For steps, use short numbered lines.',
   'Never use technical money jargon: do not say crypto, blockchain, web3, wallet, token, on-chain, gas, stablecoin, seed phrase or address. Say "your account" and "payment".',
   'You cannot move money or change anything yourself. The app opens a screen and the user confirms there.',
   'Text in square brackets such as [EMAIL_1] or [PHONE_2] was hidden on purpose on the phone. Keep it exactly as written and never ask for the hidden value.',
@@ -92,22 +87,28 @@ function actionSystem(today: string): string {
 }
 
 /** The fixed replies, in the user's language (decided by the router). */
-export const FIXED_TEXT: Record<ChatLanguage, { refuse: string; clarify: string; empty: string; ready: (label: string) => string }> = {
+export const FIXED_TEXT: Record<
+  ChatLanguage,
+  { refuse: string; clarify: string; choose: string; empty: string; ready: (label: string) => string }
+> = {
   en: {
     refuse: "I can't help with that. I can help with your payments, your documents or finding work.",
     clarify: 'Do you want me to open something for you? I can open Send, Add money, your documents, your payments, Looking for work, or a new message.',
+    choose: 'Did you mean one of these? Tap one to open it, or ask me another way.',
     empty: "Sorry, I couldn't put an answer together. Try asking another way.",
     ready: (label) => `${label} is ready. Check the details and confirm there.`,
   },
   pt: {
     refuse: 'Não posso ajudar com isso. Posso ajudar com seus pagamentos, seus documentos ou a encontrar trabalho.',
     clarify: 'Quer que eu abra algo para você? Posso abrir Enviar, Adicionar dinheiro, seus documentos, seus pagamentos, Procurando trabalho ou uma nova mensagem.',
+    choose: 'Você quis dizer uma destas? Toque em uma para abrir, ou pergunte de outro jeito.',
     empty: 'Desculpe, não consegui montar uma resposta. Tente perguntar de outro jeito.',
     ready: (label) => `${label} está pronto. Confira os detalhes e confirme lá.`,
   },
   es: {
     refuse: 'No puedo ayudar con eso. Puedo ayudarte con tus pagos, tus documentos o a encontrar trabajo.',
     clarify: '¿Quieres que abra algo? Puedo abrir Enviar, Añadir dinero, tus documentos, tus pagos, Buscando trabajo o un mensaje nuevo.',
+    choose: '¿Quisiste decir una de estas? Toca una para abrirla, o pregúntame de otra forma.',
     empty: 'Lo siento, no pude armar una respuesta. Intenta preguntarlo de otra forma.',
     ready: (label) => `${label} está listo. Revisa los detalles y confirma allí.`,
   },
@@ -122,26 +123,40 @@ const ACTION_LABELS: Record<ChatLanguage, Record<string, string>> = {
 
 export const REFUSE_TEXT = FIXED_TEXT.en.refuse;
 export const CLARIFY_TEXT = FIXED_TEXT.en.clarify;
+export const CHOOSE_TEXT = FIXED_TEXT.en.choose;
 export const EMPTY_TEXT = FIXED_TEXT.en.empty;
 
 const USD = /(\$|\busd\b|\bdollars?\b|\bd[óo]lar(es)?\b)/i;
 const OTHER_CURRENCY = /(r\$|€|£|¥|₹|\breais\b|\breal\b|\beuros?\b|\blibras?\b|\bpounds?\b|\bpesos?\b|\byen\b|\brupees?\b|\bsoles?\b)/i;
 
-/**
- * Whether an amount in the text is in another currency than US dollars. The
- * action model was told to skip such amounts but still prefilled "15 reais" as
- * 15 (checked 2026-10-17), so the plane drops the amount itself.
- */
+/** Whether an amount in the text is in another currency than US dollars. */
 export function mentionsOtherCurrency(text: string): boolean {
   const withoutBrl = text.replace(/r\$/gi, ' BRL ');
   return OTHER_CURRENCY.test(text) && !USD.test(withoutBrl);
 }
 
+/**
+ * Whether the amount the action model read may be prefilled; the app's
+ * amounts are US dollars. The model was told to skip other currencies but
+ * still prefilled "15 reais" as 15, and "manda 20 pro joao" (no currency, most
+ * likely reais) as 20 (checked 2026-10-17), so the plane decides: never with
+ * another currency named, and outside English only with a dollar marker.
+ */
+export function keepsAmount(text: string, language: ChatLanguage): boolean {
+  if (mentionsOtherCurrency(text)) return false;
+  return language === 'en' || USD.test(text.replace(/r\$/gi, ' BRL '));
+}
+
+/** Earlier turns reach the router cut to this many characters; the latest message goes whole. */
+export const ROUTER_EARLIER_CHARS = 300;
+
 /** The router's `state`: the recent turns, oldest first, the latest marked. */
 export function routerState(messages: ChatMessage[]): string {
   const lines = messages.slice(-6).map((m, i, all) => {
+    if (i === all.length - 1) return `Latest user message: ${m.text}`;
     const who = m.role === 'user' ? 'User' : 'Assistant';
-    return i === all.length - 1 ? `Latest user message: ${m.text}` : `${who}: ${m.text}`;
+    const text = m.text.length > ROUTER_EARLIER_CHARS ? `${m.text.slice(0, ROUTER_EARLIER_CHARS).trimEnd()}…` : m.text;
+    return `${who}: ${text}`;
   });
   return lines.join('\n');
 }
@@ -213,10 +228,37 @@ function clefName(model: string): string {
   return model.split('/').pop() ?? model;
 }
 
+function reasonOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** The answer models' input: the conversation under the system prompt, streamed, thinking off. */
+function answerInput(messages: ChatMessage[], long: boolean): Record<string, unknown> {
+  return {
+    messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
+    stream: true,
+    max_completion_tokens: long ? 1_200 : 400,
+    // Gemma honours enable_thinking; GLM-5.3 needs reasoning_effort too (checked 2026-10-17).
+    chat_template_kwargs: { enable_thinking: false },
+    reasoning_effort: 'low',
+  };
+}
+
+interface Usage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+}
+
+function usageOf(v: unknown): Usage | null {
+  const u = (v as { usage?: Usage } | null)?.usage;
+  return u && typeof u === 'object' ? u : null;
+}
+
 export interface RunChatOptions {
-  ai: AiRun;
+  inference: ChatInference;
   messages: ChatMessage[];
-  models?: ChatModels;
+  /** Start the everyday answer with the router (default); `CHAT_EARLY_ANSWER=off` turns it off. */
+  early?: boolean;
   /** One line per routed turn for Workers Logs (no message text). */
   log?: (fields: Record<string, unknown>) => void;
   /** Clock for the action model's date (tests pin it). */
@@ -225,69 +267,106 @@ export interface RunChatOptions {
 
 /** Run one turn; the returned stream carries `ChatEvent`s as SSE. */
 export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
-  const models = opts.models ?? DEFAULT_CHAT_MODELS;
+  const { inference, messages } = opts;
+  const latest = messages[messages.length - 1]!.text;
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
-  const emit = (ev: ChatEvent) => writer.write(sseEncode(ev));
+  const started = Date.now();
+  const timings: Record<string, number> = {};
+  const turn: Record<string, unknown> = {};
+  const emit = (ev: ChatEvent) => {
+    if (ev.type === 'text' && timings.first === undefined) timings.first = Date.now() - started;
+    return writer.write(sseEncode(ev));
+  };
+
+  /** The fields the action model fills for one screen, only those the screen declares. */
+  async function actionFields(id: string, language: ChatLanguage): Promise<Record<string, unknown>> {
+    const tool = actionTool(id);
+    if (!tool) return {};
+    try {
+      const t = Date.now();
+      const res = await inference.run('chat-action', {
+        messages: [
+          { role: 'system', content: actionSystem(new Date(opts.now?.() ?? Date.now()).toISOString().slice(0, 10)) },
+          { role: 'user', content: latest },
+        ],
+        tools: [tool],
+        tool_choice: 'required',
+        max_completion_tokens: 200,
+        chat_template_kwargs: { enable_thinking: false },
+      });
+      timings.fields = Date.now() - t;
+      const args = toolArguments(res) ?? {};
+      const fields: Record<string, unknown> = {};
+      for (const k of Object.keys(CHAT_ACTIONS.find((a) => a.id === id)?.fields ?? {})) {
+        if (args[k] != null && args[k] !== '') fields[k] = args[k];
+      }
+      if (!keepsAmount(latest, language)) delete fields.amount;
+      // Handles travel without the @; the app's validator checks the bare handle.
+      if (typeof fields.recipient === 'string') fields.recipient = fields.recipient.replace(/^@/, '');
+      return fields;
+    } catch (err) {
+      // Open the screen without a prefill rather than fail the turn.
+      opts.log?.({ event: 'chat_action_fields_failed', action: id, reason: reasonOf(err) });
+      return {};
+    }
+  }
 
   (async () => {
-    const started = Date.now();
-    const timings: Record<string, number> = {};
-    let decision: RouteDecision = { route: 'answer', action: null, confidence: 0, language: 'en' };
+    let decision: RouteDecision = { route: 'answer', action: null, confidence: 0, language: 'en', candidates: [] };
+
+    // The everyday answer starts with the router and waits for its verdict.
+    const early = new AbortController();
+    const startAnswer = () => inference.run('chat-answer', answerInput(messages, false), { signal: early.signal });
+    const earlyAnswer = opts.early === false ? null : startAnswer();
+    earlyAnswer?.catch(() => {});
+    const dropEarly = () => {
+      if (!earlyAnswer || early.signal.aborted) return;
+      early.abort();
+      earlyAnswer.then((r) => (r instanceof ReadableStream ? r.cancel() : undefined)).catch(() => {});
+      turn.early ??= 'dropped';
+    };
+
     try {
       try {
         const t0 = Date.now();
-        const clef = (await opts.ai(models.router, {
-          model: clefName(models.router),
-          state: routerState(opts.messages),
+        const clef = (await inference.run('chat-router', {
+          model: clefName(await inference.model('chat-router')),
+          state: routerState(messages),
           questions: routerQuestions(),
         })) as { answers?: unknown };
         decision = decideRoute(clef?.answers);
         timings.router = Date.now() - t0;
       } catch (err) {
-        // The router is an optimisation: without it, answer on the everyday model.
-        opts.log?.({ event: 'chat_router_failed', reason: err instanceof Error ? err.message : String(err) });
+        // The router is an optimisation: without it, the everyday model answers.
+        opts.log?.({ event: 'chat_router_failed', reason: reasonOf(err) });
       }
       await emit({ type: 'route', route: decision.route, action: decision.action, confidence: decision.confidence });
 
       const fixed = FIXED_TEXT[decision.language];
       switch (decision.route) {
         case 'refuse':
+          dropEarly();
           await emit({ type: 'text', delta: fixed.refuse });
           break;
-        case 'clarify':
-          await emit({ type: 'text', delta: fixed.clarify });
-          break;
-        case 'action': {
-          const id = decision.action!;
-          const tool = actionTool(id);
-          let fields: Record<string, unknown> = {};
-          if (tool) {
-            try {
-              const t1 = Date.now();
-              const res = await opts.ai(models.action, {
-                messages: [
-                  { role: 'system', content: actionSystem(new Date(opts.now?.() ?? Date.now()).toISOString().slice(0, 10)) },
-                  { role: 'user', content: opts.messages[opts.messages.length - 1]!.text },
-                ],
-                tools: [tool],
-                tool_choice: 'required',
-                max_completion_tokens: 200,
-                chat_template_kwargs: { enable_thinking: false },
-              });
-              timings.model = Date.now() - t1;
-              const args = toolArguments(res) ?? {};
-              const allowed = Object.keys(CHAT_ACTIONS.find((a) => a.id === id)?.fields ?? {});
-              for (const k of allowed) if (args[k] != null && args[k] !== '') fields[k] = args[k];
-              if (mentionsOtherCurrency(opts.messages[opts.messages.length - 1]!.text)) delete fields.amount;
-              // Handles travel without the @; the app's validator checks the bare handle.
-              if (typeof fields.recipient === 'string') fields.recipient = fields.recipient.replace(/^@/, '');
-            } catch (err) {
-              // Open the action without a prefill rather than fail the turn.
-              opts.log?.({ event: 'chat_action_fields_failed', action: id, reason: err instanceof Error ? err.message : String(err) });
-              fields = {};
-            }
+        case 'clarify': {
+          dropEarly();
+          if (decision.candidates.length === 0) {
+            await emit({ type: 'text', delta: fixed.clarify });
+            break;
           }
+          // Only the likeliest screen is prefilled; the others open empty.
+          const first = await actionFields(decision.candidates[0]!, decision.language);
+          const requests = decision.candidates.map((id, i) => (i === 0 ? { id, ...first } : { id }));
+          turn.candidates = decision.candidates.length;
+          await emit({ type: 'choices', requests });
+          await emit({ type: 'text', delta: fixed.choose });
+          break;
+        }
+        case 'action': {
+          dropEarly();
+          const id = decision.action!;
+          const fields = await actionFields(id, decision.language);
           await emit({ type: 'action', request: { id, ...fields } });
           await emit({ type: 'text', delta: fixed.ready(ACTION_LABELS[decision.language][id] ?? id) });
           break;
@@ -295,18 +374,18 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         case 'answer':
         case 'answer_long': {
           const long = decision.route === 'answer_long';
-          const t2 = Date.now();
-          const res = await opts.ai(long ? models.answerLong : models.answer, {
-            messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...opts.messages.map((m) => ({ role: m.role, content: m.text }))],
-            stream: true,
-            max_completion_tokens: long ? 1_200 : 400,
-            // Gemma honours enable_thinking; GLM-5.3 needs reasoning_effort too (checked 2026-10-17).
-            chat_template_kwargs: { enable_thinking: false },
-            reasoning_effort: 'low',
-          });
+          if (long) dropEarly();
+          else if (earlyAnswer) turn.early = 'used';
+          // The early answer's call began with the turn.
+          const t2 = !long && earlyAnswer ? started : Date.now();
+          const res = long
+            ? await inference.run('chat-long', answerInput(messages, true))
+            : await (earlyAnswer ?? startAnswer());
           let sent = 0;
+          let usage = usageOf(res);
           if (res instanceof ReadableStream) {
             for await (const chunk of sseJson(res as ReadableStream<Uint8Array>)) {
+              usage = usageOf(chunk) ?? usage;
               const delta = chunkText(chunk);
               if (delta) {
                 sent += delta.length;
@@ -319,15 +398,25 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
             if (text) await emit({ type: 'text', delta: text });
           }
           timings.model = Date.now() - t2;
+          if (usage) Object.assign(turn, { tokens_in: usage.prompt_tokens, tokens_out: usage.completion_tokens });
           if (sent === 0) await emit({ type: 'text', delta: fixed.empty });
           break;
         }
       }
       await emit({ type: 'done' });
-      opts.log?.({ event: 'chat_turn', route: decision.route, action: decision.action, confidence: decision.confidence, language: decision.language, ms: Date.now() - started, ...timings });
+      opts.log?.({
+        event: 'chat_turn',
+        route: decision.route,
+        action: decision.action,
+        confidence: decision.confidence,
+        language: decision.language,
+        ms: Date.now() - started,
+        ...timings,
+        ...turn,
+      });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      opts.log?.({ event: 'chat_turn_failed', route: decision.route, reason: message });
+      dropEarly();
+      opts.log?.({ event: 'chat_turn_failed', route: decision.route, reason: reasonOf(err) });
       await emit({ type: 'error', message: 'The assistant is unavailable right now. Try again in a moment.' }).catch(() => {});
     } finally {
       await writer.close().catch(() => {});

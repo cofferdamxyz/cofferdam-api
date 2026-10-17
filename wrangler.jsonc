@@ -95,8 +95,10 @@
       { "name": "ACTIVITY_DO", "class_name": "ActivityDO" }
     ]
   },
-  // Workers AI for /v1/chat (decision 0037). Model pins: CHAT_*_MODEL vars;
-  // AI_GATEWAY_ID routes the calls through an AI Gateway when set.
+  // Workers AI, reached only through src/services/inference (decision 0037).
+  // Model pins: the AI_PINS KV namespace (model:<op>) once created, else the
+  // CHAT_*_MODEL vars, else the defaults in the seam. AI_GATEWAY_ID (a var)
+  // sends every call through the strict AI Gateway once it exists.
   "ai": { "binding": "AI" },
 
   "migrations": [
@@ -114,7 +116,9 @@
     { "name": "AA_RELAY_RL", "namespace_id": "1103", "simple": { "limit": 30, "period": 60 } },
     { "name": "CEREMONY_RL", "namespace_id": "1104", "simple": { "limit": 10, "period": 60 } },
     // /v1/chat (decision 0037): a typed turn is a few seconds; 20 a minute per account.
-    { "name": "CHAT_RL", "namespace_id": "1105", "simple": { "limit": 20, "period": 60 } }
+    { "name": "CHAT_RL", "namespace_id": "1105", "simple": { "limit": 20, "period": 60 } },
+    // /v1/chat before the gate: generous, since carriers put many phones behind one address.
+    { "name": "CHAT_IP_RL", "namespace_id": "1106", "simple": { "limit": 120, "period": 60 } }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources
@@ -135,7 +139,8 @@
   // `LINKS?: KVNamespace` as optional):
   //   { "binding": "SESSIONS", "id": "<TBD-session-3>" },
   //   { "binding": "PROFILES", "id": "<TBD-after-T1.1>" },
-  //   { "binding": "LINKS",    "id": "<TBD-run-wrangler-kv-namespace-create-LINKS>" }
+  //   { "binding": "LINKS",    "id": "<TBD-run-wrangler-kv-namespace-create-LINKS>" },
+  //   { "binding": "AI_PINS",  "id": "<TBD-run-wrangler-kv-namespace-create-AI_PINS>" }
   //
   // ─────────────────────────────────────────────────────────────────
   // R2 — encrypted blobs (vault docs, attachments, SRS)

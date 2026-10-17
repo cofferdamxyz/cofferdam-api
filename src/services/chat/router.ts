@@ -4,9 +4,10 @@
 /**
  * The chat router (workspace decision 0037): one `clef-flash` call per typed
  * turn decides the route, the in-app action and two safety checks; the rest of
- * the turn runs on the model the route names. Pure: `routerQuestions` builds
- * the Clef request, `decideRoute` reads its answers, so both are tested
- * without Workers AI.
+ * the turn runs on the model the route names. Below the action floor the
+ * router never guesses: it offers the likeliest screens as choices to tap.
+ * Pure: `routerQuestions` builds the Clef request, `decideRoute` reads its
+ * answers, so both are tested without Workers AI.
  *
  * The action list mirrors `cofferdam-app/src/lib/actions.ts`. The chat only
  * proposes an action; the app validates it (`parseActionRequest`) and opens
@@ -65,6 +66,11 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
 export const ROUTER_THRESHOLDS = {
   /** An action needs this much on the action question to be proposed. */
   action: 0.55,
+  /**
+   * Below the action floor, the screens above this one are offered as choices
+   * to tap ("manda 20 pro joao": send 0.54, message 0.28; checked 2026-10-17).
+   */
+  candidate: 0.15,
   /** A long answer needs this much on the depth question. */
   long: 0.5,
   /** Harmful or injection above this is refused. */
@@ -128,29 +134,40 @@ export interface RouteDecision {
   confidence: number;
   /** The language of the fixed replies; English when unsure. */
   language: ChatLanguage;
+  /** For `clarify`: the screens to offer, most likely first (at most three). */
+  candidates: string[];
 }
 
+const MAX_CANDIDATES = 3;
+
 /** Read Clef's answers into a route; a missing or malformed answer falls back to a short answer. */
-export function decideRoute(answers: unknown, thresholds = ROUTER_THRESHOLDS): RouteDecision {
+export function decideRoute(answers: unknown, thresholds = ROUTER_THRESHOLDS, actions: ChatActionDef[] = CHAT_ACTIONS): RouteDecision {
   const a = (answers && typeof answers === 'object' ? answers : {}) as Record<string, ClefChoice & ClefNoul>;
   const lang = a.language?.choice;
   const language: ChatLanguage = lang === 'pt' || lang === 'es' ? lang : 'en';
+  const none = { action: null, language, candidates: [] as string[] };
   const harmful = Number(a.harmful?.noul ?? 0);
   const injection = Number(a.injection?.noul ?? 0);
   if (harmful > thresholds.unsafe || injection > thresholds.unsafe) {
-    return { route: 'refuse', action: null, confidence: Math.max(harmful, injection), language };
+    return { ...none, route: 'refuse', confidence: Math.max(harmful, injection) };
   }
   const id = a.action?.choice;
-  const actionP = Number(a.action?.probabilities?.[id ?? ''] ?? 0);
+  const probabilities = a.action?.probabilities ?? {};
+  const actionP = Number(probabilities[id ?? ''] ?? 0);
   if (id && id !== 'none') {
-    return actionP >= thresholds.action
-      ? { route: 'action', action: id, confidence: actionP, language }
-      : { route: 'clarify', action: null, confidence: actionP, language };
+    if (actionP >= thresholds.action) return { ...none, route: 'action', action: id, confidence: actionP };
+    const known = new Set(actions.map((x) => x.id));
+    const candidates = Object.entries(probabilities)
+      .filter(([k, p]) => known.has(k) && Number(p) >= thresholds.candidate)
+      .sort((x, y) => Number(y[1]) - Number(x[1]))
+      .slice(0, MAX_CANDIDATES)
+      .map(([k]) => k);
+    return { ...none, route: 'clarify', confidence: actionP, candidates };
   }
   const depth = a.depth?.choice;
   const depthP = Number(a.depth?.probabilities?.[depth ?? ''] ?? 0);
-  if (depth === 'long' && depthP >= thresholds.long) return { route: 'answer_long', action: null, confidence: depthP, language };
-  return { route: 'answer', action: null, confidence: depth === 'short' ? depthP : 0, language };
+  if (depth === 'long' && depthP >= thresholds.long) return { ...none, route: 'answer_long', confidence: depthP };
+  return { ...none, route: 'answer', confidence: depth === 'short' ? depthP : 0 };
 }
 
 /** The OpenAI-style tool for an action with fields, or null when it opens with nothing prefilled. */

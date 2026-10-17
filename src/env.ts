@@ -69,18 +69,27 @@ export interface Env {
    */
   CDP_WEBHOOK_SECRET?: string;
 
-  // ── Chat (workspace decision 0037) ──────────────────────────────
-  /** Workers AI, for `/v1/chat` (wrangler.jsonc `ai`). Unset: the route answers 503. */
+  // ── Inference and chat (workspace decision 0037) ────────────────
+  /**
+   * Workers AI (wrangler.jsonc `ai`). Only `services/inference` may use it
+   * (`test/inference.test.ts`). Unset: `/v1/chat` answers 503.
+   */
   AI?: Ai;
-  /** AI Gateway id the chat calls go through; unset: direct to Workers AI. */
+  /** Model pins per op class, `model:<op>`; unbound, the variables below and then the defaults. */
+  AI_PINS?: KVNamespace;
+  /** The strict AI Gateway every inference call goes through; unset: direct to Workers AI. */
   AI_GATEWAY_ID?: string;
-  /** Model pins; each falls back to decision 0037's starting model. */
+  /** Model pins by variable; each falls back to the op's default in `services/inference`. */
   CHAT_ROUTER_MODEL?: string;
   CHAT_ACTION_MODEL?: string;
   CHAT_ANSWER_MODEL?: string;
   CHAT_LONG_MODEL?: string;
-  /** `POST /v1/chat`: per account and a global brake. */
+  /** `off` stops starting the everyday answer alongside the router; anything else keeps it on. */
+  CHAT_EARLY_ANSWER?: string;
+  /** `POST /v1/chat`: a global brake, and per account after the gate passes. */
   CHAT_RL?: RateLimit;
+  /** `POST /v1/chat`: a generous per-IP ceiling before the gate. */
+  CHAT_IP_RL?: RateLimit;
 
   /**
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
