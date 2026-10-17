@@ -18,6 +18,7 @@ Cloudflare Workers API plane for Cofferdam.
 - `src/routes/ceremony.ts` + `src/services/ceremony.ts` issue the decision 0016 ceremony co-sign (`POST /v1/ceremony/first-high`): the gate is pure and tested against fakes; chain reads and the `ATTESTER.signCeremony` call are injected.
 - `src/routes/aa.ts` + `src/services/userOp.ts` relay the app's signed ERC-4337 ops (`POST /v1/aa/user-operation`): policy (our paymaster, our factory in `initCode`, gas/fee/prefund caps) → `handleOps` simulation from the relayer → submission with `RELAYER_PRIVATE_KEY`. The first op of an account carries `initCode`, so this is also deployment (decision 0012).
 - `src/routes/enterprise.ts` + `src/services/company.ts` + `src/services/companyLinks.ts` implement the domain-anchored `companyAnchor` resolver and `CompanyConsumerLink` grants. Link routes return `503 link_store_unprovisioned` until the `LINKS` KV namespace is created.
+- `src/routes/chat.ts` + `src/services/chat/` run one Cofferdam Cloud chat turn (`POST /v1/chat`, workspace decision 0037): csa1 and an active High gate, `CHAT_RL`, a `clef-flash` router (`router.ts`) and the routed Workers AI models (`run.ts`, pins in `CHAT_*_MODEL`), streamed as server-sent events. The text never reaches a log.
 - The planned Assignment service is generic, account-pseudonym keyed, local-first, and escrow-optional. Port structural behavior from OffshoreSync `WorkAssignment`/`ScheduleOverride`; do not import Mongo IDs or maritime social dispatch into the plane.
 
 ## Validation and deploys

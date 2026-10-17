@@ -95,6 +95,10 @@
       { "name": "ACTIVITY_DO", "class_name": "ActivityDO" }
     ]
   },
+  // Workers AI for /v1/chat (decision 0037). Model pins: CHAT_*_MODEL vars;
+  // AI_GATEWAY_ID routes the calls through an AI Gateway when set.
+  "ai": { "binding": "AI" },
+
   "migrations": [
     { "tag": "v1-bind-bundles", "new_sqlite_classes": ["BindBundleDO"] },
     { "tag": "v2-activity", "new_sqlite_classes": ["ActivityDO"] }
@@ -108,7 +112,9 @@
     { "name": "SELF_VERIFY_RL", "namespace_id": "1101", "simple": { "limit": 30, "period": 60 } },
     { "name": "SELF_PICKUP_RL", "namespace_id": "1102", "simple": { "limit": 60, "period": 60 } },
     { "name": "AA_RELAY_RL", "namespace_id": "1103", "simple": { "limit": 30, "period": 60 } },
-    { "name": "CEREMONY_RL", "namespace_id": "1104", "simple": { "limit": 10, "period": 60 } }
+    { "name": "CEREMONY_RL", "namespace_id": "1104", "simple": { "limit": 10, "period": 60 } },
+    // /v1/chat (decision 0037): a typed turn is a few seconds; 20 a minute per account.
+    { "name": "CHAT_RL", "namespace_id": "1105", "simple": { "limit": 20, "period": 60 } }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources

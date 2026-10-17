@@ -21,6 +21,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { Env } from './env.js';
 import { activityRoutes } from './routes/activity.js';
+import { chatRoutes } from './routes/chat.js';
 import { attesterRoutes } from './routes/attester.js';
 import { ceremonyRoutes } from './routes/ceremony.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
@@ -73,6 +74,7 @@ app.get('/', (c) => {
       { method: 'GET', path: '/v1/activity?address=' },
       { method: 'GET', path: '/v1/activity/check?address=&sinceBlock=' },
       { method: 'POST', path: '/v1/activity/webhooks/cdp' },
+      { method: 'POST', path: '/v1/chat' },
       { method: 'POST', path: '/v1/attester/test-sign', environment: 'development' },
       { method: 'POST', path: '/v1/self/verify' },
       { method: 'GET', path: '/v1/self/bind-bundle/:account' },
@@ -91,6 +93,7 @@ app.route('/v1/attester', attesterRoutes);
 app.route('/v1/self', selfRoutes);
 app.route('/v1/enterprise', enterpriseRoutes);
 app.route('/v1/activity', activityRoutes);
+app.route('/v1/chat', chatRoutes);
 app.route('/v1/session', sessionRoutes);
 app.route('/v1/aa', aaRoutes);
 app.route('/v1/ceremony', ceremonyRoutes);

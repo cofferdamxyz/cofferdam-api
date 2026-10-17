@@ -69,6 +69,19 @@ export interface Env {
    */
   CDP_WEBHOOK_SECRET?: string;
 
+  // ── Chat (workspace decision 0037) ──────────────────────────────
+  /** Workers AI, for `/v1/chat` (wrangler.jsonc `ai`). Unset: the route answers 503. */
+  AI?: Ai;
+  /** AI Gateway id the chat calls go through; unset: direct to Workers AI. */
+  AI_GATEWAY_ID?: string;
+  /** Model pins; each falls back to decision 0037's starting model. */
+  CHAT_ROUTER_MODEL?: string;
+  CHAT_ACTION_MODEL?: string;
+  CHAT_ANSWER_MODEL?: string;
+  CHAT_LONG_MODEL?: string;
+  /** `POST /v1/chat`: per account and a global brake. */
+  CHAT_RL?: RateLimit;
+
   /**
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
    * `handleOps` for the app's sponsored ops (`/v1/aa/user-operation`, refunded
