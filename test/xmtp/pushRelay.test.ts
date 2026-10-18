@@ -297,3 +297,24 @@ describe('the relay keeps nothing', () => {
     expect(cfg).toMatch(/"logpush":\s*false/);
   });
 });
+
+describe('the hint vector shared with the app', () => {
+  // cofferdam-app src/lib/push.test.ts opens the same vector with @noble/ciphers.
+  const VECTOR = {
+    key: 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=',
+    topic: 'AKurq6urq6urq6urq6urq6s=',
+    seq: '42',
+    c: 'BwcHBwcHBwcHBwcHEBkDTN4DqgQNZoyXKJVAFwY42G9VPKNYuQS2m1T66rQ0yQkhQsLugiDD-yCAdECBbqApLBPEK99H',
+    collapseId: 'c1e6a363a454bd41ff5f6539cf8da467',
+  };
+
+  it('opens with the relay keys and yields the same collapse id', async () => {
+    const key = fromB64(VECTOR.key)!;
+    const { aes } = await hintKeys(key);
+    const raw = fromB64Url(VECTOR.c)!;
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.subarray(0, 12) }, aes, raw.subarray(12));
+    expect(JSON.parse(new TextDecoder().decode(plain))).toEqual({ t: VECTOR.topic, s: VECTOR.seq });
+    const sealed = await encryptHint(key, { topic: fromB64(VECTOR.topic)!, sequenceId: VECTOR.seq });
+    expect(sealed.collapseId).toBe(VECTOR.collapseId);
+  });
+});
