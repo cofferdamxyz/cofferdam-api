@@ -25,10 +25,12 @@
   "dependencies": {
     "@noble/curves": "1.9.7",
     "hono": "4.12.23",
+    "pg": "8.23.1",
     "viem": "2.51.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260530.1",
+    "@types/pg": "8.23.1",
     "typescript": "5.9.3",
     "vitest": "4.1.6",
     "wrangler": "4.95.0"

@@ -1,0 +1,97 @@
+#:schema https://raw.githubusercontent.com/xmtp/libxmtp/main/docs/schemas/backend-v1.json
+#
+# Cofferdam's XMTP 8 backend (ghcr.io/xmtp/backend:8.0.0-rc2), baked into the
+# Container image by ./Dockerfile. Every secret is an `env:` reference that the
+# XmtpBackend Durable Object fills from Worker secrets when it starts the
+# container (src/index.ts); nothing secret is in this file.
+#
+# Privacy rules (workspace decision 0039): the server is blind by default.
+# Settings below that exist for that reason say so.
+
+[server]
+# Every client database is bound to this name. NEVER change it once a phone has
+# connected, including when the deployment moves (Fly, another Cloudflare
+# account, a new database): clients would stop with a backend-mismatch error.
+identifier = "xyz.cofferdam.xmtp"
+listen = "0.0.0.0:5050"
+# 0039: no request log. The completion log carries no topic or IP, but it does
+# pair a method, a time and a size per request; we keep none of it.
+request_logger = false
+log_level = "warn"
+log_format = "json"
+
+[telemetry]
+# The metrics listener is unauthenticated; with no route to it from the edge it
+# would be private anyway, but nothing reads it yet, so it is off.
+metrics_listen = ""
+
+[database]
+# One Postgres 17+ connection string, primary and DIRECT (never a transaction
+# pooler, never Hyperdrive: the backend keeps session state). Neon: the
+# endpoint without `-pooler`. PlanetScale: port 5432, not 6432.
+url = "env:XMTP_DATABASE_URL"
+# Budget per instance: 20 pooled + 1 tailer + 1 push dispatcher = 22.
+max_connections = 20
+
+[retention]
+# 0039 and decision 0041: 30 days for group messages, 90 for welcomes and key
+# packages. The backend only stamps expiry_ns; ../cleanup deletes the rows.
+# Changing a value here: change the mirrored vars in ../cleanup/wrangler.jsonc
+# in the same commit (test/xmtp/config.test.ts fails otherwise).
+group_message_seconds = 2592000
+welcome_seconds = 7776000
+key_package_seconds = 7776000
+
+[auth]
+# 0039: a token proves "a Cofferdam app", never "user X". One app-level key,
+# named for the app, so the only principal the backend ever sees is
+# `cofferdam-app`. Rotation: add `cofferdam-app-2`, ship the app, drop the old.
+enabled = true
+
+[auth.api_keys]
+cofferdam-app = "env:XMTP_APP_API_KEY"
+
+[chains]
+# Smart-contract-wallet (ERC-1271) checks for the passkey account that signs the
+# inbox identity. Base Sepolia is why we self-host on this config at all.
+"eip155:84532" = "env:XMTP_RPC_BASE_SEPOLIA"
+"eip155:8453" = "env:XMTP_RPC_BASE"
+
+[handles]
+# XMTP's own public handles can't be switched off in config; the app never
+# claims one (ENS handles are the only names, decision 0029). The longest
+# minimum (27, the name part's maximum) admits almost nothing if a client tries.
+min_name_length = 27
+
+[push]
+# Decision 0040: phones register only the HTTPS channel, pointing at the blind
+# relay with a sealed token. No [push.apns] or [push.fcm]: the backend holds no
+# Apple or Google credential, so no raw device token can ever be registered.
+recipient_ttl_seconds = 2592000
+max_attempts = 3
+
+[push.http]
+allowed_domains = ["push.cofferdam.xyz"]
+allow_private_addresses = false
+
+[attachments]
+# Ciphertext only, in R2 (bucket `cofferdam-xmtp-attachments`, public through
+# the custom domain below, lifecycle 30 days = retention_seconds). Objects are
+# keyed by the ciphertext's SHA-256: no user, no conversation in the key.
+base_url = "https://xmtp-files.cofferdam.xyz"
+max_upload_bytes = 26214400
+retention_seconds = 2592000
+
+[attachments.target.S3]
+# R2's S3 endpoint carries the account id, so it is a secret, never a literal.
+endpoint = "env:XMTP_R2_ENDPOINT"
+region = "auto"
+bucket = "cofferdam-xmtp-attachments"
+key_prefix = ""
+presign_ttl_seconds = 900
+
+[attachments.target.S3.credentials]
+# An R2 API token limited to Object Write on this one bucket.
+kind = "static"
+access_key_id = "env:XMTP_R2_ACCESS_KEY_ID"
+secret_access_key = "env:XMTP_R2_SECRET_ACCESS_KEY"

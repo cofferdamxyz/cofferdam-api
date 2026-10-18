@@ -13,9 +13,17 @@ src/
   services/          the logic behind them: selfBind, bindBundleDO, userOp, ceremony,
                      sessionAttestation, activity, company, companyLinks, attester (RPC types)
   chain/             viem client, Celo reads, deployments.ts (SEPOLIA_DEPLOYMENTS)
-test/                Vitest suites and fixtures
+test/                Vitest suites and fixtures (test/xmtp/ for the operator Workers)
 wrangler.jsonc       vars, zone route, service binding, Durable Object, rate limits
+xmtp/                the XMTP operator, three Workers deployed on their own (not the plane):
+  backend/           cofferdam-xmtp-backend: the XMTP 8 backend as a Container (Dockerfile,
+                     backend.toml), a keep-alive cron, the inbound-TCP ingress slot
+  push-relay/        cofferdam-push-relay at push.cofferdam.xyz: seals device tokens, turns the
+                     backend's signed webhook into an APNs alert or FCM data push; stores and logs nothing
+  cleanup/           cofferdam-xmtp-cleanup: hourly deletion of expired envelopes through Hyperdrive
 ```
+
+The `xmtp/` Workers share this repository's dependencies and tests but deploy separately (`cd xmtp/<name> && npx wrangler deploy`, from the Mac). The plane never holds a device token, a topic or a message; design in the workspace `docs/architecture/messaging.md` (decisions 0039 to 0041), runbook `docs/runbooks/xmtp-backend.md`.
 
 ## Routes
 

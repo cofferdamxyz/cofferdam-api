@@ -1,0 +1,41 @@
+/**
+ * cofferdam-xmtp-cleanup: hourly deletion of expired XMTP envelopes
+ * (workspace decision 0041). Deploy from the Mac only:
+ *
+ *   npx wrangler hyperdrive create cofferdam-xmtp-cleanup \
+ *     --connection-string="$XMTP_DATABASE_URL" --caching-disabled
+ *   npx wrangler kv namespace create CLEANUP_STATE
+ *   (paste both ids below, then) cd xmtp/cleanup && direnv exec ../../.. npx wrangler deploy
+ *
+ * The connection string is the backend's own (direct endpoint). Hyperdrive
+ * pools in front of it; that is fine for this job, never for the backend.
+ */
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "cofferdam-xmtp-cleanup",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-30",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Counts only (src/index.ts). No request ever reaches this Worker.
+  "observability": { "enabled": true },
+  "workers_dev": false,
+  "preview_urls": false,
+
+  "triggers": { "crons": ["17 * * * *"] },
+
+  "vars": {
+    // Mirrors xmtp/backend/backend.toml [retention] (test/xmtp/config.test.ts).
+    // The job never deletes before a row's own expiry_ns; these values only
+    // reset the resume points when retention changes.
+    "RETENTION_GROUP_MESSAGE_SECONDS": "2592000",
+    "RETENTION_WELCOME_SECONDS": "7776000",
+    "RETENTION_KEY_PACKAGE_SECONDS": "7776000",
+    "GRACE_SECONDS": "604800",
+    "BATCH_SIZE": "5000",
+    "PUSH_CURSOR_GUARD": "on"
+  },
+
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<wrangler hyperdrive create … id>" }],
+  "kv_namespaces": [{ "binding": "CLEANUP_STATE", "id": "<wrangler kv namespace create … id>" }]
+}

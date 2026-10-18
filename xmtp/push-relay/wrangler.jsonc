@@ -1,0 +1,41 @@
+/**
+ * cofferdam-push-relay: the blind push relay at push.cofferdam.xyz
+ * (workspace decisions 0040, 0041). Deploy from the Mac only:
+ *
+ *   cd xmtp/push-relay && direnv exec ../../.. npx wrangler deploy
+ *
+ * Secrets (wrangler secret put, from this directory):
+ *   SEAL_KEYS            {"1":"<openssl rand -base64 32>"}  (never rotate by
+ *                        replacing: add "2", move SEAL_KID_CURRENT, drop "1" later)
+ *   APNS_KEY_P8          the .p8 file's contents (Apple Developer > Keys, APNs)
+ *   APNS_KEY_ID          that key's 10-character id (not secret; kept with the key)
+ *   FCM_SERVICE_ACCOUNT  the Firebase service-account JSON (Cloud Messaging)
+ *
+ * The relay stores nothing and logs nothing. Do not add a KV, D1, R2, Durable
+ * Object, Analytics Engine or Queue binding here, and keep observability off.
+ */
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "cofferdam-push-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-30",
+
+  "observability": { "enabled": false },
+  "logpush": false,
+  "workers_dev": false,
+  "preview_urls": false,
+
+  // A custom domain on the cofferdam.xyz zone (creates the DNS record and cert).
+  "routes": [{ "pattern": "push.cofferdam.xyz", "custom_domain": true }],
+
+  "vars": {
+    "PUBLIC_BASE_URL": "https://push.cofferdam.xyz",
+    "SEAL_KID_CURRENT": "1",
+    "APNS_TEAM_ID": "4DCX2H37VW",
+    "APNS_BUNDLE_ID": "xyz.cofferdam.app"
+  },
+
+  // Per sealed URL: a phone gets at most 60 pushes a minute through the relay.
+  // The counter is in-colo memory, keyed by a hash of the URL, never stored.
+  "ratelimits": [{ "name": "PUSH_RL", "namespace_id": "1201", "simple": { "limit": 60, "period": 60 } }]
+}
