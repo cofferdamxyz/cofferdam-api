@@ -17,7 +17,7 @@ test/                Vitest suites and fixtures (test/xmtp/ for the operator Wor
 wrangler.jsonc       vars, zone route, service binding, Durable Object, rate limits
 xmtp/                the XMTP operator, three Workers deployed on their own (not the plane):
   backend/           cofferdam-xmtp-backend: the XMTP 8 backend as a Container (Dockerfile,
-                     backend.toml), a keep-alive cron, the inbound-TCP ingress slot
+                     backend.toml), a keep-alive cron, the inbound-TCP ingress slot, fly.toml fallback
   push-relay/        cofferdam-push-relay at push.cofferdam.xyz: seals device tokens, turns the
                      backend's signed webhook into an APNs alert or FCM data push; stores and logs nothing
   cleanup/           cofferdam-xmtp-cleanup: hourly deletion of expired envelopes through Hyperdrive

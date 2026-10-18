@@ -1,0 +1,38 @@
+# The Fly.io fallback for the XMTP backend (workspace decision 0042), used only
+# if the Cloudflare inbound-TCP beta is not granted. Same image, same
+# backend.toml, same secret names. From this directory, on the Mac:
+#
+#   fly apps create cofferdam-xmtp-backend
+#   fly secrets set XMTP_DATABASE_URL=… XMTP_APP_API_KEY=… XMTP_R2_ENDPOINT=… \
+#     XMTP_R2_ACCESS_KEY_ID=… XMTP_R2_SECRET_ACCESS_KEY=…
+#   fly deploy
+#   fly certs add xmtp.cofferdam.xyz   (then the CNAME Fly prints, DNS only, not proxied)
+#
+# Fly's edge ends TLS and passes plain gRPC to :5050 with no PROXY protocol
+# (decision 0039: no client IP reaches the backend).
+
+app = "cofferdam-xmtp-backend"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  XMTP_RPC_BASE_SEPOLIA = "https://sepolia.base.org"
+  XMTP_RPC_BASE = "https://mainnet.base.org"
+
+[[services]]
+  internal_port = 5050
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls"]
+    [services.ports.tls_options]
+      alpn = ["h2"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
