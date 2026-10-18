@@ -1,6 +1,6 @@
 /**
  * cofferdam-xmtp-cleanup: hourly deletion of expired XMTP envelopes
- * (workspace decision 0041). Deploy from the Mac only:
+ * (workspace decision 0042). Deploy from the Mac only:
  *
  *   npx wrangler hyperdrive create cofferdam-xmtp-cleanup \
  *     --connection-string="$XMTP_DATABASE_URL" --caching-disabled

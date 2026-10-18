@@ -32,7 +32,7 @@ function table(name: string): Record<string, string> {
   return out;
 }
 
-describe('backend.toml (decisions 0039, 0040, 0041)', () => {
+describe('backend.toml (decisions 0039, 0040, 0042)', () => {
   it('names exactly the variables the container is given', () => {
     const refs = [...live.matchAll(/"env:([A-Z0-9_]+)"/g)].map((m) => m[1]).sort();
     expect([...new Set(refs)]).toEqual([...BACKEND_ENV_NAMES].sort());

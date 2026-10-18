@@ -3,7 +3,7 @@
 
 /**
  * What Apple and Google carry: the push hint encrypted for the one device
- * (decision 0041). The backend's own APNs and FCM channels put the topic in the
+ * (decision 0042). The backend's own APNs and FCM channels put the topic in the
  * clear, which tells Apple or Google "this phone is in group X". Here the hint is
  * AES-256-GCM under a key both the phone and the relay derive from the webhook
  * signing key the phone generated:

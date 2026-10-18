@@ -34,7 +34,7 @@ url = "env:XMTP_DATABASE_URL"
 max_connections = 20
 
 [retention]
-# 0039 and decision 0041: 30 days for group messages, 90 for welcomes and key
+# 0039 and decision 0042: 30 days for group messages, 90 for welcomes and key
 # packages. The backend only stamps expiry_ns; ../cleanup deletes the rows.
 # Changing a value here: change the mirrored vars in ../cleanup/wrangler.jsonc
 # in the same commit (test/xmtp/config.test.ts fails otherwise).

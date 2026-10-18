@@ -1,4 +1,4 @@
-# Cofferdam's XMTP backend for Cloudflare Containers (decision 0041).
+# Cofferdam's XMTP backend for Cloudflare Containers (decision 0042).
 #
 # The published image's entry point is the backend binary, so CMD holds only its
 # arguments. Pin by digest before production: replace the tag with

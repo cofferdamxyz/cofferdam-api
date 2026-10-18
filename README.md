@@ -23,7 +23,7 @@ xmtp/                the XMTP operator, three Workers deployed on their own (not
   cleanup/           cofferdam-xmtp-cleanup: hourly deletion of expired envelopes through Hyperdrive
 ```
 
-The `xmtp/` Workers share this repository's dependencies and tests but deploy separately (`cd xmtp/<name> && npx wrangler deploy`, from the Mac). The plane never holds a device token, a topic or a message; design in the workspace `docs/architecture/messaging.md` (decisions 0039 to 0041), runbook `docs/runbooks/xmtp-backend.md`.
+The `xmtp/` Workers share this repository's dependencies and tests but deploy separately (`cd xmtp/<name> && npx wrangler deploy`, from the Mac). The plane never holds a device token, a topic or a message; design in the workspace `docs/architecture/messaging.md` (decisions 0039 to 0042), runbook `docs/runbooks/xmtp-backend.md`.
 
 ## Routes
 

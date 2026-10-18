@@ -1,6 +1,6 @@
 /**
  * cofferdam-push-relay: the blind push relay at push.cofferdam.xyz
- * (workspace decisions 0040, 0041). Deploy from the Mac only:
+ * (workspace decisions 0040, 0042). Deploy from the Mac only:
  *
  *   cd xmtp/push-relay && direnv exec ../../.. npx wrangler deploy
  *

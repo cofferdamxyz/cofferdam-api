@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * cofferdam-push-relay: the blind push relay (workspace decisions 0040, 0041).
+ * cofferdam-push-relay: the blind push relay (workspace decisions 0040, 0042).
  *
  *   POST /v1/seal        the phone's one unauthenticated call: seal
  *                        {platform, token, signingKey, apnsEnv} into a delivery

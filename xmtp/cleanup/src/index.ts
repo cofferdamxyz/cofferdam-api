@@ -3,7 +3,7 @@
 
 /**
  * cofferdam-xmtp-cleanup: deletes expired XMTP envelopes every hour
- * (workspace decision 0041; design in the project file
+ * (workspace decision 0042; design in the project file
  * xmtp-hosting/message-cleanup-job.md). The XMTP backend stamps expiry_ns and
  * never deletes; this applies it.
  *

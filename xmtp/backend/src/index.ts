@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The XMTP backend as a Cloudflare Container (workspace decision 0041).
+ * The XMTP backend as a Cloudflare Container (workspace decision 0042).
  *
  * One Durable Object, `XmtpBackend` named "primary", owns one container running
  * `ghcr.io/xmtp/backend` with ../backend.toml. A cron pokes it every minute so

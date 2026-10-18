@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The sealed delivery record (workspace decisions 0040, 0041).
+ * The sealed delivery record (workspace decisions 0040, 0042).
  *
  * The phone asks the relay to seal {platform, device token, webhook signing key,
  * APNs environment} and registers the resulting URL with the XMTP backend as its
