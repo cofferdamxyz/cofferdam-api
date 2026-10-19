@@ -30,6 +30,7 @@ The `xmtp/` Workers share this repository's dependencies and tests but deploy se
 | Method and path | What it does |
 |---|---|
 | `GET /health` | liveness |
+| `GET /v1/locale` | the country Cloudflare saw for the request, for the app's number format (no auth, nothing stored) |
 | `GET /sepolia/block-height`, `GET /sepolia/contracts` | Base Sepolia head; the pinned contract addresses |
 | `POST /v1/self/verify` | Self's relayer posts the `disclose` proof; pre-flights `NullifierRegistry`, calls the attester's Celo-gated `signBind` or `signRebind`, stores the bundle in the account's `BindBundleDO` (30 min) |
 | `GET /v1/self/bind-bundle/:account` | the app picks up its bundle; requires a `csa1:` attestation for the account from a key that is an active High authority on it (checked on Base), outside `development` |
