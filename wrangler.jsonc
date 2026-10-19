@@ -107,8 +107,12 @@
   ],
 
   // ─────────────────────────────────────────────────────────────────
-  // Rate limits — permissive, per-colo, keyed in routes/self.ts. A bind is
-  // at most two relayer posts and ~15 pickup polls a minute.
+  // Rate limits — permissive, per-colo, keyed in the routes. A bind is at
+  // most two relayer posts and ~15 pickup polls a minute. Routes a caller
+  // must authenticate to (pickup, ceremony, relay, chat) run a global brake,
+  // then a per-IP ceiling (the *_IP_RL bindings), and count the per-account
+  // bucket only once the gate passes (for the relay: policy and the handleOps
+  // simulation), so knowing an address cannot lock its owner out.
   // ─────────────────────────────────────────────────────────────────
   "ratelimits": [
     { "name": "SELF_VERIFY_RL", "namespace_id": "1101", "simple": { "limit": 30, "period": 60 } },
@@ -118,7 +122,11 @@
     // /v1/chat (decision 0037): a typed turn is a few seconds; 20 a minute per account.
     { "name": "CHAT_RL", "namespace_id": "1105", "simple": { "limit": 20, "period": 60 } },
     // /v1/chat before the gate: generous, since carriers put many phones behind one address.
-    { "name": "CHAT_IP_RL", "namespace_id": "1106", "simple": { "limit": 120, "period": 60 } }
+    { "name": "CHAT_IP_RL", "namespace_id": "1106", "simple": { "limit": 120, "period": 60 } },
+    // Per-IP ceilings before the gate on pickup, ceremony and relay, as generous as chat's.
+    { "name": "SELF_PICKUP_IP_RL", "namespace_id": "1107", "simple": { "limit": 120, "period": 60 } },
+    { "name": "CEREMONY_IP_RL", "namespace_id": "1108", "simple": { "limit": 120, "period": 60 } },
+    { "name": "AA_RELAY_IP_RL", "namespace_id": "1109", "simple": { "limit": 120, "period": 60 } }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources

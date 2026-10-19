@@ -86,13 +86,28 @@ describe('checkUserOperationPolicy', () => {
 
 describe('POST /v1/aa/user-operation', () => {
   const env = (overrides: Partial<Env> = {}) => ({ RELAYER_PRIVATE_KEY: '0x' + '11'.repeat(32), ...overrides }) as unknown as Env;
-  const app = (submit: (env: Env, op: unknown) => Promise<Hex>) => {
+  type Submit = (env: Env, op: unknown, admit: () => Promise<void>) => Promise<Hex>;
+  const app = (submit: Submit) => {
     const h = new (require('hono').Hono)();
     h.route('/v1/aa', createAaRoutes({ policy, submit: submit as never }));
     return h;
   };
-  const post = (h: ReturnType<typeof app>, body: unknown, e = env()) =>
-    h.request('/v1/aa/user-operation', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, e);
+  const post = (h: ReturnType<typeof app>, body: unknown, e = env(), headers: Record<string, string> = {}) =>
+    h.request('/v1/aa/user-operation', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json', ...headers } }, e);
+  /** The recording limiter from the chat tests: every key, in order, across both bindings. */
+  function limiters(deny: (key: string) => boolean = () => false) {
+    const keys: string[] = [];
+    const rl = { limit: async ({ key }: { key: string }) => (keys.push(key), { success: !deny(key) }) };
+    return { keys, env: env({ AA_RELAY_RL: rl, AA_RELAY_IP_RL: rl } as unknown as Partial<Env>) };
+  }
+  const IP = { 'cf-connecting-ip': '203.0.113.7' };
+  /** A submitter shaped like `submitUserOperation`: simulate, admit, send. */
+  const simulated = (simulation: 'pass' | 'fail', sent: unknown[] = []): Submit => async (_e, op, admit) => {
+    if (simulation === 'fail') throw new UserOpSubmitError('simulation_failed', 'FailedOp: AA24 signature error');
+    await admit();
+    sent.push(op);
+    return '0xbeef';
+  };
 
   it('relays a good op and answers 202 with the tx hash', async () => {
     const seen: unknown[] = [];
@@ -101,6 +116,37 @@ describe('POST /v1/aa/user-operation', () => {
     expect(await res.json()).toMatchObject({ ok: true, txHash: '0xbeef', entryPoint: ENTRY_POINT_V07 });
     expect((seen[0] as { sender: string }).sender).toBe(SENDER);
   });
+  it('counts the per-sender bucket only after policy and the simulation pass', async () => {
+    const policyFail = limiters();
+    expect((await post(app(simulated('pass')), { userOp: wireOp({ paymasterAndData: '0x' }) }, policyFail.env, IP)).status).toBe(400);
+    expect(policyFail.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7']);
+
+    const simFail = limiters();
+    expect((await post(app(simulated('fail')), { userOp: wireOp() }, simFail.env, IP)).status).toBe(400);
+    expect(simFail.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7']);
+
+    const ok = limiters();
+    expect((await post(app(simulated('pass')), { userOp: wireOp() }, ok.env, IP)).status).toBe(202);
+    expect(ok.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7', `aa:${SENDER.toLowerCase()}`]);
+
+    // A spent sender bucket refuses after the simulation and before the send.
+    const sent: unknown[] = [];
+    const busy = limiters((key) => key === `aa:${SENDER.toLowerCase()}`);
+    const limited = await post(app(simulated('pass', sent)), { userOp: wireOp() }, busy.env, IP);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ error: 'rate_limited' });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('turns a busy network away before policy and the simulation', async () => {
+    let called = false;
+    const rl = limiters((key) => key.startsWith('aa-ip:'));
+    const res = await post(app(async () => ((called = true), '0xbeef')), { userOp: wireOp() }, rl.env, IP);
+    expect(res.status).toBe(429);
+    expect(rl.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7']);
+    expect(called).toBe(false);
+  });
+
   it('maps policy, simulation, relay and configuration failures', async () => {
     const h = app(async () => { throw new UserOpSubmitError('simulation_failed', 'FailedOp: AA14 initCode must return sender'); });
     expect((await post(h, { userOp: wireOp({ paymasterAndData: '0x' }) })).status).toBe(400);

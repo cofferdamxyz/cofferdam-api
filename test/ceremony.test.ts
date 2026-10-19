@@ -228,6 +228,26 @@ describe('issueFirstHighAttestation', () => {
     expect(seen).toHaveLength(1);
   });
 
+  it('admits once every check passes and before the attester signs; a refusal stops the signature', async () => {
+    const order: string[] = [];
+    const seen: SignCeremonyRequest[] = [];
+    const sign = fakeSign(seen);
+    const d = deps({ sign: async (r) => (order.push('sign'), sign(r)) });
+    await issueFirstHighAttestation(d, request(), async () => void order.push('admit'));
+    expect(order).toEqual(['admit', 'sign']);
+
+    const admit = async () => void order.push('refused-gate-admit');
+    await codeOf(issueFirstHighAttestation(deps({ verifyAssertion: async () => false }), request(), admit));
+    await codeOf(issueFirstHighAttestation(deps(), request({ session: { kind: 'session-signer', signer: MANAGED.address } }), admit));
+    expect(order).toEqual(['admit', 'sign']);
+
+    const limited = async () => {
+      throw new CeremonyRequestError('rate_limited', 'too many', 429);
+    };
+    expect(await codeOf(issueFirstHighAttestation(d, request(), limited))).toEqual(['rate_limited', 429]);
+    expect(seen).toHaveLength(1);
+  });
+
   it('fails closed when the attester hash differs from the account ceremonyHash', async () => {
     expect(
       await codeOf(issueFirstHighAttestation(deps({ onChainCeremonyHash: async () => `0x${'dd'.repeat(32)}` }), request())),
@@ -240,21 +260,29 @@ describe('POST /v1/ceremony/first-high', () => {
   /** The fixture's csa1 token names this account; the route pins the token to the body's account. */
   const FX_ACCOUNT = getAddress(fixtures.fields.accountAddress as Address);
   const FX_NOW = (fixtures.fields.issuedAt as number) + 5_000;
-  const app = (issue: (env: Env, req: FirstHighCeremonyRequest) => Promise<unknown>, now = FX_NOW) => {
+  type Issue = (env: Env, req: FirstHighCeremonyRequest, admit: () => Promise<void>) => Promise<unknown>;
+  const app = (issue: Issue, now = FX_NOW) => {
     const h = new Hono<{ Bindings: Env }>();
     h.route('/v1/ceremony', createCeremonyRoutes({ issue: issue as never, now: () => now }));
     return h;
   };
-  const post = (h: ReturnType<typeof app>, body: unknown, token?: string) =>
+  const post = (h: ReturnType<typeof app>, body: unknown, token?: string, e: Env = env, headers: Record<string, string> = {}) =>
     h.request(
       '/v1/ceremony/first-high',
       {
         method: 'POST',
         body: JSON.stringify(body),
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
       },
-      env,
+      e,
     );
+  /** The recording limiter from the chat tests: every key, in order, across both bindings. */
+  function limiters(deny: (key: string) => boolean = () => false) {
+    const keys: string[] = [];
+    const rl = { limit: async ({ key }: { key: string }) => (keys.push(key), { success: !deny(key) }) };
+    return { keys, env: { CEREMONY_RL: rl, CEREMONY_IP_RL: rl } as unknown as Env };
+  }
+  const IP = { 'cf-connecting-ip': '203.0.113.7' };
   const body = { account: FX_ACCOUNT, signerId: 0, highConfig: CONFIG, highAssertion: ASSERTION };
   /** A gate stub whose Partner config carries the fixture passkey, so the fixture's session is the signer's. */
   const fixturePartner = snapshot({
@@ -309,6 +337,47 @@ describe('POST /v1/ceremony/first-high', () => {
     expect((await post(h, { ...body, account: ACCOUNT }, stranger)).status).toBe(403);
     expect((await post(h, { ...body, account: ACCOUNT }, `${token}x`)).status).toBe(401);
   });
+  it('counts the per-account bucket only after the gate passes', async () => {
+    const issue: Issue = (_e, req, admit) =>
+      issueFirstHighAttestation(deps({ readAccount: async () => fixturePartner }), req, admit);
+    const strangerIssue: Issue = (_e, req, admit) => issueFirstHighAttestation(deps(), req, admit);
+
+    // No session, a bad session, and a session the gate refuses: global and IP only.
+    for (const [h, token, status] of [
+      [app(issue), undefined, 401],
+      [app(issue), 'garbage', 401],
+      [app(strangerIssue), fixtures.webauthn.token, 403],
+    ] as const) {
+      const rl = limiters();
+      expect((await post(h, body, token, rl.env, IP)).status).toBe(status);
+      expect(rl.keys).toEqual(['ceremony:global', 'ceremony-ip:203.0.113.7']);
+    }
+
+    const rl = limiters();
+    expect((await post(app(issue), body, fixtures.webauthn.token, rl.env, IP)).status).toBe(200);
+    expect(rl.keys).toEqual(['ceremony:global', 'ceremony-ip:203.0.113.7', `ceremony:${FX_ACCOUNT.toLowerCase()}`]);
+
+    // A spent account bucket refuses before the attester signs.
+    const seen: SignCeremonyRequest[] = [];
+    const busy = limiters((key) => key === `ceremony:${FX_ACCOUNT.toLowerCase()}`);
+    const signing: Issue = (_e, req, admit) =>
+      issueFirstHighAttestation(deps({ readAccount: async () => fixturePartner }, seen), req, admit);
+    const limited = await post(app(signing), body, fixtures.webauthn.token, busy.env, IP);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ error: 'rate_limited' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('turns a busy network away before the gate', async () => {
+    let called = false;
+    const rl = limiters((key) => key.startsWith('ceremony-ip:'));
+    const h = app(async () => ((called = true), {}));
+    const res = await post(h, body, fixtures.webauthn.token, rl.env, IP);
+    expect(res.status).toBe(429);
+    expect(rl.keys).toEqual(['ceremony:global', 'ceremony-ip:203.0.113.7']);
+    expect(called).toBe(false);
+  });
+
   it('maps bad bodies, gate refusals and attester failures', async () => {
     const h = app(async (_e, req) => issueFirstHighAttestation(deps({ readAccount: async () => ({ ...fixturePartner, upgradeLocked: true }) }), req));
     expect((await post(h, { ...body, account: 'x' }, fixtures.webauthn.token)).status).toBe(400);

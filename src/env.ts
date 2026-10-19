@@ -145,12 +145,18 @@ export interface Env {
   // ── Rate limits (wrangler.jsonc `ratelimits`; permissive, per-colo) ──
   /** `POST /v1/self/verify`: per account and a global flood brake. */
   SELF_VERIFY_RL?: RateLimit;
-  /** `GET /v1/self/bind-bundle/:account`: per account. */
+  /** `GET /v1/self/bind-bundle/:account`: per account, counted after the gate passes. */
   SELF_PICKUP_RL?: RateLimit;
-  /** `POST /v1/aa/user-operation`: per sender and a global brake (decision 0012). */
+  /** `GET /v1/self/bind-bundle/:account`: a generous per-IP ceiling before the gate. */
+  SELF_PICKUP_IP_RL?: RateLimit;
+  /** `POST /v1/aa/user-operation`: a global brake, and per sender once policy and simulation pass (decision 0012). */
   AA_RELAY_RL?: RateLimit;
-  /** Rate limit for `/v1/ceremony/*` (decision 0016 co-signs): per account and global. */
+  /** `POST /v1/aa/user-operation`: a generous per-IP ceiling before policy and simulation. */
+  AA_RELAY_IP_RL?: RateLimit;
+  /** `/v1/ceremony/*` (decision 0016 co-signs): a global brake, and per account once the gate passes. */
   CEREMONY_RL?: RateLimit;
+  /** `/v1/ceremony/*`: a generous per-IP ceiling before the gate. */
+  CEREMONY_IP_RL?: RateLimit;
 
   // ── R2 buckets (provisioned in later sessions) ──────────────────
   // VAULT: R2Bucket;

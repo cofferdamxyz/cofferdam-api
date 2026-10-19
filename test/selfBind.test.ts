@@ -125,6 +125,7 @@ function harness(opts: {
   now?: number;
   verifyLimit?: RateLimit;
   pickupLimit?: RateLimit;
+  pickupIpLimit?: RateLimit;
   /** What the on-chain authority check answers for a presented token (default: an active High). */
   authorityCheck?: AuthorityCheck;
 } = {}) {
@@ -138,6 +139,7 @@ function harness(opts: {
     ATTESTER: { signBind, signRebind } as unknown as Env['ATTESTER'],
     SELF_VERIFY_RL: opts.verifyLimit,
     SELF_PICKUP_RL: opts.pickupLimit,
+    SELF_PICKUP_IP_RL: opts.pickupIpLimit,
   } as unknown as Env;
   const store = opts.store === undefined ? null : opts.store;
   const app = new Hono<{ Bindings: Env }>();
@@ -519,6 +521,52 @@ describe('GET /v1/self/bind-bundle/:account', () => {
     const limited = await h.call(`/v1/self/bind-bundle/${ACCOUNT}`);
     expect(limited.status).toBe(429);
     expect(limited.json.error).toBe('rate_limited');
+  });
+
+  it('counts the per-account bucket only after the gate passes', async () => {
+    const store = memoryStore();
+    const issuedAt = fixtures.fields.issuedAt as number;
+    await harness({ store }).post(relayerBody(fxAccount));
+    const headers = { authorization: `Bearer ${fx.token}`, 'cf-connecting-ip': '203.0.113.7' };
+    const keys: string[] = [];
+    const recording = (): RateLimit => ({ limit: async ({ key }) => (keys.push(key), { success: true }) });
+    const at = (check: AuthorityCheck) =>
+      harness({
+        store,
+        environment: 'staging',
+        now: issuedAt + 5_000,
+        authorityCheck: check,
+        pickupLimit: recording(),
+        pickupIpLimit: recording(),
+      });
+
+    // A stranger's token, a garbage token and no token leave only the IP key.
+    expect((await at({ status: 'not_found' }).call(`/v1/self/bind-bundle/${fxAccount}`, { headers })).status).toBe(401);
+    expect(keys).toEqual(['pickup-ip:203.0.113.7']);
+    keys.length = 0;
+    const garbage = { headers: { ...headers, authorization: 'Bearer csa1:zzz' } };
+    expect((await at({ status: 'not_found' }).call(`/v1/self/bind-bundle/${fxAccount}`, garbage)).status).toBe(401);
+    expect(keys).toEqual(['pickup-ip:203.0.113.7']);
+    keys.length = 0;
+
+    const high = at({ status: 'active', authorityId: 0, module: ACCOUNT, tier: 3 });
+    expect((await high.call(`/v1/self/bind-bundle/${fxAccount}`, { headers })).status).toBe(200);
+    expect(keys).toEqual(['pickup-ip:203.0.113.7', `pickup:${fxAccount.toLowerCase()}`]);
+  });
+
+  it('turns a busy network away before the gate', async () => {
+    const store = memoryStore();
+    await harness({ store }).post(relayerBody(fxAccount));
+    const ip = rateLimit(0);
+    const account = rateLimit(100);
+    const h = harness({ store, environment: 'staging', pickupLimit: account, pickupIpLimit: ip });
+    const res = await h.call(`/v1/self/bind-bundle/${fxAccount}`, {
+      headers: { authorization: `Bearer ${fx.token}`, 'cf-connecting-ip': '203.0.113.7' },
+    });
+    expect(res.status).toBe(429);
+    expect(res.json.error).toBe('rate_limited');
+    expect(ip.calls).toEqual(['pickup-ip:203.0.113.7']);
+    expect(account.calls).toEqual([]);
   });
 
   it('accepts a csa1 attestation pinned to the account and rejects others', async () => {
