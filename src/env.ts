@@ -13,6 +13,7 @@
 import type { AttesterRpc } from './services/attester.js';
 import type { ActivityDO } from './services/activityDO.js';
 import type { BindBundleDO } from './services/bindBundleDO.js';
+import type { ChatUsageDO } from './services/chatUsageDO.js';
 
 export interface Env {
   // ── vars ────────────────────────────────────────────────────────
@@ -90,6 +91,12 @@ export interface Env {
   CHAT_RL?: RateLimit;
   /** `POST /v1/chat`: a generous per-IP ceiling before the gate. */
   CHAT_IP_RL?: RateLimit;
+  /**
+   * Fair-use cap: tokens in and out per account per UTC month, counted by the
+   * usage meter (`CHAT_USAGE_DO`). Unset means no cap; past it, `POST /v1/chat`
+   * answers 429 `fair_use_cap`. The value is a founder decision.
+   */
+  CHAT_MONTHLY_TOKEN_CAP?: string;
 
   /**
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
@@ -141,6 +148,13 @@ export interface Env {
    * (services/activityDO.ts, decision 0032).
    */
   ACTIVITY_DO?: DurableObjectNamespace<ActivityDO>;
+
+  /**
+   * The chat's per-account usage meter, one row per month
+   * (services/chatUsageDO.ts). Unbound: nothing is metered, no cap applies and
+   * `GET /v1/chat/usage` answers 503 `usage_store_unprovisioned`.
+   */
+  CHAT_USAGE_DO?: DurableObjectNamespace<ChatUsageDO>;
 
   // ── Rate limits (wrangler.jsonc `ratelimits`; permissive, per-colo) ──
   /** `POST /v1/self/verify`: per account and a global flood brake. */

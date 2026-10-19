@@ -46,6 +46,50 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   'chat-long': { model: '@cf/google/gemma-4-26b-a4b-it', envVar: 'CHAT_LONG_MODEL', timeoutMs: 30_000 },
 };
 
+/**
+ * Workers AI prices in US dollars per million tokens, input and output, for
+ * the chat meter (`services/chatUsageStore.ts`). Read 2026-10-17 (workspace
+ * `docs/product/engine.md`, Cost and latency); re-check when a pin moves.
+ * Clef bills input only. A dollar per million tokens is a millionth of a
+ * dollar per token, so `tokens × price` is already in micro-dollars.
+ */
+export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
+  '@cf/google/gemma-4-26b-a4b-it': { input: 0.1, output: 0.3 },
+  '@cf/cloudflare/clef-flash': { input: 0.038, output: 0 },
+  '@cf/zai-org/glm-5.3-flash': { input: 0.15, output: 0.5 },
+  '@cf/zai-org/glm-4.7-flash': { input: 0.0605, output: 0.4 },
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
+};
+
+const unpriced = new Set<string>();
+
+/**
+ * The estimated cost of a call in millionths of a dollar, rounded to an
+ * integer. A model missing from `MODEL_PRICES` prices at zero and logs
+ * `chat_price_unknown` once per isolate.
+ */
+export function modelCostMicroUsd(
+  model: string,
+  tokensIn: number,
+  tokensOut: number,
+  log: (fields: Record<string, unknown>) => void = (f) => console.log(JSON.stringify(f)),
+): number {
+  const price = MODEL_PRICES[model];
+  if (!price) {
+    if (!unpriced.has(model)) {
+      unpriced.add(model);
+      log({ event: 'chat_price_unknown', model });
+    }
+    return 0;
+  }
+  return Math.round(Math.max(0, tokensIn) * price.input + Math.max(0, tokensOut) * price.output);
+}
+
+/** Forget which unknown models were already logged (tests). */
+export function clearUnpricedModels(): void {
+  unpriced.clear();
+}
+
 export interface InferenceEnv extends Partial<Record<InferenceModelVar, string>> {
   AI?: Ai;
   /** Model pins, `model:<op>`; optional until the namespace is created. */

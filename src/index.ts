@@ -17,6 +17,7 @@ import { Hono, type Context } from 'hono';
 // Durable Object classes must be exported from the Worker entry module.
 export { BindBundleDO } from './services/bindBundleDO.js';
 export { ActivityDO } from './services/activityDO.js';
+export { ChatUsageDO } from './services/chatUsageDO.js';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { Env } from './env.js';
@@ -75,6 +76,7 @@ app.get('/', (c) => {
       { method: 'GET', path: '/v1/activity/check?address=&sinceBlock=' },
       { method: 'POST', path: '/v1/activity/webhooks/cdp' },
       { method: 'POST', path: '/v1/chat' },
+      { method: 'GET', path: '/v1/chat/usage?account=' },
       { method: 'POST', path: '/v1/attester/test-sign', environment: 'development' },
       { method: 'POST', path: '/v1/self/verify' },
       { method: 'GET', path: '/v1/self/bind-bundle/:account' },

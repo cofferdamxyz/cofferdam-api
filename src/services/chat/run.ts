@@ -25,7 +25,7 @@
  */
 
 import type { Inference } from '../inference/index.js';
-import { actionTool, CHAT_ACTIONS, decideRoute, routerQuestions, type ChatLanguage, type RouteDecision } from './router.js';
+import { actionTool, CHAT_ACTIONS, decideRoute, routerQuestions, type ChatLanguage, type ChatRoute, type RouteDecision } from './router.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -161,6 +161,37 @@ export function routerState(messages: ChatMessage[]): string {
   return lines.join('\n');
 }
 
+/** Below this probability on the router's language answer, the request's `Accept-Language` picks the fixed replies. */
+export const LANGUAGE_FLOOR = 0.6;
+
+/**
+ * The fixed-reply language an `Accept-Language` header asks for: its most
+ * preferred of English, Portuguese and Spanish, returned only when that is
+ * Portuguese or Spanish (English is already the default).
+ */
+export function headerLanguage(header: string | null | undefined): Exclude<ChatLanguage, 'en'> | null {
+  if (!header) return null;
+  let best: { lang: ChatLanguage; q: number; i: number } | null = null;
+  header.split(',').forEach((part, i) => {
+    const [tag, ...params] = part.trim().split(';');
+    const lang = tag!.trim().toLowerCase().split('-')[0];
+    if (lang !== 'en' && lang !== 'pt' && lang !== 'es') return;
+    const qParam = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
+    const q = qParam ? Number(qParam.slice(2)) : 1;
+    if (!Number.isFinite(q) || q <= 0) return;
+    if (!best || q > best.q) best = { lang, q, i };
+  });
+  const found = best as { lang: ChatLanguage } | null;
+  return found && found.lang !== 'en' ? found.lang : null;
+}
+
+/** The probability behind the router's language choice; 0 when it gave none. */
+function languageProbability(answers: unknown): number {
+  const lang = (answers as { language?: { choice?: string; probabilities?: Record<string, number> } } | null)?.language;
+  const p = Number(lang?.probabilities?.[lang?.choice ?? ''] ?? 0);
+  return Number.isFinite(p) ? p : 0;
+}
+
 // ── Model output ─────────────────────────────────────────────────────────────
 
 /** The first tool call's arguments from an OpenAI-style or legacy Workers AI response. */
@@ -254,6 +285,24 @@ function usageOf(v: unknown): Usage | null {
   return u && typeof u === 'object' ? u : null;
 }
 
+/** What one turn spent, for the per-account meter (`services/chatUsageStore.ts`). */
+export interface ChatTurnUsage {
+  route: ChatRoute;
+  /** The model that wrote the answer or filled the action fields; null when the turn sent only fixed text. */
+  model: string | null;
+  /** That model's tokens, when it reported them. */
+  tokensIn: number | null;
+  tokensOut: number | null;
+  router: {
+    model: string;
+    /** Whether the router was called (a failed call still counts). */
+    called: boolean;
+    /** Characters of the router state divided by four: Clef reports no usage. */
+    tokensIn: number;
+    estimated: true;
+  };
+}
+
 export interface RunChatOptions {
   inference: ChatInference;
   messages: ChatMessage[];
@@ -263,6 +312,10 @@ export interface RunChatOptions {
   log?: (fields: Record<string, unknown>) => void;
   /** Clock for the action model's date (tests pin it). */
   now?: () => number;
+  /** Fires once, after `done`, with what the turn spent. */
+  onTurn?: (usage: ChatTurnUsage) => void;
+  /** The fixed replies' language when the router's language answer is below `LANGUAGE_FLOOR` (from `Accept-Language`). */
+  fallbackLanguage?: ChatLanguage | null;
 }
 
 /** Run one turn; the returned stream carries `ChatEvent`s as SSE. */
@@ -274,6 +327,13 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
   const started = Date.now();
   const timings: Record<string, number> = {};
   const turn: Record<string, unknown> = {};
+  /** The routed model's spend, for `onTurn`. */
+  const spent: { model: string | null; tokensIn: number | null; tokensOut: number | null } = { model: null, tokensIn: null, tokensOut: null };
+  const noteUsage = (model: string, usage: Usage | null) => {
+    spent.model = model;
+    if (usage?.prompt_tokens != null) spent.tokensIn = usage.prompt_tokens;
+    if (usage?.completion_tokens != null) spent.tokensOut = usage.completion_tokens;
+  };
   const emit = (ev: ChatEvent) => {
     if (ev.type === 'text' && timings.first === undefined) timings.first = Date.now() - started;
     return writer.write(sseEncode(ev));
@@ -283,6 +343,8 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
   async function actionFields(id: string, language: ChatLanguage): Promise<Record<string, unknown>> {
     const tool = actionTool(id);
     if (!tool) return {};
+    const model = await inference.model('chat-action');
+    spent.model = model;
     try {
       const t = Date.now();
       const res = await inference.run('chat-action', {
@@ -296,6 +358,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         chat_template_kwargs: { enable_thinking: false },
       });
       timings.fields = Date.now() - t;
+      noteUsage(model, usageOf(res));
       const args = toolArguments(res) ?? {};
       const fields: Record<string, unknown> = {};
       for (const k of Object.keys(CHAT_ACTIONS.find((a) => a.id === id)?.fields ?? {})) {
@@ -319,8 +382,15 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     // When long answers run on the same model (the default since gemma-4
     // proved faster than glm-5.3-flash), it starts with the long cap and
     // serves long turns too.
-    const [answerModel, longModel] = await Promise.all([inference.model('chat-answer'), inference.model('chat-long')]);
+    const [answerModel, longModel, routerModel] = await Promise.all([
+      inference.model('chat-answer'),
+      inference.model('chat-long'),
+      inference.model('chat-router'),
+    ]);
     const shared = answerModel === longModel;
+    const state = routerState(messages);
+    const router = { model: routerModel, called: false, tokensIn: Math.ceil(state.length / 4), estimated: true as const };
+    let languageP = 0;
     const early = new AbortController();
     const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared), { signal: early.signal });
     const earlyAnswer = opts.early === false ? null : startAnswer();
@@ -335,12 +405,14 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     try {
       try {
         const t0 = Date.now();
+        router.called = true;
         const clef = (await inference.run('chat-router', {
-          model: clefName(await inference.model('chat-router')),
-          state: routerState(messages),
+          model: clefName(router.model),
+          state,
           questions: routerQuestions(),
         })) as { answers?: unknown };
         decision = decideRoute(clef?.answers);
+        languageP = languageProbability(clef?.answers);
         timings.router = Date.now() - t0;
       } catch (err) {
         // The router is an optimisation: without it, the everyday model answers.
@@ -348,7 +420,11 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
       }
       await emit({ type: 'route', route: decision.route, action: decision.action, confidence: decision.confidence });
 
-      const fixed = FIXED_TEXT[decision.language];
+      // The fixed replies follow the router's language when it is sure, else the
+      // language the request asked for; the amount rule keeps the router's.
+      const replyLanguage = opts.fallbackLanguage && languageP < LANGUAGE_FLOOR ? opts.fallbackLanguage : decision.language;
+      if (replyLanguage !== decision.language) turn.reply_language = replyLanguage;
+      const fixed = FIXED_TEXT[replyLanguage];
       switch (decision.route) {
         case 'refuse':
           dropEarly();
@@ -373,7 +449,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           const id = decision.action!;
           const fields = await actionFields(id, decision.language);
           await emit({ type: 'action', request: { id, ...fields } });
-          await emit({ type: 'text', delta: fixed.ready(ACTION_LABELS[decision.language][id] ?? id) });
+          await emit({ type: 'text', delta: fixed.ready(ACTION_LABELS[replyLanguage][id] ?? id) });
           break;
         }
         case 'answer':
@@ -407,11 +483,17 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           }
           timings.model = Date.now() - t2;
           if (usage) Object.assign(turn, { tokens_in: usage.prompt_tokens, tokens_out: usage.completion_tokens });
+          noteUsage(long && !shared ? longModel : answerModel, usage);
           if (sent === 0) await emit({ type: 'text', delta: fixed.empty });
           break;
         }
       }
       await emit({ type: 'done' });
+      try {
+        opts.onTurn?.({ route: decision.route, ...spent, router });
+      } catch (err) {
+        opts.log?.({ event: 'chat_usage_failed', reason: reasonOf(err) });
+      }
       opts.log?.({
         event: 'chat_turn',
         route: decision.route,
