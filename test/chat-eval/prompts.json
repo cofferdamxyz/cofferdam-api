@@ -11,6 +11,7 @@
   { "id": "send-es-envia-dolares", "language": "es", "text": "envíale 40 dólares a @sofia", "expect": { "route": "action", "action": "send", "fields": { "amount": 40, "recipient": "sofia" }, "notes": "" } },
   { "id": "send-es-transfiere-pesos", "language": "es", "text": "transfiere 200 pesos a @diego", "expect": { "route": "action", "action": "send", "fields": { "amount": null, "recipient": "diego" }, "notes": "Pesos: no prefill." } },
   { "id": "send-es-paga-usd", "language": "es", "text": "págale 15 USD a vale", "expect": { "route": "action", "action": "send", "fields": { "amount": 15, "recipient": "vale" }, "notes": "Handle without @." } },
+  { "id": "send-es-dollar-sign", "language": "es", "text": "mándale $500 a @diego", "expect": { "route": "action", "action": "send", "fields": { "amount": 500, "recipient": "diego" }, "notes": "\"$\" means dollars in every language, pesos included in Mexico and Argentina (founder, 2026-10-19; decision 0037 (t)); the user confirms on Send." } },
   { "id": "send-es-manda-sin-moneda", "language": "es", "text": "mándale 10 a camila", "expect": { "route": "action", "action": "send", "fields": { "amount": null, "recipient": "camila" }, "notes": "No currency outside English: no prefill." } },
 
   { "id": "add-en-dollars", "language": "en", "text": "add 50 dollars to my account", "expect": { "route": "action", "action": "add_money", "fields": { "amount": 50 }, "notes": "" } },
