@@ -1,13 +1,15 @@
 name: CI
 
-# Checks on every push to main and every PR. Deploys run only from the
-# founder's Mac with the workspace .envrc (workspace docs/runbooks/
-# cloudflare-deploys.md); CI never deploys and holds no Cloudflare token.
+# Checks on every push to main and on every pull request, drafts included:
+# delegated sessions open a draft PR at their first push (workspace decision
+# 0013, amended 2026-10-20), so a branch is checked before the founder lands
+# it. Deploys run only from the founder's Mac with the workspace .envrc
+# (workspace docs/runbooks/cloudflare-deploys.md); CI never deploys and holds
+# no Cloudflare token.
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
