@@ -62,10 +62,11 @@
     // "ACTIVITY_INDEX_FROM_BLOCK": "<head block at subscription creation>",
     // Inclusive eth_getLogs span per call; 200 is the public node's cap.
     "ACTIVITY_LOG_RANGE": "200",
-    // Chat fair-use cap, tokens in and out per account per UTC month: about
-    // three times a five-turns-a-day month, roughly $0.06 (founder,
-    // 2026-10-20). Remove the line for no cap.
-    "CHAT_MONTHLY_TOKEN_CAP": "500000",
+    // Chat fair-use cap per account per UTC month, in US dollars of estimated
+    // model cost: about three times a five-turns-a-day month (founder,
+    // 2026-10-20; dollars, not tokens, so a model change keeps what it buys).
+    // Remove the line for no cap.
+    "CHAT_MONTHLY_USD_CAP": "0.06",
     // Global brake: the most the plane spends on hosted AI (chat and, once
     // built, cloud document extraction) in a UTC month, in US dollars, as the
     // usage meter estimates it (founder, 2026-10-20). Remove for no brake.

@@ -10,12 +10,11 @@ import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
 import { FIXED_TEXT, headerLanguage, runChat, type ChatEvent, type ChatInference, type ChatTurnUsage } from '../src/services/chat/run.js';
 import {
-  capTokens,
+  capEstimate,
   GLOBAL_USAGE_NAME,
   monthOf,
   monthResetsAt,
-  parseBudgetMicroUsd,
-  parseTokenCap,
+  parseUsdMicro,
   usageDelta,
   type ChatMonthUsage,
   type ChatUsageDelta,
@@ -164,17 +163,30 @@ describe('usage arithmetic', () => {
     expect(monthOf(t)).toBe('2026-10');
     expect(monthResetsAt(t).toISOString()).toBe('2026-11-01T00:00:00.000Z');
     expect(monthResetsAt(Date.UTC(2026, 11, 5)).toISOString()).toBe('2027-01-01T00:00:00.000Z');
-    expect(parseTokenCap(undefined)).toBeNull();
-    expect(parseTokenCap('')).toBeNull();
-    expect(parseTokenCap('0')).toBeNull();
-    expect(parseTokenCap('1.5')).toBeNull();
-    expect(parseTokenCap('2000000')).toBe(2_000_000);
-    expect(parseBudgetMicroUsd(undefined)).toBeNull();
-    expect(parseBudgetMicroUsd('-5')).toBeNull();
-    expect(parseBudgetMicroUsd('500')).toBe(500_000_000);
-    expect(parseBudgetMicroUsd('0.25')).toBe(250_000);
-    expect(capTokens(null)).toBe(0);
-    expect(capTokens({ tokensIn: 10, tokensOut: 5 })).toBe(15);
+    expect(parseUsdMicro(undefined)).toBeNull();
+    expect(parseUsdMicro('')).toBeNull();
+    expect(parseUsdMicro('0')).toBeNull();
+    expect(parseUsdMicro('-5')).toBeNull();
+    expect(parseUsdMicro('abc')).toBeNull();
+    expect(parseUsdMicro('500')).toBe(500_000_000);
+    expect(parseUsdMicro('0.06')).toBe(60_000);
+  });
+
+  it('turns what is left of a dollar cap into turns, at the typical cost and then the account’s own', () => {
+    const t = Date.UTC(2026, 9, 21, 12); // 11 days left, counting the 21st
+    const row = (turns: number, micro: number) => ({ month: '2026-10', turns, tokensIn: 0, tokensOut: 0, routerCalls: turns, estimatedMicroUsd: micro, lastTurnAt: t });
+    expect(capEstimate(5_000_000, null, t)).toEqual({
+      usd: 5,
+      remainingUsd: 5,
+      turnsLeft: 25_000,
+      turnsPerDay: 2_272,
+      resetsAt: '2026-11-01T00:00:00.000Z',
+    });
+    // Nine turns: still the typical cost.
+    expect(capEstimate(60_000, row(9, 9_000), t)).toMatchObject({ remainingUsd: 0.051, turnsLeft: 255, turnsPerDay: 23 });
+    // Twenty turns at 500 each: the account's own average.
+    expect(capEstimate(60_000, row(20, 10_000), t)).toMatchObject({ remainingUsd: 0.05, turnsLeft: 100, turnsPerDay: 9 });
+    expect(capEstimate(60_000, row(200, 90_000), t)).toMatchObject({ remainingUsd: 0, turnsLeft: 0, turnsPerDay: 0 });
   });
 });
 
@@ -328,13 +340,13 @@ describe('the chat meter on the routes', () => {
     const full = { month, turns: 90, tokensIn: 900, tokensOut: 100, routerCalls: 90, estimatedMicroUsd: 1_000, lastTurnAt: now };
     const calls: InferenceOp[] = [];
     const { store } = fakeStore({ [key]: full });
-    const res = await app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_TOKEN_CAP: '1000' }, { usageStore: () => store }, calls).chat(bearer);
+    const res = await app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_USD_CAP: '0.001' }, { usageStore: () => store }, calls).chat(bearer);
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ ok: false, error: 'fair_use_cap', resetsAt: monthResetsAt(now).toISOString() });
     expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
     expect(calls).toEqual([]);
 
-    const under = await app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_TOKEN_CAP: '1001' }, { usageStore: () => store }).chat(bearer);
+    const under = await app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_USD_CAP: '0.001001' }, { usageStore: () => store }).chat(bearer);
     expect(under.status).toBe(200);
 
     const { store: open, reads } = fakeStore({ [key]: full });
@@ -367,7 +379,7 @@ describe('the chat meter on the routes', () => {
   it('checks the cap only after the gate', async () => {
     const { store, reads } = fakeStore();
     const res = await app(
-      { ENVIRONMENT: 'staging', CHAT_MONTHLY_TOKEN_CAP: '10' },
+      { ENVIRONMENT: 'staging', CHAT_MONTHLY_USD_CAP: '0.00001' },
       { usageStore: () => store, authorityCheck: async () => ({ status: 'not_found' }) },
     ).chat(bearer);
     expect(res.status).toBe(401);
@@ -379,7 +391,7 @@ describe('the chat meter on the routes', () => {
     const { store } = fakeStore({
       [key]: { month, turns: 3, tokensIn: 400, tokensOut: 50, routerCalls: 3, estimatedMicroUsd: 2_500, lastTurnAt: now },
     });
-    const staging = app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_TOKEN_CAP: '1000' }, { usageStore: () => store });
+    const staging = app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_USD_CAP: '0.01' }, { usageStore: () => store });
     const missing = await staging.usage();
     expect(missing.status).toBe(401);
     expect(await missing.json()).toMatchObject({ error: 'attestation_required' });
@@ -395,7 +407,11 @@ describe('the chat meter on the routes', () => {
       tokensIn: 400,
       tokensOut: 50,
       estimatedUsd: 0.0025,
-      cap: { tokens: 1000, remaining: 550 },
+      cap: capEstimate(10_000, { month, turns: 3, tokensIn: 400, tokensOut: 50, routerCalls: 3, estimatedMicroUsd: 2_500, lastTurnAt: now }, now),
+    });
+
+    expect(await (await staging.usage(bearer)).json()).toMatchObject({
+      cap: { usd: 0.01, remainingUsd: 0.0075, turnsLeft: 37 },
     });
 
     const uncapped = await app({ ENVIRONMENT: 'staging' }, { usageStore: () => fakeStore().store }).usage(bearer);

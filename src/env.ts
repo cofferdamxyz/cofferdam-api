@@ -92,11 +92,12 @@ export interface Env {
   /** `POST /v1/chat`: a generous per-IP ceiling before the gate. */
   CHAT_IP_RL?: RateLimit;
   /**
-   * Fair-use cap: tokens in and out per account per UTC month, counted by the
-   * usage meter (`CHAT_USAGE_DO`). Unset means no cap; past it, `POST /v1/chat`
-   * answers 429 `fair_use_cap`. The value is a founder decision.
+   * Fair-use cap: the most one account's chat may cost in a UTC month, in US
+   * dollars (decimals allowed), as the usage meter (`CHAT_USAGE_DO`) estimates
+   * it. Unset means no cap; once reached, `POST /v1/chat` answers 429
+   * `fair_use_cap`. Plans will set this per account later.
    */
-  CHAT_MONTHLY_TOKEN_CAP?: string;
+  CHAT_MONTHLY_USD_CAP?: string;
   /**
    * Global brake: the most the plane spends on hosted AI in a UTC month, in
    * US dollars, as estimated by the usage meter's plane-wide row. Every

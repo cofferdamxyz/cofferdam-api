@@ -23,8 +23,8 @@
  *
  * Usage: every finished turn is added to the account's month in the meter
  * (`services/chatUsageStore.ts`, the `CHAT_USAGE_DO` Durable Object) through
- * `waitUntil`, so the stream never waits on it. With `CHAT_MONTHLY_TOKEN_CAP`
- * set, an account past it answers `429 fair_use_cap` before any model call;
+ * `waitUntil`, so the stream never waits on it. With `CHAT_MONTHLY_USD_CAP`
+ * set, an account whose estimated spend reaches it answers `429 fair_use_cap` before any model call;
  * with `AI_MONTHLY_BUDGET_USD` set, the plane-wide month past that budget
  * answers `503 ai_budget_reached` for everyone until the month turns.
  * `GET /v1/chat/usage?account=0x…` answers the current month behind the same
@@ -41,12 +41,11 @@ import { TIER } from '../services/ceremony.js';
 import { createAuthorityMemo, type AuthorityMemo } from '../services/chat/authorityMemo.js';
 import { ChatRequestError, headerLanguage, parseChatRequest, runChat, type ChatInference } from '../services/chat/run.js';
 import {
-  capTokens,
+  capEstimate,
   DurableChatUsageStore,
   monthOf,
   monthResetsAt,
-  parseBudgetMicroUsd,
-  parseTokenCap,
+  parseUsdMicro,
   usageDelta,
   type ChatUsageStore,
 } from '../services/chatUsageStore.js';
@@ -202,7 +201,7 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
     const now = deps.now();
     const month = monthOf(now);
     const usage = await store.read(account, month);
-    const cap = parseTokenCap(c.env.CHAT_MONTHLY_TOKEN_CAP);
+    const cap = parseUsdMicro(c.env.CHAT_MONTHLY_USD_CAP);
     return c.json({
       ok: true,
       month,
@@ -210,7 +209,7 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       tokensIn: usage?.tokensIn ?? 0,
       tokensOut: usage?.tokensOut ?? 0,
       estimatedUsd: (usage?.estimatedMicroUsd ?? 0) / 1_000_000,
-      cap: cap == null ? null : { tokens: cap, remaining: Math.max(0, cap - capTokens(usage)) },
+      cap: cap == null ? null : capEstimate(cap, usage, now),
     });
   });
 
@@ -240,8 +239,8 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
     // read only when set; an unreadable meter lets the turn through rather
     // than lock everyone out.
     const store = usageStore(c.env);
-    const cap = parseTokenCap(c.env.CHAT_MONTHLY_TOKEN_CAP);
-    const budget = parseBudgetMicroUsd(c.env.AI_MONTHLY_BUDGET_USD);
+    const cap = parseUsdMicro(c.env.CHAT_MONTHLY_USD_CAP);
+    const budget = parseUsdMicro(c.env.AI_MONTHLY_BUDGET_USD);
     if (store && (cap != null || budget != null)) {
       const now = deps.now();
       const month = monthOf(now);
@@ -252,7 +251,7 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
         });
       const [spent, used] = await Promise.all([
         budget != null ? quiet(spentThisMonth(store, month, now), 0) : 0,
-        cap != null ? quiet(store.read(account, month).then(capTokens), 0) : 0,
+        cap != null ? quiet(store.read(account, month).then((u) => u?.estimatedMicroUsd ?? 0), 0) : 0,
       ]);
       const resetsAt = monthResetsAt(now);
       const retryAfter = String(Math.max(1, Math.ceil((resetsAt.getTime() - now) / 1000)));
