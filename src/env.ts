@@ -13,6 +13,7 @@
 import type { AttesterRpc } from './services/attester.js';
 import type { ActivityDO } from './services/activityDO.js';
 import type { BindBundleDO } from './services/bindBundleDO.js';
+import type { ChatUsageDO } from './services/chatUsageDO.js';
 
 export interface Env {
   // ── vars ────────────────────────────────────────────────────────
@@ -90,6 +91,21 @@ export interface Env {
   CHAT_RL?: RateLimit;
   /** `POST /v1/chat`: a generous per-IP ceiling before the gate. */
   CHAT_IP_RL?: RateLimit;
+  /**
+   * Fair-use cap: the most one account's chat may cost in a UTC month, in US
+   * dollars (decimals allowed), as the usage meter (`CHAT_USAGE_DO`) estimates
+   * it. Unset means no cap; once reached, `POST /v1/chat` answers 429
+   * `fair_use_cap`. Plans will set this per account later.
+   */
+  CHAT_MONTHLY_USD_CAP?: string;
+  /**
+   * Global brake: the most the plane spends on hosted AI in a UTC month, in
+   * US dollars, as estimated by the usage meter's plane-wide row. Every
+   * hosted op counts toward it (the chat today, cloud document extraction
+   * when it lands); past it, `POST /v1/chat` answers 503 `ai_budget_reached`.
+   * Unset means no brake.
+   */
+  AI_MONTHLY_BUDGET_USD?: string;
 
   /**
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
@@ -141,6 +157,13 @@ export interface Env {
    * (services/activityDO.ts, decision 0032).
    */
   ACTIVITY_DO?: DurableObjectNamespace<ActivityDO>;
+
+  /**
+   * The chat's per-account usage meter, one row per month
+   * (services/chatUsageDO.ts). Unbound: nothing is metered, no cap applies and
+   * `GET /v1/chat/usage` answers 503 `usage_store_unprovisioned`.
+   */
+  CHAT_USAGE_DO?: DurableObjectNamespace<ChatUsageDO>;
 
   // ── Rate limits (wrangler.jsonc `ratelimits`; permissive, per-colo) ──
   /** `POST /v1/self/verify`: per account and a global flood brake. */

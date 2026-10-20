@@ -61,7 +61,16 @@
     // client key) and CDP_WEBHOOK_SECRET are secrets, never vars.
     // "ACTIVITY_INDEX_FROM_BLOCK": "<head block at subscription creation>",
     // Inclusive eth_getLogs span per call; 200 is the public node's cap.
-    "ACTIVITY_LOG_RANGE": "200"
+    "ACTIVITY_LOG_RANGE": "200",
+    // Chat fair-use cap per account per UTC month, in US dollars of estimated
+    // model cost: about three times a five-turns-a-day month (founder,
+    // 2026-10-20; dollars, not tokens, so a model change keeps what it buys).
+    // Remove the line for no cap.
+    "CHAT_MONTHLY_USD_CAP": "0.06",
+    // Global brake: the most the plane spends on hosted AI (chat and, once
+    // built, cloud document extraction) in a UTC month, in US dollars, as the
+    // usage meter estimates it (founder, 2026-10-20). Remove for no brake.
+    "AI_MONTHLY_BUDGET_USD": "500"
   },
 
   // ─────────────────────────────────────────────────────────────────
@@ -89,10 +98,14 @@
   // holding the token transfers the CDP onchain webhook delivers. It stays
   // empty and unread until CDP_WEBHOOK_SECRET and ACTIVITY_INDEX_FROM_BLOCK
   // are set.
+  //
+  // CHAT_USAGE_DO: one SQLite-backed object per account, the chat's usage
+  // meter (one row per UTC month: turns, tokens, router calls, estimated cost).
   "durable_objects": {
     "bindings": [
       { "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" },
-      { "name": "ACTIVITY_DO", "class_name": "ActivityDO" }
+      { "name": "ACTIVITY_DO", "class_name": "ActivityDO" },
+      { "name": "CHAT_USAGE_DO", "class_name": "ChatUsageDO" }
     ]
   },
   // Workers AI, reached only through src/services/inference (decision 0037).
@@ -103,7 +116,8 @@
 
   "migrations": [
     { "tag": "v1-bind-bundles", "new_sqlite_classes": ["BindBundleDO"] },
-    { "tag": "v2-activity", "new_sqlite_classes": ["ActivityDO"] }
+    { "tag": "v2-activity", "new_sqlite_classes": ["ActivityDO"] },
+    { "tag": "v3-chat-usage", "new_sqlite_classes": ["ChatUsageDO"] }
   ],
 
   // ─────────────────────────────────────────────────────────────────
