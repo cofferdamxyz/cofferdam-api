@@ -20,8 +20,11 @@
  * The text the app sends has already passed its on-device privacy gate;
  * placeholders such as [EMAIL_1] stay as written. Every model call goes
  * through the inference seam (`services/inference`), injected so the tests
- * drive the whole turn with fakes. Thinking is off on every routed call:
- * reasoning tokens bill as output and delay the reply.
+ * drive the whole turn with fakes. Two tiers (decision 0047): Ordinary runs
+ * every call with thinking off, since reasoning tokens bill as output and
+ * delay the reply; Thinking, chosen by the user, answers on GLM-5.3 at low
+ * effort (high above `highFloor` on Clef's reasoning score), with no early
+ * answer. Actions, refusals and the fields run the same in both tiers.
  */
 
 import type { Inference } from '../inference/index.js';
@@ -32,8 +35,24 @@ export interface ChatMessage {
   text: string;
 }
 
+/** Ordinary: gemma-4, thinking off. Thinking: GLM-5.3 with reasoning (decision 0047). */
+export type ChatTier = 'ordinary' | 'thinking';
+/** GLM-5.3 accepts low, high and max (its default); medium and none quietly become max. */
+export type ReasoningEffort = 'low' | 'high';
+
 export type ChatEvent =
-  | { type: 'route'; route: RouteDecision['route']; action: string | null; confidence: number }
+  | {
+      type: 'route';
+      route: RouteDecision['route'];
+      action: string | null;
+      confidence: number;
+      /** The tier this turn runs in (the user's choice; fixed replies carry it too). */
+      tier: ChatTier;
+      /** The reasoning effort a Thinking answer runs at. */
+      effort?: ReasoningEffort;
+      /** Clef's reasoning score, 0 to 1. */
+      reasoning: number;
+    }
   | { type: 'text'; delta: string }
   | { type: 'action'; request: Record<string, unknown> }
   | { type: 'choices'; requests: Record<string, unknown>[] }
@@ -50,7 +69,7 @@ export const CHAT_LIMITS = { messages: 12, messageChars: 4_000, totalChars: 12_0
 export class ChatRequestError extends Error {}
 
 /** Validate the app's body: `{ account, messages: [{ role, text }] }`, ending with the user's turn. */
-export function parseChatRequest(body: unknown): { account: string; messages: ChatMessage[] } {
+export function parseChatRequest(body: unknown): { account: string; messages: ChatMessage[]; tier: ChatTier } {
   if (!body || typeof body !== 'object') throw new ChatRequestError('expected a JSON object');
   const b = body as Record<string, unknown>;
   const account = String(b.account ?? '');
@@ -65,7 +84,9 @@ export function parseChatRequest(body: unknown): { account: string; messages: Ch
   });
   if (messages[messages.length - 1]!.role !== 'user') throw new ChatRequestError('the last message must be the user');
   if (messages.reduce((n, m) => n + m.text.length, 0) > CHAT_LIMITS.totalChars) throw new ChatRequestError('the conversation is too long');
-  return { account, messages };
+  const tier = b.tier ?? 'ordinary';
+  if (tier !== 'ordinary' && tier !== 'thinking') throw new ChatRequestError('tier must be ordinary or thinking');
+  return { account, messages, tier };
 }
 
 // ── Prompts ──────────────────────────────────────────────────────────────────
@@ -264,6 +285,16 @@ function reasonOf(err: unknown): string {
 }
 
 /** The answer models' input: the conversation under the system prompt, streamed, thinking off. */
+/** The Thinking tier's input: the same conversation, reasoning on at `effort`, room for the answer after it. */
+function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort): Record<string, unknown> {
+  return {
+    messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
+    stream: true,
+    max_completion_tokens: 1_600,
+    reasoning_effort: effort,
+  };
+}
+
 function answerInput(messages: ChatMessage[], long: boolean): Record<string, unknown> {
   return {
     messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
@@ -308,6 +339,10 @@ export interface RunChatOptions {
   messages: ChatMessage[];
   /** Start the everyday answer with the router (default); `CHAT_EARLY_ANSWER=off` turns it off. */
   early?: boolean;
+  /** The user's tier; Ordinary when absent. */
+  tier?: ChatTier;
+  /** Clef's reasoning score at or above which a Thinking answer runs at high effort; null or absent: never. */
+  highFloor?: number | null;
   /** One line per routed turn for Workers Logs (no message text). */
   log?: (fields: Record<string, unknown>) => void;
   /** Clock for the action model's date (tests pin it). */
@@ -376,24 +411,28 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
   }
 
   (async () => {
-    let decision: RouteDecision = { route: 'answer', action: null, confidence: 0, language: 'en', candidates: [] };
+    let decision: RouteDecision = { route: 'answer', action: null, confidence: 0, language: 'en', candidates: [], reasoning: 0 };
 
     // The everyday answer starts with the router and waits for its verdict.
     // When long answers run on the same model (the default since gemma-4
     // proved faster than glm-5.3-flash), it starts with the long cap and
     // serves long turns too.
-    const [answerModel, longModel, routerModel] = await Promise.all([
+    const [answerModel, longModel, routerModel, reasoningModel] = await Promise.all([
       inference.model('chat-answer'),
       inference.model('chat-long'),
       inference.model('chat-router'),
+      inference.model('chat-reasoning'),
     ]);
+    const tier: ChatTier = opts.tier ?? 'ordinary';
+    const thinking = tier === 'thinking';
     const shared = answerModel === longModel;
     const state = routerState(messages);
     const router = { model: routerModel, called: false, tokensIn: Math.ceil(state.length / 4), estimated: true as const };
     let languageP = 0;
     const early = new AbortController();
     const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared), { signal: early.signal });
-    const earlyAnswer = opts.early === false ? null : startAnswer();
+    // No early answer in the Thinking tier: a cancelled GLM-5.3 call costs real money.
+    const earlyAnswer = opts.early === false || thinking ? null : startAnswer();
     earlyAnswer?.catch(() => {});
     const dropEarly = () => {
       if (!earlyAnswer || early.signal.aborted) return;
@@ -418,7 +457,20 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         // The router is an optimisation: without it, the everyday model answers.
         opts.log?.({ event: 'chat_router_failed', reason: reasonOf(err) });
       }
-      await emit({ type: 'route', route: decision.route, action: decision.action, confidence: decision.confidence });
+      // The effort only matters where the reasoning model answers.
+      const answers = decision.route === 'answer' || decision.route === 'answer_long';
+      const effort: ReasoningEffort | undefined =
+        thinking && answers ? (opts.highFloor != null && decision.reasoning >= opts.highFloor ? 'high' : 'low') : undefined;
+      Object.assign(turn, { tier, reasoning: decision.reasoning, ...(effort ? { effort } : {}) });
+      await emit({
+        type: 'route',
+        route: decision.route,
+        action: decision.action,
+        confidence: decision.confidence,
+        tier,
+        reasoning: decision.reasoning,
+        ...(effort ? { effort } : {}),
+      });
 
       // The fixed replies follow the router's language when it is sure, else the
       // language the request asked for; the amount rule keeps the router's.
@@ -455,16 +507,18 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         case 'answer':
         case 'answer_long': {
           const long = decision.route === 'answer_long';
-          const useEarly = earlyAnswer !== null && (!long || shared);
+          const useEarly = !thinking && earlyAnswer !== null && (!long || shared);
           if (useEarly) turn.early = 'used';
           else dropEarly();
           // The early answer's call began with the turn.
           const t2 = useEarly ? started : Date.now();
-          const res = useEarly
-            ? await earlyAnswer
-            : long && !shared
-              ? await inference.run('chat-long', answerInput(messages, true))
-              : await startAnswer();
+          const res = thinking
+            ? await inference.run('chat-reasoning', reasoningInput(messages, effort ?? 'low'))
+            : useEarly
+              ? await earlyAnswer
+              : long && !shared
+                ? await inference.run('chat-long', answerInput(messages, true))
+                : await startAnswer();
           let sent = 0;
           let usage = usageOf(res);
           if (res instanceof ReadableStream) {
@@ -483,7 +537,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           }
           timings.model = Date.now() - t2;
           if (usage) Object.assign(turn, { tokens_in: usage.prompt_tokens, tokens_out: usage.completion_tokens });
-          noteUsage(long && !shared ? longModel : answerModel, usage);
+          noteUsage(thinking ? reasoningModel : long && !shared ? longModel : answerModel, usage);
           if (sent === 0) await emit({ type: 'text', delta: fixed.empty });
           break;
         }

@@ -24,7 +24,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { parseChatRequest, runChat, type ChatEvent } from '../src/services/chat/run.js';
+import { parseFloor } from '../src/routes/chat.js';
+import { parseChatRequest, runChat, type ChatEvent, type ChatTier } from '../src/services/chat/run.js';
 import { createInference, type InferenceEnv, type InferenceOp } from '../src/services/inference/index.js';
 import prompts from './chat-eval/prompts.json';
 import { createRestAi, type RecordedCall } from './chat-eval/restAi.js';
@@ -58,8 +59,12 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
       CHAT_ACTION_MODEL: process.env.CHAT_ACTION_MODEL,
       CHAT_ANSWER_MODEL: process.env.CHAT_ANSWER_MODEL,
       CHAT_LONG_MODEL: process.env.CHAT_LONG_MODEL,
+      CHAT_REASONING_MODEL: process.env.CHAT_REASONING_MODEL,
     };
     const early = process.env.CHAT_EARLY_ANSWER !== 'off';
+    // CHAT_EVAL_TIER=thinking runs every prompt in the Thinking tier (decision 0047); CHAT_THINKING_HIGH_FLOOR as on the plane.
+    const tier: ChatTier = process.env.CHAT_EVAL_TIER === 'thinking' ? 'thinking' : 'ordinary';
+    const highFloor = parseFloor(process.env.CHAT_THINKING_HIGH_FLOOR);
     const gap = Number(process.env.CHAT_EVAL_GAP_MS ?? 500);
     const only = process.env.CHAT_EVAL_ONLY ? new RegExp(process.env.CHAT_EVAL_ONLY) : null;
     const selected = (prompts as EvalPrompt[]).filter((p) => !only || only.test(p.id));
@@ -75,7 +80,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
       const { messages } = parseChatRequest({ account: ACCOUNT, messages: [...(prompt.history ?? []), { role: 'user', text: prompt.text }] });
       const log: Record<string, unknown>[] = [];
       const t0 = Date.now();
-      const evs = await events(runChat({ inference, messages, early, now: () => TODAY, log: (l) => log.push(l) }));
+      const evs = await events(runChat({ inference, messages, early, tier, highFloor, now: () => TODAY, log: (l) => log.push(l) }));
       const totalMs = Date.now() - t0;
       await sleep(Math.max(gap, 200));
       const result = scoreTurn(prompt, { events: evs as never, log, calls, totalMs, routerModel: models['chat-router']! });

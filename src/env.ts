@@ -85,6 +85,13 @@ export interface Env {
   CHAT_ACTION_MODEL?: string;
   CHAT_ANSWER_MODEL?: string;
   CHAT_LONG_MODEL?: string;
+  /** The Thinking tier's model (decision 0047); unset, `@cf/zai-org/glm-5.3`. */
+  CHAT_REASONING_MODEL?: string;
+  /**
+   * Clef's reasoning score (0 to 1) at or above which a Thinking turn runs at
+   * high effort instead of low. Unset: never, high effort is unmeasured.
+   */
+  CHAT_THINKING_HIGH_FLOOR?: string;
   /** `off` stops starting the everyday answer alongside the router; anything else keeps it on. */
   CHAT_EARLY_ANSWER?: string;
   /** `POST /v1/chat`: a global brake, and per account after the gate passes. */

@@ -70,6 +70,19 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
   { id: 'create_group', description: 'Create a group chat' },
 ];
 
+/**
+ * The reasoning question's legend, in order. Clef's `score` is the expected
+ * position on it (0 to 3: "hi" scored 0.11, "¿Qué es Cofferdam?" 0.86, a
+ * step-by-step escrow question 2.81; checked 2026-10-20), which `decideRoute`
+ * divides by the last position to give 0 to 1.
+ */
+export const REASONING_LEGEND = [
+  'A greeting, or one fact to look up',
+  'A plain question with one answer',
+  'A question with conditions or trade-offs to weigh',
+  'A problem with several interacting constraints or steps',
+] as const;
+
 /** Probability floors; below them the router asks instead of guessing (decision 0037). */
 export const ROUTER_THRESHOLDS = {
   /** An action needs this much on the action question to be proposed. */
@@ -123,6 +136,14 @@ export function routerQuestions(actions: ChatActionDef[] = CHAT_ACTIONS) {
       instructions: 'Which language is the latest user message written in?',
       criteria: { en: 'English', pt: 'Portuguese', es: 'Spanish' },
     },
+    // How hard the request is, as a score over an ordered legend. Logged on
+    // every turn and recorded by the evaluation; the Thinking tier reads it
+    // to pick its effort (decision 0047, 2026-10-20).
+    reasoning: {
+      type: 'score' as const,
+      instructions: 'How much reasoning does the latest user message need to answer well?',
+      criteria: REASONING_LEGEND,
+    },
   };
 }
 
@@ -132,6 +153,9 @@ interface ClefChoice {
 }
 interface ClefNoul {
   noul?: number;
+}
+interface ClefScore {
+  score?: number;
 }
 
 export interface RouteDecision {
@@ -144,16 +168,20 @@ export interface RouteDecision {
   language: ChatLanguage;
   /** For `clarify`: the screens to offer, most likely first (at most three). */
   candidates: string[];
+  /** How much reasoning the request needs, 0 (a greeting) to 1 (several interacting constraints); 0 when Clef did not say. */
+  reasoning: number;
 }
 
 const MAX_CANDIDATES = 3;
 
 /** Read Clef's answers into a route; a missing or malformed answer falls back to a short answer. */
 export function decideRoute(answers: unknown, thresholds = ROUTER_THRESHOLDS, actions: ChatActionDef[] = CHAT_ACTIONS): RouteDecision {
-  const a = (answers && typeof answers === 'object' ? answers : {}) as Record<string, ClefChoice & ClefNoul>;
+  const a = (answers && typeof answers === 'object' ? answers : {}) as Record<string, ClefChoice & ClefNoul & ClefScore>;
   const lang = a.language?.choice;
   const language: ChatLanguage = lang === 'pt' || lang === 'es' ? lang : 'en';
-  const none = { action: null, language, candidates: [] as string[] };
+  const score = Number(a.reasoning?.score) / (REASONING_LEGEND.length - 1);
+  const reasoning = Number.isFinite(score) ? Math.round(Math.min(1, Math.max(0, score)) * 1000) / 1000 : 0;
+  const none = { action: null, language, candidates: [] as string[], reasoning };
   const harmful = Number(a.harmful?.noul ?? 0);
   const injection = Number(a.injection?.noul ?? 0);
   if (harmful > thresholds.unsafe || injection > thresholds.unsafe) {

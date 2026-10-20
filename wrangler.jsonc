@@ -67,6 +67,11 @@
     // 2026-10-20; dollars, not tokens, so a model change keeps what it buys).
     // Remove the line for no cap.
     "CHAT_MONTHLY_USD_CAP": "0.06",
+    // Thinking tier (decision 0047, amended 2026-10-20): a Thinking answer runs
+    // GLM-5.3 at high effort when Clef's reasoning score (0 to 1) is at or
+    // above this; 0.7 is the legend's "conditions to weigh" and above. Remove
+    // the line to stay at low effort always.
+    "CHAT_THINKING_HIGH_FLOOR": "0.7",
     // Global brake: the most the plane spends on hosted AI (chat and, once
     // built, cloud document extraction) in a UTC month, in US dollars, as the
     // usage meter estimates it (founder, 2026-10-20). Remove for no brake.

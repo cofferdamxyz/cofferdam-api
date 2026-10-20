@@ -4,7 +4,7 @@
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 
-import { createChatRoutes, type ChatRouteDeps } from '../src/routes/chat.js';
+import { createChatRoutes, parseFloor, type ChatRouteDeps } from '../src/routes/chat.js';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
 import { actionTool, decideRoute, routerQuestions } from '../src/services/chat/router.js';
@@ -33,6 +33,7 @@ function clef(
   harmful = 0.01,
   injection = 0.01,
   others: Record<string, number> = {},
+  reasoning?: number,
 ) {
   return {
     answers: {
@@ -40,6 +41,7 @@ function clef(
       depth: { type: 'choice', choice: depth, probabilities: { [depth]: depthP } },
       harmful: { type: 'noul', noul: harmful },
       injection: { type: 'noul', noul: injection },
+      ...(reasoning === undefined ? {} : { reasoning: { type: 'score', score: reasoning } }),
     },
   };
 }
@@ -125,6 +127,15 @@ describe('decideRoute', () => {
     expect(decideRoute(undefined).route).toBe('answer');
   });
 
+  it('reads the reasoning score, 0 when Clef did not say', () => {
+    expect(decideRoute(clef('none', 0.8).answers).reasoning).toBe(0);
+    // Clef scores the legend's position, 0 to 3; the decision reads 0 to 1.
+    expect(decideRoute(clef('none', 0.8, 'long', 0.9, 0.01, 0.01, {}, 2.46).answers).reasoning).toBe(0.82);
+    expect(decideRoute(clef('send', 0.97, 'short', 0.9, 0.01, 0.01, {}, 0.1065).answers).reasoning).toBe(0.036);
+    expect(decideRoute(clef('send', 0.97, 'short', 0.9, 0.01, 0.01, {}, 7).answers).reasoning).toBe(1);
+    expect(Object.keys(routerQuestions())).toContain('reasoning');
+  });
+
   it('builds tools only for actions with fields', () => {
     expect(actionTool('send')?.function.parameters.properties).toHaveProperty('recipient');
     expect(actionTool('looking_for')).toBeNull();
@@ -154,6 +165,15 @@ describe('parseChatRequest', () => {
     expect(() => parseChatRequest({ account: ACCOUNT, messages: [{ role: 'assistant', text: 'hi' }] })).toThrow(/last message/);
     expect(() => parseChatRequest({ account: ACCOUNT, messages: [{ role: 'system', text: 'x' }] })).toThrow(/role/);
     expect(() => parseChatRequest({ account: ACCOUNT, messages: user('x'.repeat(4_001)) })).toThrow(/too long/);
+  });
+
+  it('reads the tier, Ordinary when absent', () => {
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi') }).tier).toBe('ordinary');
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), tier: 'thinking' }).tier).toBe('thinking');
+    expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), tier: 'turbo' })).toThrow(/tier/);
+    expect(parseFloor('0.6')).toBe(0.6);
+    expect(parseFloor(undefined)).toBeNull();
+    expect(parseFloor('1.5')).toBeNull();
   });
 });
 
@@ -280,6 +300,63 @@ describe('runChat', () => {
     const inference = fakeInference({ 'chat-router': new Error('down'), 'chat-answer': { choices: [{ message: { content: 'Hi!' } }] } });
     const events = await collect(runChat({ inference, messages: user('hello') }));
     expect(events).toContainEqual({ type: 'text', delta: 'Hi!' });
+  });
+
+  it('answers on the reasoning model in the Thinking tier, with no early answer and low effort', async () => {
+    const calls: Call[] = [];
+    const logs: Record<string, unknown>[] = [];
+    const inference = fakeInference(
+      {
+        'chat-router': clef('none', 0.8, 'short', 0.9, 0.01, 0.01, {}, 0.9),
+        'chat-answer': () => sse(['never']),
+        'chat-reasoning': () => sse(['Deep ', 'answer'], { prompt_tokens: 220, completion_tokens: 60 }),
+      },
+      calls,
+    );
+    const events = await collect(runChat({ inference, messages: user('why is the sky blue?'), tier: 'thinking', log: (f) => logs.push(f) }));
+    expect(events[0]).toMatchObject({ type: 'route', route: 'answer', tier: 'thinking', effort: 'low', reasoning: 0.3 });
+    expect(texts(events)).toBe('Deep answer');
+    expect(calls.map((c) => c.op)).toEqual(['chat-router', 'chat-reasoning']);
+    expect(calls[1]!.input).toMatchObject({ stream: true, reasoning_effort: 'low', max_completion_tokens: 1_600 });
+    expect(calls[1]!.input).not.toHaveProperty('chat_template_kwargs');
+    expect(logs.find((l) => l.event === 'chat_turn')).toMatchObject({ tier: 'thinking', effort: 'low', reasoning: 0.3, tokens_in: 220, tokens_out: 60 });
+  });
+
+  it('runs at high effort above the floor, and fills action fields on the action model in either tier', async () => {
+    const calls: Call[] = [];
+    const inference = fakeInference(
+      {
+        'chat-router': clef('none', 0.8, 'long', 0.9, 0.01, 0.01, {}, 2.55),
+        'chat-reasoning': () => sse(['Step 1.']),
+      },
+      calls,
+    );
+    const events = await collect(runChat({ inference, messages: user('plan my rotation'), tier: 'thinking', highFloor: 0.6 }));
+    expect(events[0]).toMatchObject({ type: 'route', route: 'answer_long', tier: 'thinking', effort: 'high' });
+    expect(calls[1]!.input).toMatchObject({ reasoning_effort: 'high' });
+
+    const action: Call[] = [];
+    const fields = fakeInference(
+      {
+        'chat-router': clef('add_money', 0.95, 'short', 0.9, 0.01, 0.01, {}, 0.3),
+        'chat-action': { choices: [{ message: { tool_calls: [{ function: { arguments: '{"amount":50}' } }] } }] },
+      },
+      action,
+    );
+    const evs = await collect(runChat({ inference: fields, messages: user('add 50 dollars'), tier: 'thinking' }));
+    expect(evs[0]).toMatchObject({ type: 'route', route: 'action', action: 'add_money', tier: 'thinking' });
+    expect(evs[0]).not.toHaveProperty('effort');
+    expect(action.map((c) => c.op)).toEqual(['chat-router', 'chat-action']);
+    expect(evs).toContainEqual({ type: 'action', request: { id: 'add_money', amount: 50 } });
+  });
+
+  it('keeps the Ordinary tier as it was: the early answer, thinking off', async () => {
+    const calls: Call[] = [];
+    const inference = fakeInference({ 'chat-router': clef('none', 0.8), 'chat-answer': () => sse(['Hi']) }, calls);
+    const events = await collect(runChat({ inference, messages: user('hi'), tier: 'ordinary' }));
+    expect(events[0]).toMatchObject({ type: 'route', tier: 'ordinary', reasoning: 0 });
+    expect(events[0]).not.toHaveProperty('effort');
+    expect(calls.map((c) => c.op)).toEqual(['chat-answer', 'chat-router']);
   });
 
   it('ends with an error event when the answering model fails', async () => {

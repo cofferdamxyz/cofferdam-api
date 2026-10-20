@@ -125,6 +125,7 @@ export const PRICES: Record<string, Prices> = {
   'granite-4.0-h-micro': { input: 0.017, output: 0.112 },
   'glm-4.7-flash': { input: 0.06, output: 0.4 },
   'glm-5.3-flash': { input: 0.15, output: 0.5 },
+  'glm-5.3': { input: 1.4, output: 4.4 },
   'llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
 };
 

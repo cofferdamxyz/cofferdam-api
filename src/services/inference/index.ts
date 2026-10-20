@@ -21,9 +21,9 @@
  */
 
 /** What a call is for. Tags allow letters, digits and `: - . / @`, so op ids use dashes. */
-export type InferenceOp = 'chat-router' | 'chat-action' | 'chat-answer' | 'chat-long';
+export type InferenceOp = 'chat-router' | 'chat-action' | 'chat-answer' | 'chat-long' | 'chat-reasoning';
 
-export type InferenceModelVar = 'CHAT_ROUTER_MODEL' | 'CHAT_ACTION_MODEL' | 'CHAT_ANSWER_MODEL' | 'CHAT_LONG_MODEL';
+export type InferenceModelVar = 'CHAT_ROUTER_MODEL' | 'CHAT_ACTION_MODEL' | 'CHAT_ANSWER_MODEL' | 'CHAT_LONG_MODEL' | 'CHAT_REASONING_MODEL';
 
 export interface OpSpec {
   /** The model when neither KV nor the environment pins one. */
@@ -44,6 +44,10 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   // glm-5.3-flash took 1.8-2.9 s to its first token and 7-20 s in all on long
   // answers, gemma-4 0.5-1.0 s and 4-7 s for as much text (2026-10-17).
   'chat-long': { model: '@cf/google/gemma-4-26b-a4b-it', envVar: 'CHAT_LONG_MODEL', timeoutMs: 30_000 },
+  // The Thinking tier (decision 0047): GLM-5.3 at low reasoning effort answered
+  // 1 to 13 s after the request, one outlier at 36 s (2026-10-20), so the wait
+  // to the first byte is long; the app shows a thinking state meanwhile.
+  'chat-reasoning': { model: '@cf/zai-org/glm-5.3', envVar: 'CHAT_REASONING_MODEL', timeoutMs: 45_000 },
 };
 
 /**
