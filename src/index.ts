@@ -27,6 +27,7 @@ import { attesterRoutes } from './routes/attester.js';
 import { ceremonyRoutes } from './routes/ceremony.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { healthRoutes } from './routes/health.js';
+import { localeRoutes } from './routes/locale.js';
 import { aaRoutes } from './routes/aa.js';
 import { selfRoutes } from './routes/self.js';
 import { sepoliaRoutes } from './routes/sepolia.js';
@@ -64,6 +65,7 @@ app.get('/', (c) => {
     environment: c.env.ENVIRONMENT,
     routes: [
       { method: 'GET', path: '/health' },
+      { method: 'GET', path: '/v1/locale' },
       { method: 'GET', path: '/sepolia/block-height' },
       { method: 'GET', path: '/sepolia/contracts' },
       { method: 'GET', path: '/v1/enterprise/resolve?domain=' },
@@ -99,6 +101,7 @@ app.route('/v1/chat', chatRoutes);
 app.route('/v1/session', sessionRoutes);
 app.route('/v1/aa', aaRoutes);
 app.route('/v1/ceremony', ceremonyRoutes);
+app.route('/v1/locale', localeRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ ok: false, error: 'not_found' }, 404));
