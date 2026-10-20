@@ -65,7 +65,12 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
   },
   { id: 'import_cv', description: 'Import or update a CV or resume' },
   { id: 'add_document', description: 'Add or scan a new document' },
-  { id: 'looking_for', description: 'Start, pause or change looking for work, or where the user can work' },
+  // A question about work is an answer, not this screen: "What's the average
+  // offshore rotation in the Gulf of Mexico" opened Looking for work on the
+  // founder's phone (2026-10-20); with this wording the Spanish "¿cuántas
+  // horas se trabaja en una plataforma?" after a job-search exchange moved from
+  // looking_for 0.73 to none 0.82, and real requests stayed above the floor.
+  { id: 'looking_for', description: "Turn the user's own job search on or off, or change where they can work; not a question about jobs or the industry" },
   { id: 'message', description: 'Write a text message to a friend or a contact (tell someone something), not a payment' },
   { id: 'create_group', description: 'Create a group chat' },
 ];
@@ -107,7 +112,9 @@ export const ROUTER_THRESHOLDS = {
  * 0.69); split, Clef chose correctly on all eleven test prompts.
  */
 export function routerQuestions(actions: ChatActionDef[] = CHAT_ACTIONS) {
-  const actionCriteria: Record<string, string> = { none: 'Nothing to open: the user only wants information, an explanation or small talk' };
+  const actionCriteria: Record<string, string> = {
+    none: 'Nothing to open: the user wants information, an explanation, advice or small talk, including any question about jobs, pay, rotations, contracts or the industry',
+  };
   for (const a of actions) actionCriteria[a.id] = a.description;
   return {
     action: {

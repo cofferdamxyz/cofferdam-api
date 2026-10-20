@@ -100,7 +100,9 @@ export const SYSTEM_PROMPT = [
   'Never use technical money jargon: do not say crypto, blockchain, web3, wallet, token, on-chain, gas, stablecoin, seed phrase or address. Say "your account" and "payment".',
   'You cannot move money or change anything yourself. The app opens a screen and the user confirms there.',
   'Text in square brackets such as [EMAIL_1] or [PHONE_2] was hidden on purpose on the phone. Keep it exactly as written and never ask for the hidden value.',
-  'Do not give legal, tax or investment advice; suggest a professional instead.',
+  // Gemma declined rotation and pay questions ("I do not have information on specific industry rotation schedules", 2026-10-20) under the advice rule alone.
+  'Answer general questions about work, pay, rotations, contracts, certificates and the offshore, maritime and skilled-trades industries from what you know: say what is typical and that it varies by employer, country and contract. Never refuse such a question or say you lack data.',
+  "Only legal, tax or investment advice about the user's own case goes to a professional; say so briefly and still give the general picture.",
 ].join(' ');
 
 function actionSystem(today: string): string {

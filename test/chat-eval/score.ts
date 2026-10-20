@@ -110,6 +110,9 @@ export function guessLanguage(text: string): ChatLanguage | null {
 
 const JARGON = /\b(crypto|blockchain|web3|wallet|token|on-chain|onchain|gas|stablecoin|seed phrase)\b/i;
 const MARKDOWN = /(\*\*|^#{1,6}\s|^\s*[-*]\s|\|.*\|)/m;
+// A reply that begs off instead of answering (seen on rotation and pay questions, 2026-10-20).
+const DECLINED =
+  /\b(I (do not|don't|cannot|can't) (have|provide|give|access)|não (tenho|posso) (acesso|fornecer|dar)|no (tengo|puedo) (acceso|proporcionar|dar))\b/i;
 
 export interface Prices {
   /** USD per million input tokens. */
@@ -182,6 +185,8 @@ export interface TurnResult {
   replyLanguageOk: boolean | null;
   jargon: boolean;
   markdown: boolean;
+  /** The reply begged off ("I do not have information…") instead of answering. */
+  declined: boolean;
   /** Milliseconds from the turn's `chat_turn` line and the clock around it. */
   ms: { router?: number; first?: number; fields?: number; model?: number; total: number };
   calls: CallCost[];
@@ -261,6 +266,7 @@ export function scoreTurn(prompt: EvalPrompt, obs: TurnObservation): TurnResult 
     replyLanguageOk: answered && replyLanguage ? replyLanguage === prompt.language : null,
     jargon: answered && JARGON.test(reply),
     markdown: answered && MARKDOWN.test(reply),
+    declined: answered && DECLINED.test(reply),
     ms: {
       router: num(turnLog?.router),
       first: num(turnLog?.first),
@@ -318,6 +324,7 @@ export interface Summary {
   replyLanguage: { ok: number; n: number };
   jargon: number;
   markdown: number;
+  declined: number;
   errors: number;
   /** Wrong screen opened, or a screen opened where none was expected: the costly misses. */
   wrongAction: number;
@@ -373,6 +380,7 @@ export function summarize(results: TurnResult[]): Summary {
     replyLanguage: { ok: withReplyLang.filter((r) => r.replyLanguageOk).length, n: withReplyLang.length },
     jargon: results.filter((r) => r.jargon).length,
     markdown: results.filter((r) => r.markdown).length,
+    declined: results.filter((r) => r.declined).length,
     errors: results.filter((r) => r.error).length,
     wrongAction: results.filter((r) => r.route === 'action' && r.action !== r.expect.action).length,
     missedAction: results.filter((r) => r.expect.route === 'action' && (r.route === 'answer' || r.route === 'answer_long' || r.route === 'refuse')).length,
@@ -494,7 +502,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   out.push('## Language and style', '');
   out.push(`- Router language matches the prompt: ${pct(s.routerLanguage.ok, s.routerLanguage.n)}.`);
   out.push(`- Answer written in the prompt's language (word-list guess): ${pct(s.replyLanguage.ok, s.replyLanguage.n)}.`);
-  out.push(`- Answers with banned jargon: ${s.jargon}; with Markdown: ${s.markdown}.`, '');
+  out.push(`- Answers with banned jargon: ${s.jargon}; with Markdown: ${s.markdown}; that declined to answer: ${s.declined}.`, '');
 
   out.push('## Cost per turn by route taken', '', '| route | mean |', '|---|---|');
   for (const [k, v] of Object.entries(s.cost.byRoute)) out.push(`| ${k} | ${usd(v)} |`);
