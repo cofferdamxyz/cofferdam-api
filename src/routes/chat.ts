@@ -28,8 +28,8 @@
  * with `AI_MONTHLY_BUDGET_USD` set, the plane-wide month past that budget
  * answers `503 ai_budget_reached` for everyone until the month turns.
  * `GET /v1/chat/usage?account=0x…` answers the current month behind the same
- * gate. `Accept-Language` (pt, es) picks the fixed replies' language when the
- * router is unsure of it.
+ * gate, with its split per model (the router is not one). `Accept-Language`
+ * (pt, es) picks the fixed replies' language when the router is unsure of it.
  */
 
 import { Hono, type Context } from 'hono';
@@ -209,6 +209,14 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       tokensIn: usage?.tokensIn ?? 0,
       tokensOut: usage?.tokensOut ?? 0,
       estimatedUsd: (usage?.estimatedMicroUsd ?? 0) / 1_000_000,
+      // Most-used first, as the store keeps them; the router is not an entry.
+      models: (usage?.models ?? []).map((m) => ({
+        model: m.model,
+        turns: m.turns,
+        tokensIn: m.tokensIn,
+        tokensOut: m.tokensOut,
+        estimatedUsd: m.estimatedMicroUsd / 1_000_000,
+      })),
       cap: cap == null ? null : capEstimate(cap, usage, now),
     });
   });

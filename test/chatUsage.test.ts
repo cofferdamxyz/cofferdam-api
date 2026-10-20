@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Cofferdam Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { DatabaseSync } from 'node:sqlite';
+
 import { Hono } from 'hono';
 import type { Address } from 'viem';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -12,19 +14,25 @@ import { FIXED_TEXT, headerLanguage, runChat, type ChatEvent, type ChatInference
 import {
   capEstimate,
   GLOBAL_USAGE_NAME,
+  migrateUsageTables,
   monthOf,
   monthResetsAt,
   parseUsdMicro,
+  readUsage,
+  recordUsage,
   usageDelta,
+  type ChatModelUsage,
   type ChatMonthUsage,
   type ChatUsageDelta,
   type ChatUsageStore,
+  type UsageSql,
 } from '../src/services/chatUsageStore.js';
 import { clearUnpricedModels, MODEL_PRICES, modelCostMicroUsd, OPS, type InferenceOp } from '../src/services/inference/index.js';
 import fixtures from './fixtures/sdk-attestations.json';
 
 const GEMMA = '@cf/google/gemma-4-26b-a4b-it';
 const CLEF = '@cf/cloudflare/clef-flash';
+const GLM = '@cf/zai-org/glm-5.3-flash';
 
 function clef(action: string, actionP: number, opts: { harmful?: number; language?: [string, number] } = {}) {
   const answers: Record<string, unknown> = {
@@ -85,8 +93,9 @@ function fakeStore(initial: Record<string, ChatMonthUsage> = {}) {
   const recorded: { account: Address | 'global'; month: string; delta: ChatUsageDelta }[] = [];
   const reads: string[] = [];
   const globalReads: string[] = [];
+  // Totals only: the split per model is the SQL's, tested on its own below.
   const add = (key: string, month: string, delta: ChatUsageDelta) => {
-    const r = rows.get(key) ?? { month, turns: 0, tokensIn: 0, tokensOut: 0, routerCalls: 0, estimatedMicroUsd: 0, lastTurnAt: 0 };
+    const r = rows.get(key) ?? { month, turns: 0, tokensIn: 0, tokensOut: 0, routerCalls: 0, estimatedMicroUsd: 0, lastTurnAt: 0, models: [] };
       rows.set(key, {
         month,
         turns: r.turns + delta.turns,
@@ -95,6 +104,7 @@ function fakeStore(initial: Record<string, ChatMonthUsage> = {}) {
         routerCalls: r.routerCalls + delta.routerCalls,
         estimatedMicroUsd: r.estimatedMicroUsd + delta.estimatedMicroUsd,
         lastTurnAt: Math.max(r.lastTurnAt, delta.at),
+        models: r.models,
       });
   };
   const store: ChatUsageStore = {
@@ -151,11 +161,23 @@ describe('usage arithmetic', () => {
       tokensOut: 200,
       router: { model: CLEF, called: true, tokensIn: 400, estimated: true },
     };
-    expect(usageDelta(usage, 42)).toEqual({ turns: 1, tokensIn: 1_000, tokensOut: 200, routerCalls: 1, estimatedMicroUsd: 175, at: 42 });
+    expect(usageDelta(usage, 42)).toEqual({
+      turns: 1,
+      tokensIn: 1_000,
+      tokensOut: 200,
+      routerCalls: 1,
+      estimatedMicroUsd: 175,
+      model: GEMMA,
+      modelMicroUsd: 160,
+      at: 42,
+    });
     const fixed = usageDelta({ ...usage, route: 'refuse', model: null, tokensIn: null, tokensOut: null }, 42);
-    expect(fixed).toMatchObject({ turns: 1, tokensIn: 0, tokensOut: 0, estimatedMicroUsd: 15 });
+    expect(fixed).toMatchObject({ turns: 1, tokensIn: 0, tokensOut: 0, estimatedMicroUsd: 15, model: null, modelMicroUsd: 0 });
     const noRouter = usageDelta({ ...usage, router: { ...usage.router, called: false } }, 42);
-    expect(noRouter).toMatchObject({ routerCalls: 0, estimatedMicroUsd: 160 });
+    expect(noRouter).toMatchObject({ routerCalls: 0, estimatedMicroUsd: 160, model: GEMMA, modelMicroUsd: 160 });
+    // A model that reports no usage still served the turn, at no cost.
+    const silent = usageDelta({ ...usage, tokensIn: null, tokensOut: null }, 42);
+    expect(silent).toMatchObject({ tokensIn: 0, tokensOut: 0, estimatedMicroUsd: 15, model: GEMMA, modelMicroUsd: 0 });
   });
 
   it('reads months, resets and the cap in UTC', () => {
@@ -174,7 +196,16 @@ describe('usage arithmetic', () => {
 
   it('turns what is left of a dollar cap into turns, at the typical cost and then the account’s own', () => {
     const t = Date.UTC(2026, 9, 21, 12); // 11 days left, counting the 21st
-    const row = (turns: number, micro: number) => ({ month: '2026-10', turns, tokensIn: 0, tokensOut: 0, routerCalls: turns, estimatedMicroUsd: micro, lastTurnAt: t });
+    const row = (turns: number, micro: number): ChatMonthUsage => ({
+      month: '2026-10',
+      turns,
+      tokensIn: 0,
+      tokensOut: 0,
+      routerCalls: turns,
+      estimatedMicroUsd: micro,
+      lastTurnAt: t,
+      models: [],
+    });
     expect(capEstimate(5_000_000, null, t)).toEqual({
       usd: 5,
       remainingUsd: 5,
@@ -187,6 +218,115 @@ describe('usage arithmetic', () => {
     // Twenty turns at 500 each: the account's own average.
     expect(capEstimate(60_000, row(20, 10_000), t)).toMatchObject({ remainingUsd: 0.05, turnsLeft: 100, turnsPerDay: 9 });
     expect(capEstimate(60_000, row(200, 90_000), t)).toMatchObject({ remainingUsd: 0, turnsLeft: 0, turnsPerDay: 0 });
+  });
+});
+
+/** `node:sqlite` behind the slice of `ctx.storage.sql` the meter uses. */
+function sqlite(): UsageSql {
+  const db = new DatabaseSync(':memory:');
+  return {
+    exec(query, ...bindings) {
+      const rows = db.prepare(query).all(...bindings) as Record<string, unknown>[];
+      return { toArray: () => rows };
+    },
+  };
+}
+
+describe('the meter’s SQL, on node:sqlite', () => {
+  const OCT = '2026-10';
+  const turn = (over: Partial<ChatUsageDelta> = {}): ChatUsageDelta => ({
+    turns: 1,
+    tokensIn: 1_000,
+    tokensOut: 200,
+    routerCalls: 1,
+    estimatedMicroUsd: 175,
+    model: GEMMA,
+    modelMicroUsd: 160,
+    at: 1,
+    ...over,
+  });
+  const sum = (models: ChatModelUsage[], key: 'tokensIn' | 'tokensOut' | 'turns' | 'estimatedMicroUsd') =>
+    models.reduce((n, m) => n + m[key], 0);
+
+  function meter() {
+    const sql = sqlite();
+    migrateUsageTables(sql);
+    return sql;
+  }
+
+  it('splits the month per model next to the totals, with the router left out', () => {
+    const sql = meter();
+    recordUsage(sql, OCT, turn({ at: 10 }));
+    recordUsage(sql, OCT, turn({ tokensIn: 500, tokensOut: 100, estimatedMicroUsd: 95, modelMicroUsd: 80, at: 20 }));
+    // A refusal: fixed text, so the router only.
+    recordUsage(sql, OCT, turn({ tokensIn: 0, tokensOut: 0, estimatedMicroUsd: 15, model: null, modelMicroUsd: 0, at: 30 }));
+    recordUsage(sql, OCT, turn({ tokensIn: 2_000, tokensOut: 1_200, estimatedMicroUsd: 915, model: GLM, modelMicroUsd: 900, at: 25 }));
+
+    const month = readUsage(sql, OCT)!;
+    expect(month).toEqual({
+      month: OCT,
+      turns: 4,
+      tokensIn: 3_500,
+      tokensOut: 1_500,
+      routerCalls: 4,
+      estimatedMicroUsd: 1_200,
+      lastTurnAt: 30,
+      models: [
+        { model: GEMMA, turns: 2, tokensIn: 1_500, tokensOut: 300, estimatedMicroUsd: 240 },
+        { model: GLM, turns: 1, tokensIn: 2_000, tokensOut: 1_200, estimatedMicroUsd: 900 },
+      ],
+    });
+    // The models' tokens are the totals'; their cost is the total less the router's four calls; the refusal is in no model.
+    expect(sum(month.models, 'tokensIn')).toBe(month.tokensIn);
+    expect(sum(month.models, 'tokensOut')).toBe(month.tokensOut);
+    expect(month.estimatedMicroUsd - sum(month.models, 'estimatedMicroUsd')).toBe(4 * 15);
+    expect(sum(month.models, 'turns')).toBe(3);
+  });
+
+  it('puts the most-used model first: by turns, then tokens, then id', () => {
+    const sql = meter();
+    const LLAMA = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+    const GLM47 = '@cf/zai-org/glm-4.7-flash';
+    const OTHER = '@cf/acme/other-model';
+    recordUsage(sql, OCT, turn({ model: GEMMA, tokensIn: 90, tokensOut: 10 }));
+    recordUsage(sql, OCT, turn({ model: GLM47, tokensIn: 400, tokensOut: 100 }));
+    recordUsage(sql, OCT, turn({ model: LLAMA, tokensIn: 10, tokensOut: 0 }));
+    recordUsage(sql, OCT, turn({ model: LLAMA, tokensIn: 10, tokensOut: 0 }));
+    recordUsage(sql, OCT, turn({ model: OTHER, tokensIn: 250, tokensOut: 250 }));
+    expect(readUsage(sql, OCT)!.models.map((m) => m.model)).toEqual([LLAMA, OTHER, GLM47, GEMMA]);
+  });
+
+  it('keeps months apart, and an object from before the split starts its models empty', () => {
+    const sql = sqlite();
+    migrateUsageTables(sql);
+    // An object from before 2026-10-20 had the totals table only.
+    sql.exec('DROP TABLE month_models');
+    recordUsage(sql, OCT, turn({ model: null, modelMicroUsd: 0, at: 5 }));
+    migrateUsageTables(sql);
+    expect(readUsage(sql, OCT)).toMatchObject({ turns: 1, tokensIn: 1_000, models: [] });
+
+    recordUsage(sql, OCT, turn({ at: 6 }));
+    recordUsage(sql, '2026-11', turn({ model: GLM, at: 7 }));
+    expect(readUsage(sql, OCT)).toMatchObject({ turns: 2, tokensIn: 2_000, models: [{ model: GEMMA, turns: 1, tokensIn: 1_000 }] });
+    expect(readUsage(sql, '2026-11')).toMatchObject({ turns: 1, models: [{ model: GLM, turns: 1 }] });
+    expect(readUsage(sql, '2026-12')).toBeNull();
+  });
+
+  it('refuses a bad month, counts a turn without a usable model in the totals only, and never stores a bad number', () => {
+    const sql = meter();
+    expect(() => recordUsage(sql, '2026-13', turn())).toThrow('invalid month');
+    expect(readUsage(sql, '2026-13')).toBeNull();
+
+    recordUsage(sql, OCT, turn({ model: '' }));
+    recordUsage(sql, OCT, turn({ model: `@cf/${'x'.repeat(125)}` }));
+    // A caller from before the split sends no model fields at all.
+    const { model: _model, modelMicroUsd: _share, ...older } = turn();
+    recordUsage(sql, OCT, older as ChatUsageDelta);
+    expect(readUsage(sql, OCT)).toMatchObject({ turns: 3, estimatedMicroUsd: 525, models: [] });
+
+    // A model's share is cut to its turn; negative and missing counts are zero.
+    recordUsage(sql, OCT, turn({ estimatedMicroUsd: 100, modelMicroUsd: 500, tokensIn: -5, tokensOut: Number.NaN }));
+    expect(readUsage(sql, OCT)!.models).toEqual([{ model: GEMMA, turns: 1, tokensIn: 0, tokensOut: 0, estimatedMicroUsd: 100 }]);
   });
 });
 
@@ -333,11 +473,14 @@ describe('the chat meter on the routes', () => {
     expect(recorded[0]!.month).toBe(month);
     expect(recorded[0]!.delta).toMatchObject({ turns: 1, tokensIn: 100, tokensOut: 10, routerCalls: 1, at: now });
     expect(recorded[0]!.delta.estimatedMicroUsd).toBeGreaterThan(0);
+    // The answer model and its own share, priced without the router.
+    expect(recorded[0]!.delta).toMatchObject({ model: GEMMA, modelMicroUsd: modelCostMicroUsd(GEMMA, 100, 10) });
+    expect(recorded[0]!.delta.modelMicroUsd).toBeLessThanOrEqual(recorded[0]!.delta.estimatedMicroUsd);
   });
 
   it('refuses past the cap before any model call, and reads nothing without a cap', async () => {
     const key = `${fxAccount.toLowerCase()}:${month}`;
-    const full = { month, turns: 90, tokensIn: 900, tokensOut: 100, routerCalls: 90, estimatedMicroUsd: 1_000, lastTurnAt: now };
+    const full = { month, turns: 90, tokensIn: 900, tokensOut: 100, routerCalls: 90, estimatedMicroUsd: 1_000, lastTurnAt: now, models: [] };
     const calls: InferenceOp[] = [];
     const { store } = fakeStore({ [key]: full });
     const res = await app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_USD_CAP: '0.001' }, { usageStore: () => store }, calls).chat(bearer);
@@ -356,7 +499,16 @@ describe('the chat meter on the routes', () => {
 
   it('stops every account once the plane-wide month is over budget, before any model call', async () => {
     const globalKey = `${GLOBAL_USAGE_NAME}:${month}`;
-    const spent = (micro: number) => ({ month, turns: 1, tokensIn: 0, tokensOut: 0, routerCalls: 0, estimatedMicroUsd: micro, lastTurnAt: now });
+    const spent = (micro: number) => ({
+      month,
+      turns: 1,
+      tokensIn: 0,
+      tokensOut: 0,
+      routerCalls: 0,
+      estimatedMicroUsd: micro,
+      lastTurnAt: now,
+      models: [],
+    });
     const calls: InferenceOp[] = [];
     const { store } = fakeStore({ [globalKey]: spent(500_000_000) });
     const res = await app({ ENVIRONMENT: 'staging', AI_MONTHLY_BUDGET_USD: '500' }, { usageStore: () => store }, calls).chat(bearer);
@@ -388,9 +540,12 @@ describe('the chat meter on the routes', () => {
 
   it('gates GET /usage like the chat, and answers the month', async () => {
     const key = `${fxAccount.toLowerCase()}:${month}`;
-    const { store } = fakeStore({
-      [key]: { month, turns: 3, tokensIn: 400, tokensOut: 50, routerCalls: 3, estimatedMicroUsd: 2_500, lastTurnAt: now },
-    });
+    const models: ChatModelUsage[] = [
+      { model: GEMMA, turns: 2, tokensIn: 300, tokensOut: 40, estimatedMicroUsd: 2_000 },
+      { model: GLM, turns: 1, tokensIn: 100, tokensOut: 10, estimatedMicroUsd: 450 },
+    ];
+    const row: ChatMonthUsage = { month, turns: 3, tokensIn: 400, tokensOut: 50, routerCalls: 3, estimatedMicroUsd: 2_500, lastTurnAt: now, models };
+    const { store } = fakeStore({ [key]: row });
     const staging = app({ ENVIRONMENT: 'staging', CHAT_MONTHLY_USD_CAP: '0.01' }, { usageStore: () => store });
     const missing = await staging.usage();
     expect(missing.status).toBe(401);
@@ -407,7 +562,12 @@ describe('the chat meter on the routes', () => {
       tokensIn: 400,
       tokensOut: 50,
       estimatedUsd: 0.0025,
-      cap: capEstimate(10_000, { month, turns: 3, tokensIn: 400, tokensOut: 50, routerCalls: 3, estimatedMicroUsd: 2_500, lastTurnAt: now }, now),
+      // In dollars, in the store's order; the router's 0.00005 is in the total only.
+      models: [
+        { model: GEMMA, turns: 2, tokensIn: 300, tokensOut: 40, estimatedUsd: 0.002 },
+        { model: GLM, turns: 1, tokensIn: 100, tokensOut: 10, estimatedUsd: 0.00045 },
+      ],
+      cap: capEstimate(10_000, row, now),
     });
 
     expect(await (await staging.usage(bearer)).json()).toMatchObject({
@@ -415,7 +575,7 @@ describe('the chat meter on the routes', () => {
     });
 
     const uncapped = await app({ ENVIRONMENT: 'staging' }, { usageStore: () => fakeStore().store }).usage(bearer);
-    expect(await uncapped.json()).toMatchObject({ turns: 0, estimatedUsd: 0, cap: null });
+    expect(await uncapped.json()).toMatchObject({ turns: 0, estimatedUsd: 0, models: [], cap: null });
 
     const refused = app({ ENVIRONMENT: 'staging' }, { usageStore: () => store, authorityCheck: async () => ({ status: 'not_found' }) });
     expect((await refused.usage(bearer)).status).toBe(401);
