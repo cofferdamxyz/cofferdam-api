@@ -125,7 +125,7 @@ describe('MODEL_PRICES', () => {
     expect(MODEL_PRICES[GEMMA]).toEqual({ input: 0.1, output: 0.3 });
     expect(MODEL_PRICES[CLEF]).toEqual({ input: 0.038, output: 0 });
     expect(MODEL_PRICES['@cf/zai-org/glm-5.3-flash']).toEqual({ input: 0.15, output: 0.5 });
-    expect(MODEL_PRICES['@cf/zai-org/glm-4.7-flash']).toEqual({ input: 0.0605, output: 0.4 });
+    expect(MODEL_PRICES['@cf/zai-org/glm-4.7-flash']).toEqual({ input: 0.06, output: 0.4 });
     expect(MODEL_PRICES['@cf/meta/llama-3.3-70b-instruct-fp8-fast']).toEqual({ input: 0.293, output: 2.253 });
     expect(modelCostMicroUsd(GEMMA, 1_000, 200)).toBe(160);
     expect(modelCostMicroUsd(CLEF, 400, 0)).toBe(15);
