@@ -11,6 +11,10 @@
  *     session-signer envelope (Managed), pinned to the account and at most
  *     ten minutes old. The gate then requires that key to be `signerId`.
  *
+ *   Limits, in order: the global brake, a generous per-IP ceiling, then the
+ *   per-account bucket, counted only once the session verifies and the gate's
+ *   chain checks pass, right before the attester signs (`admit`).
+ *
  * The gate lives in `services/ceremony.ts`; this file wires it to Base reads
  * and to the attester Worker's `signCeremony`, and maps its errors.
  */
@@ -42,7 +46,11 @@ import {
 } from '../services/sessionAttestation.js';
 
 export interface CeremonyRouteDeps {
-  issue: (env: Env, req: FirstHighCeremonyRequest) => Promise<FirstHighAttestation>;
+  /**
+   * Run the gate and the co-sign. `admit` must be awaited once the gate has
+   * passed and before the attester signs; it throws `rate_limited` to refuse.
+   */
+  issue: (env: Env, req: FirstHighCeremonyRequest, admit: () => Promise<void>) => Promise<FirstHighAttestation>;
   /** Unix milliseconds for the session token's freshness; tests inject one. */
   now?: () => number;
 }
@@ -153,8 +161,9 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: 'bad_request', message }, 400);
     }
-    if (await overLimit(c.env.CEREMONY_RL, `ceremony:${req.account.toLowerCase()}`)) {
-      return c.json({ error: 'rate_limited', message: 'too many ceremony requests for this account' }, 429);
+    const ip = c.req.header('cf-connecting-ip');
+    if (ip && (await overLimit(c.env.CEREMONY_IP_RL, `ceremony-ip:${ip}`))) {
+      return c.json({ error: 'rate_limited', message: 'too many requests from this network; retry shortly' }, 429);
     }
     // The signing authority's own session (decision 0016): without it, anyone
     // who can read the chain could farm co-signs for any Partner account.
@@ -175,11 +184,18 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
       throw err;
     }
     try {
-      const issued = await deps.issue(c.env, { ...req, session });
+      // The per-account bucket is counted only once the session and the gate
+      // pass, right before the attester signs: account addresses are public.
+      const admit = async () => {
+        if (await overLimit(c.env.CEREMONY_RL, `ceremony:${req.account.toLowerCase()}`)) {
+          throw new CeremonyRequestError('rate_limited', 'too many ceremony requests for this account', 429);
+        }
+      };
+      const issued = await deps.issue(c.env, { ...req, session }, admit);
       return c.json({ ok: true, ...issued }, 200);
     } catch (err) {
       if (err instanceof CeremonyRequestError) {
-        return c.json({ error: err.code, message: err.message }, err.status as 400 | 403 | 404 | 409 | 422 | 500);
+        return c.json({ error: err.code, message: err.message }, err.status as 400 | 403 | 404 | 409 | 422 | 429 | 500);
       }
       const message = err instanceof Error ? err.message : String(err);
       // The attester throws `CODE: detail`; a missing binding or key is a 503.
@@ -192,5 +208,5 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
 }
 
 export const ceremonyRoutes = createCeremonyRoutes({
-  issue: (env, req) => issueFirstHighAttestation(baseCeremonyDeps(env), req),
+  issue: (env, req, admit) => issueFirstHighAttestation(baseCeremonyDeps(env), req, admit),
 });

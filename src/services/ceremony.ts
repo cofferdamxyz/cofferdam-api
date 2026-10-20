@@ -120,7 +120,8 @@ export class CeremonyRequestError extends Error {
       | 'high_module_not_allowed'
       | 'assertion_invalid'
       | 'session_not_signer'
-      | 'ceremony_hash_mismatch',
+      | 'ceremony_hash_mismatch'
+      | 'rate_limited',
     message: string,
     readonly status: number,
   ) {
@@ -283,9 +284,15 @@ export function partnerIdOf(tier: number, config: Hex): Hex {
   return slice(config, 96, 128);
 }
 
+/**
+ * `admit` runs once every check has passed and before the attester signs: the
+ * route counts the per-account rate limit there, so a caller who fails the
+ * gate never spends the account's bucket. It throws to refuse.
+ */
 export async function issueFirstHighAttestation(
   deps: CeremonyDeps,
   req: FirstHighCeremonyRequest,
+  admit?: () => Promise<void>,
 ): Promise<FirstHighAttestation> {
   const { pins } = deps;
   if (getAddress(req.highModule) !== getAddress(pins.highModule)) {
@@ -325,6 +332,8 @@ export async function issueFirstHighAttestation(
       422,
     );
   }
+
+  if (admit) await admit();
 
   const now = BigInt(deps.now ? deps.now() : Math.floor(Date.now() / 1000));
   const notBefore = now - BigInt(deps.skewSeconds ?? DEFAULT_SKEW_SECONDS);

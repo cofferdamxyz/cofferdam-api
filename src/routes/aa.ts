@@ -23,7 +23,10 @@
  *
  *   The op is self-authenticating (the EntryPoint verifies the passkey
  *   signature), so there is no session gate; the paymaster's deposit is what
- *   the policy and the per-sender / global rate limits protect. The relayer
+ *   the policy and the rate limits protect. Limits, in order: a global brake,
+ *   a generous per-IP ceiling, then the per-sender bucket, counted only once
+ *   policy and the simulation pass, so knowing an address is not enough to
+ *   lock its owner out. The relayer
  *   EOA's nonce is read per request (`pending`), which is fine at this volume;
  *   serialise it through a Durable Object before real traffic. The signed
  *   transaction is sent with one retry (`services/relaySend.ts`): the same
@@ -53,7 +56,7 @@ import { sendWithRetry } from '../services/relaySend.js';
 
 export class UserOpSubmitError extends Error {
   constructor(
-    readonly code: 'simulation_failed' | 'relay_failed',
+    readonly code: 'simulation_failed' | 'relay_failed' | 'rate_limited',
     message: string,
   ) {
     super(message);
@@ -63,8 +66,12 @@ export class UserOpSubmitError extends Error {
 
 export interface AaRouteDeps {
   policy: UserOpPolicy;
-  /** Simulate and submit `handleOps([op], relayer)`; resolves with the tx hash. */
-  submit: (env: Env, op: PackedUserOperationWire) => Promise<Hex>;
+  /**
+   * Simulate and submit `handleOps([op], relayer)`; resolves with the tx hash.
+   * `admit` must be awaited once the simulation passes and before the send;
+   * it throws `rate_limited` to refuse.
+   */
+  submit: (env: Env, op: PackedUserOperationWire, admit: () => Promise<void>) => Promise<Hex>;
 }
 
 const GLOBAL_KEY = 'aa:global';
@@ -98,8 +105,12 @@ function logRelay(event: string, op: PackedUserOperationWire, fields: Record<str
   console.warn(JSON.stringify({ event, sender: op.sender, nonce: op.nonce, ...fields }));
 }
 
-/** Simulate from the relayer, then submit with it (signed once, one retry). */
-export async function submitUserOperation(env: Env, op: PackedUserOperationWire): Promise<Hex> {
+/** Simulate from the relayer, admit, then submit with it (signed once, one retry). */
+export async function submitUserOperation(
+  env: Env,
+  op: PackedUserOperationWire,
+  admit: () => Promise<void> = async () => {},
+): Promise<Hex> {
   const rpcUrl = env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org';
   const relayer = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as Hex);
   const publicClient = getBaseSepoliaClient(rpcUrl);
@@ -117,6 +128,7 @@ export async function submitUserOperation(env: Env, op: PackedUserOperationWire)
     logRelay('aa_simulation_failed', op, { reason });
     throw new UserOpSubmitError('simulation_failed', reason);
   }
+  await admit();
   const wallet = createWalletClient({ account: relayer, chain: baseSepolia, transport: http(rpcUrl) });
   const data = encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args });
   try {
@@ -146,6 +158,10 @@ export function createAaRoutes(deps: AaRouteDeps) {
     } catch {
       return c.json({ ok: false, error: 'bad_request', message: 'Invalid JSON body' }, 400);
     }
+    const ip = c.req.header('cf-connecting-ip');
+    if (ip && (await overLimit(c.env.AA_RELAY_IP_RL, `aa-ip:${ip}`))) {
+      return c.json({ ok: false, error: 'rate_limited', message: 'too many requests from this network; retry shortly' }, 429);
+    }
     let parsed;
     try {
       parsed = parseUserOperationBody(body);
@@ -154,18 +170,26 @@ export function createAaRoutes(deps: AaRouteDeps) {
       if (err instanceof UserOpRequestError) return c.json({ ok: false, error: err.code, message: err.message }, 400);
       throw err;
     }
-    if (await overLimit(c.env.AA_RELAY_RL, `aa:${parsed.userOp.sender.toLowerCase()}`)) {
-      return c.json({ ok: false, error: 'rate_limited', message: 'too many ops for this account; retry shortly' }, 429);
-    }
     if (!c.env.RELAYER_PRIVATE_KEY) {
       return c.json({ ok: false, error: 'relayer_not_configured', message: 'RELAYER_PRIVATE_KEY not set' }, 503);
     }
     try {
-      const txHash = await deps.submit(c.env, parsed.userOp);
+      // The per-sender bucket is counted only once policy and the handleOps
+      // simulation pass (the EntryPoint has checked the passkey signature):
+      // sender addresses are public, so an earlier count lets anyone lock the
+      // owner out of the relay.
+      const sender = parsed.userOp.sender.toLowerCase();
+      const admit = async () => {
+        if (await overLimit(c.env.AA_RELAY_RL, `aa:${sender}`)) {
+          throw new UserOpSubmitError('rate_limited', 'too many ops for this account; retry shortly');
+        }
+      };
+      const txHash = await deps.submit(c.env, parsed.userOp, admit);
       return c.json({ ok: true, txHash, entryPoint: parsed.entryPoint }, 202);
     } catch (err) {
       if (err instanceof UserOpSubmitError) {
-        return c.json({ ok: false, error: err.code, message: err.message }, err.code === 'simulation_failed' ? 400 : 502);
+        const status = err.code === 'simulation_failed' ? 400 : err.code === 'rate_limited' ? 429 : 502;
+        return c.json({ ok: false, error: err.code, message: err.message }, status);
       }
       throw err;
     }

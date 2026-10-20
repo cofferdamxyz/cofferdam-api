@@ -17,7 +17,9 @@
  *
  *   Stores are strongly consistent Durable Objects (one per account, see
  *   services/bundleStore.ts); rate limits are the Workers rate-limiting
- *   binding, keyed per account plus a global brake on /verify (decision 0010).
+ *   binding (decision 0010): /verify has a global brake and per-account and
+ *   per-nullifier keys; the pickup has a per-IP ceiling before its gate and
+ *   counts the per-account key only once the gate passes.
  *
  *   GET /v1/self/bind-bundle/:account
  *     The app's pickup after VERIFICATION_COMPLETE. Returns the bundle to pass
@@ -343,7 +345,10 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     }
     const account = getAddress(raw);
 
-    if (await overLimit(c.env.SELF_PICKUP_RL, `pickup:${account.toLowerCase()}`)) {
+    // A generous per-IP ceiling before the gate (carriers put many phones
+    // behind one address); the per-account bucket waits until the gate passes.
+    const ip = c.req.header('cf-connecting-ip');
+    if (ip && (await overLimit(c.env.SELF_PICKUP_IP_RL, `pickup-ip:${ip}`))) {
       return c.json({ ok: false, error: 'rate_limited', retryAfterSeconds: 10 }, 429);
     }
 
@@ -390,6 +395,11 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
         { ok: false, error: 'attestation_required', hint: 'Authorization: Bearer csa1:…' },
         401,
       );
+    }
+    // Counted only now: account addresses are public on Base, so a bucket
+    // spent before the gate would let anyone lock the owner out of pickup.
+    if (await overLimit(c.env.SELF_PICKUP_RL, `pickup:${account.toLowerCase()}`)) {
+      return c.json({ ok: false, error: 'rate_limited', retryAfterSeconds: 10 }, 429);
     }
 
     const bundle = await store.get(account);
