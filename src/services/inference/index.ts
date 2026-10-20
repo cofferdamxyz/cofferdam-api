@@ -51,11 +51,16 @@ export const OPS: Record<InferenceOp, OpSpec> = {
  * the chat meter (`services/chatUsageStore.ts`). Read 2026-10-17, checked 2026-10-20 against the Workers AI pricing page (workspace
  * `docs/product/engine.md`, Cost and latency); re-check when a pin moves.
  * Clef bills input only. A dollar per million tokens is a millionth of a
- * dollar per token, so `tokens × price` is already in micro-dollars.
+ * dollar per token, so `tokens × price` is already in micro-dollars. Cached
+ * input is cheaper on the GLM models ($0.26 / M on `glm-5.3`, $0.03 / M on
+ * `glm-5.3-flash`), but the meter reads no cached-token counts, so every
+ * input token is priced at the full rate.
  */
 export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   '@cf/google/gemma-4-26b-a4b-it': { input: 0.1, output: 0.3 },
   '@cf/cloudflare/clef-flash': { input: 0.038, output: 0 },
+  // The Thinking tier's model (workspace decision 0047), not pinned to any op yet; read 2026-10-20.
+  '@cf/zai-org/glm-5.3': { input: 1.4, output: 4.4 },
   '@cf/zai-org/glm-5.3-flash': { input: 0.15, output: 0.5 },
   '@cf/zai-org/glm-4.7-flash': { input: 0.06, output: 0.4 },
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },

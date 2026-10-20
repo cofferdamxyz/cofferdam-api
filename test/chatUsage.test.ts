@@ -134,12 +134,15 @@ describe('MODEL_PRICES', () => {
   it('prices the chat models per million tokens, in whole micro-dollars', () => {
     expect(MODEL_PRICES[GEMMA]).toEqual({ input: 0.1, output: 0.3 });
     expect(MODEL_PRICES[CLEF]).toEqual({ input: 0.038, output: 0 });
+    expect(MODEL_PRICES['@cf/zai-org/glm-5.3']).toEqual({ input: 1.4, output: 4.4 });
     expect(MODEL_PRICES['@cf/zai-org/glm-5.3-flash']).toEqual({ input: 0.15, output: 0.5 });
     expect(MODEL_PRICES['@cf/zai-org/glm-4.7-flash']).toEqual({ input: 0.06, output: 0.4 });
     expect(MODEL_PRICES['@cf/meta/llama-3.3-70b-instruct-fp8-fast']).toEqual({ input: 0.293, output: 2.253 });
     expect(modelCostMicroUsd(GEMMA, 1_000, 200)).toBe(160);
     expect(modelCostMicroUsd(CLEF, 400, 0)).toBe(15);
     expect(modelCostMicroUsd(GEMMA, 1_000_000, 1_000_000)).toBe(400_000);
+    // Decision 0047's typical reasoning turn, 2,000 tokens in and 1,200 out on glm-5.3: about $0.008.
+    expect(modelCostMicroUsd('@cf/zai-org/glm-5.3', 2_000, 1_200)).toBe(8_080);
     // Every default chat model has a price.
     for (const op of Object.values(OPS)) expect(MODEL_PRICES[op.model]).toBeDefined();
   });
