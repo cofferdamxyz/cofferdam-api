@@ -127,7 +127,7 @@ export const CHOOSE_TEXT = FIXED_TEXT.en.choose;
 export const EMPTY_TEXT = FIXED_TEXT.en.empty;
 
 const USD = /(\$|\busdc?\b|\bdollars?\b|\bd[óo]lar(es)?\b)/i;
-const OTHER_CURRENCY = /(r\$|€|£|¥|₹|\breais\b|\breal\b|\beuros?\b|\blibras?\b|\bpounds?\b|\bpesos?\b|\byen\b|\brupees?\b|\bsoles?\b)/i;
+const OTHER_CURRENCY = /(r\$|€|£|¥|₹|\breais\b|\breal\b|\bcontos?\b|\beuros?\b|\blibras?\b|\bpounds?\b|\bpesos?\b|\byen\b|\brupees?\b|\bsoles?\b)/i;
 
 /** Whether an amount in the text is in another currency than US dollars. */
 export function mentionsOtherCurrency(text: string): boolean {
@@ -136,15 +136,15 @@ export function mentionsOtherCurrency(text: string): boolean {
 }
 
 /**
- * Whether the amount the action model read may be prefilled; the app's
- * amounts are US dollars. The model was told to skip other currencies but
- * still prefilled "15 reais" as 15, and "manda 20 pro joao" (no currency, most
- * likely reais) as 20 (checked 2026-10-17), so the plane decides: never with
- * another currency named, and outside English only with a dollar marker.
+ * Whether the amount the action model read may be prefilled. The app has one
+ * coin, USDC, and amounts read in it (decision 0046), so a bare number is the
+ * amount in any language: "manda 20 pra ana" prefills 20 (the founder's
+ * ruling on the Pixel, 2026-10-20). Only an amount in another currency is
+ * dropped, because the model was told to skip those and still prefilled
+ * "15 reais" as 15 (checked 2026-10-17); "conto" is Brazilian slang for reais.
  */
-export function keepsAmount(text: string, language: ChatLanguage): boolean {
-  if (mentionsOtherCurrency(text)) return false;
-  return language === 'en' || USD.test(text.replace(/r\$/gi, ' BRL '));
+export function keepsAmount(text: string): boolean {
+  return !mentionsOtherCurrency(text);
 }
 
 /** Earlier turns reach the router cut to this many characters; the latest message goes whole. */
@@ -364,7 +364,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
       for (const k of Object.keys(CHAT_ACTIONS.find((a) => a.id === id)?.fields ?? {})) {
         if (args[k] != null && args[k] !== '') fields[k] = args[k];
       }
-      if (!keepsAmount(latest, language)) delete fields.amount;
+      if (!keepsAmount(latest)) delete fields.amount;
       // Handles travel without the @; the app's validator checks the bare handle.
       if (typeof fields.recipient === 'string') fields.recipient = fields.recipient.replace(/^@/, '');
       return fields;

@@ -214,7 +214,7 @@ describe('runChat', () => {
     expect(texts(events)).toBe(REFUSE_TEXT);
   });
 
-  it('offers choices below the action floor, prefilling only the likeliest, without a bare amount outside English', async () => {
+  it('offers choices below the action floor, prefilling only the likeliest, a bare amount included', async () => {
     const calls: Call[] = [];
     const inference = fakeInference(
       {
@@ -226,7 +226,7 @@ describe('runChat', () => {
     );
     const events = await collect(runChat({ inference, messages: user('manda 20 pro joao') }));
     expect(events[0]).toMatchObject({ type: 'route', route: 'clarify' });
-    expect(events).toContainEqual({ type: 'choices', requests: [{ id: 'send', recipient: 'joao' }, { id: 'message' }] });
+    expect(events).toContainEqual({ type: 'choices', requests: [{ id: 'send', amount: 20, recipient: 'joao' }, { id: 'message' }] });
     expect(texts(events)).toContain('Toque em uma');
     expect(calls.filter((c) => c.op === 'chat-action')).toHaveLength(1);
   });
@@ -430,13 +430,15 @@ describe('mentionsOtherCurrency', () => {
     expect(mentionsOtherCurrency('add 50 to my account')).toBe(false);
   });
 
-  it('prefills a bare amount only in English, and any language with a dollar marker', () => {
-    expect(keepsAmount('send 20 to ana', 'en')).toBe(true);
-    expect(keepsAmount('manda 20 pro joao', 'pt')).toBe(false);
-    expect(keepsAmount('manda 20 dólares pro joao', 'pt')).toBe(true);
-    expect(keepsAmount('Send 20 USDC para @Ana', 'pt')).toBe(true);
-    expect(keepsAmount('envía $20 a ana', 'es')).toBe(true);
-    expect(keepsAmount('manda R$ 20 pro joao', 'pt')).toBe(false);
-    expect(keepsAmount('send 20 euros to ana', 'en')).toBe(false);
+  it('prefills a bare amount in any language and drops one in another currency', () => {
+    expect(keepsAmount('send 20 to ana')).toBe(true);
+    expect(keepsAmount('manda 20 pro joao')).toBe(true);
+    expect(keepsAmount('mándale 10 a camila')).toBe(true);
+    expect(keepsAmount('manda 20 dólares pro joao')).toBe(true);
+    expect(keepsAmount('Send 20 USDC para @Ana')).toBe(true);
+    expect(keepsAmount('envía $20 a ana')).toBe(true);
+    expect(keepsAmount('manda R$ 20 pro joao')).toBe(false);
+    expect(keepsAmount('passa 50 conto pra @bia')).toBe(false);
+    expect(keepsAmount('send 20 euros to ana')).toBe(false);
   });
 });

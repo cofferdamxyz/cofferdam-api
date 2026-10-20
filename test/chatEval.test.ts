@@ -247,7 +247,7 @@ describe('scoring', () => {
     const answers = clefAnswers('send', 0.54, { message: 0.28 }, 'pt');
     const evs = [
       { type: 'route', route: 'clarify', action: null, confidence: 0.54 },
-      { type: 'choices', requests: [{ id: 'send', recipient: 'joao' }, { id: 'message' }] },
+      { type: 'choices', requests: [{ id: 'send', amount: 20, recipient: 'joao' }, { id: 'message' }] },
       { type: 'text', delta: 'Você quis dizer uma destas?' },
       { type: 'done' },
     ];
