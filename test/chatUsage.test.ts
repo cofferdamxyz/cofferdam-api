@@ -11,8 +11,10 @@ import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
 import { FIXED_TEXT, headerLanguage, runChat, type ChatEvent, type ChatInference, type ChatTurnUsage } from '../src/services/chat/run.js';
 import {
   capTokens,
+  GLOBAL_USAGE_NAME,
   monthOf,
   monthResetsAt,
+  parseBudgetMicroUsd,
   parseTokenCap,
   usageDelta,
   type ChatMonthUsage,
@@ -81,13 +83,11 @@ const texts = (events: ChatEvent[]) =>
 /** An in-memory meter that records every call. */
 function fakeStore(initial: Record<string, ChatMonthUsage> = {}) {
   const rows = new Map(Object.entries(initial));
-  const recorded: { account: Address; month: string; delta: ChatUsageDelta }[] = [];
+  const recorded: { account: Address | 'global'; month: string; delta: ChatUsageDelta }[] = [];
   const reads: string[] = [];
-  const store: ChatUsageStore = {
-    async record(account, month, delta) {
-      recorded.push({ account, month, delta });
-      const key = `${account.toLowerCase()}:${month}`;
-      const r = rows.get(key) ?? { month, turns: 0, tokensIn: 0, tokensOut: 0, routerCalls: 0, estimatedMicroUsd: 0, lastTurnAt: 0 };
+  const globalReads: string[] = [];
+  const add = (key: string, month: string, delta: ChatUsageDelta) => {
+    const r = rows.get(key) ?? { month, turns: 0, tokensIn: 0, tokensOut: 0, routerCalls: 0, estimatedMicroUsd: 0, lastTurnAt: 0 };
       rows.set(key, {
         month,
         turns: r.turns + delta.turns,
@@ -97,13 +97,26 @@ function fakeStore(initial: Record<string, ChatMonthUsage> = {}) {
         estimatedMicroUsd: r.estimatedMicroUsd + delta.estimatedMicroUsd,
         lastTurnAt: Math.max(r.lastTurnAt, delta.at),
       });
+  };
+  const store: ChatUsageStore = {
+    async record(account, month, delta) {
+      recorded.push({ account, month, delta });
+      add(`${account.toLowerCase()}:${month}`, month, delta);
     },
     async read(account, month) {
       reads.push(month);
       return rows.get(`${account.toLowerCase()}:${month}`) ?? null;
     },
+    async recordGlobal(month, delta) {
+      recorded.push({ account: 'global', month, delta });
+      add(`${GLOBAL_USAGE_NAME}:${month}`, month, delta);
+    },
+    async readGlobal(month) {
+      globalReads.push(month);
+      return rows.get(`${GLOBAL_USAGE_NAME}:${month}`) ?? null;
+    },
   };
-  return { store, recorded, reads };
+  return { store, recorded, reads, globalReads };
 }
 
 describe('MODEL_PRICES', () => {
@@ -156,6 +169,10 @@ describe('usage arithmetic', () => {
     expect(parseTokenCap('0')).toBeNull();
     expect(parseTokenCap('1.5')).toBeNull();
     expect(parseTokenCap('2000000')).toBe(2_000_000);
+    expect(parseBudgetMicroUsd(undefined)).toBeNull();
+    expect(parseBudgetMicroUsd('-5')).toBeNull();
+    expect(parseBudgetMicroUsd('500')).toBe(500_000_000);
+    expect(parseBudgetMicroUsd('0.25')).toBe(250_000);
     expect(capTokens(null)).toBe(0);
     expect(capTokens({ tokensIn: 10, tokensOut: 5 })).toBe(15);
   });
@@ -298,7 +315,8 @@ describe('the chat meter on the routes', () => {
     const { store, recorded } = fakeStore();
     const res = await app({ ENVIRONMENT: 'staging' }, { usageStore: () => store }).chat(bearer);
     expect(await res.text()).toContain('"type":"done"');
-    expect(recorded).toHaveLength(1);
+    expect(recorded).toHaveLength(2);
+    expect(recorded[1]).toEqual({ ...recorded[0], account: 'global' });
     expect(recorded[0]!.account.toLowerCase()).toBe(fxAccount.toLowerCase());
     expect(recorded[0]!.month).toBe(month);
     expect(recorded[0]!.delta).toMatchObject({ turns: 1, tokensIn: 100, tokensOut: 10, routerCalls: 1, at: now });
@@ -322,6 +340,28 @@ describe('the chat meter on the routes', () => {
     const { store: open, reads } = fakeStore({ [key]: full });
     expect((await app({ ENVIRONMENT: 'staging' }, { usageStore: () => open }).chat(bearer)).status).toBe(200);
     expect(reads).toEqual([]);
+  });
+
+  it('stops every account once the plane-wide month is over budget, before any model call', async () => {
+    const globalKey = `${GLOBAL_USAGE_NAME}:${month}`;
+    const spent = (micro: number) => ({ month, turns: 1, tokensIn: 0, tokensOut: 0, routerCalls: 0, estimatedMicroUsd: micro, lastTurnAt: now });
+    const calls: InferenceOp[] = [];
+    const { store } = fakeStore({ [globalKey]: spent(500_000_000) });
+    const res = await app({ ENVIRONMENT: 'staging', AI_MONTHLY_BUDGET_USD: '500' }, { usageStore: () => store }, calls).chat(bearer);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, error: 'ai_budget_reached', resetsAt: monthResetsAt(now).toISOString() });
+    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(calls).toEqual([]);
+
+    const { store: under } = fakeStore({ [globalKey]: spent(499_999_999) });
+    expect((await app({ ENVIRONMENT: 'staging', AI_MONTHLY_BUDGET_USD: '500' }, { usageStore: () => under }).chat(bearer)).status).toBe(200);
+  });
+
+  it('reads the plane-wide spend at most once per window per isolate', async () => {
+    const { store, globalReads } = fakeStore();
+    const send = app({ ENVIRONMENT: 'staging', AI_MONTHLY_BUDGET_USD: '500' }, { usageStore: () => store });
+    for (let i = 0; i < 3; i++) await (await send.chat(bearer)).text();
+    expect(globalReads).toEqual([month]);
   });
 
   it('checks the cap only after the gate', async () => {

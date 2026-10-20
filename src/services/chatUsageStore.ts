@@ -12,6 +12,11 @@
  * imports `cloudflare:workers`, which the route tests cannot load (the same
  * split as `bundleStore.ts` and `bindBundleDO.ts`).
  *
+ * The same object class also keeps one plane-wide row per month (the object
+ * named `plane:global`): the sum of every account's spend, which the global
+ * brake `AI_MONTHLY_BUDGET_USD` reads. Every hosted AI op reports to both
+ * rows: the chat today, the cloud document extraction when it lands.
+ *
  * Counted: every completed turn, the routed model's tokens when it reports
  * them, and the router's input tokens estimated from the length of its state.
  * Not counted: a failed turn, an early answer cancelled unread, and a model
@@ -52,7 +57,13 @@ export interface ChatUsageStore {
   record(account: Address, month: string, delta: ChatUsageDelta): Promise<void>;
   /** Null when the account has no turn that month. */
   read(account: Address, month: string): Promise<ChatMonthUsage | null>;
+  /** The plane-wide row: every account's spend added together. */
+  recordGlobal(month: string, delta: ChatUsageDelta): Promise<void>;
+  readGlobal(month: string): Promise<ChatMonthUsage | null>;
 }
+
+/** The Durable Object name of the plane-wide row; accounts are named by address, so it cannot collide. */
+export const GLOBAL_USAGE_NAME = 'plane:global';
 
 export const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -72,6 +83,16 @@ export function parseTokenCap(raw: string | undefined): number | null {
   if (raw == null || raw.trim() === '') return null;
   const n = Number(raw.trim());
   return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * `AI_MONTHLY_BUDGET_USD` (dollars, decimals allowed) in micro-dollars;
+ * unset, empty or invalid means no global brake.
+ */
+export function parseBudgetMicroUsd(raw: string | undefined): number | null {
+  if (raw == null || raw.trim() === '') return null;
+  const n = Number(raw.trim());
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 1_000_000) : null;
 }
 
 /** The tokens a month counts against the cap. */
@@ -108,6 +129,19 @@ export class DurableChatUsageStore implements ChatUsageStore {
 
   private stub(account: Address) {
     return this.namespace.getByName(account.toLowerCase());
+  }
+
+  private global() {
+    return this.namespace.getByName(GLOBAL_USAGE_NAME);
+  }
+
+  async recordGlobal(month: string, delta: ChatUsageDelta): Promise<void> {
+    await this.global().record(month, delta);
+  }
+
+  async readGlobal(month: string): Promise<ChatMonthUsage | null> {
+    const row = await this.global().read(month);
+    return (row as ChatMonthUsage | null) ?? null;
   }
 
   async record(account: Address, month: string, delta: ChatUsageDelta): Promise<void> {

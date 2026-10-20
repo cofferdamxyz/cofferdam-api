@@ -24,7 +24,9 @@
  * Usage: every finished turn is added to the account's month in the meter
  * (`services/chatUsageStore.ts`, the `CHAT_USAGE_DO` Durable Object) through
  * `waitUntil`, so the stream never waits on it. With `CHAT_MONTHLY_TOKEN_CAP`
- * set, an account past it answers `429 fair_use_cap` before any model call.
+ * set, an account past it answers `429 fair_use_cap` before any model call;
+ * with `AI_MONTHLY_BUDGET_USD` set, the plane-wide month past that budget
+ * answers `503 ai_budget_reached` for everyone until the month turns.
  * `GET /v1/chat/usage?account=0x…` answers the current month behind the same
  * gate. `Accept-Language` (pt, es) picks the fixed replies' language when the
  * router is unsure of it.
@@ -43,6 +45,7 @@ import {
   DurableChatUsageStore,
   monthOf,
   monthResetsAt,
+  parseBudgetMicroUsd,
   parseTokenCap,
   usageDelta,
   type ChatUsageStore,
@@ -82,6 +85,13 @@ export const defaultChatRouteDeps: ChatRouteDeps = {
 
 const GLOBAL_KEY = 'chat:global';
 
+/**
+ * How long an isolate trusts its last read of the plane-wide spend. Every
+ * turn would otherwise wait on one Durable Object for the whole plane; the
+ * brake may overshoot by what is spent in this window.
+ */
+export const GLOBAL_SPEND_TTL_MS = 30_000;
+
 const log = (fields: Record<string, unknown>) => console.log(JSON.stringify(fields));
 
 /** Keep a promise alive past the response; outside a Worker (tests) it simply runs. */
@@ -117,6 +127,15 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
   }
 
   const usageStore = (env: Env) => (deps.usageStore ?? envUsageStore)(env);
+
+  let globalSpend: { month: string; microUsd: number; until: number } | null = null;
+  /** The plane-wide spend this month, read at most every `GLOBAL_SPEND_TTL_MS` per isolate. */
+  async function spentThisMonth(store: ChatUsageStore, month: string, now: number): Promise<number> {
+    if (globalSpend && globalSpend.month === month && globalSpend.until > now) return globalSpend.microUsd;
+    const row = await store.readGlobal(month);
+    globalSpend = { month, microUsd: row?.estimatedMicroUsd ?? 0, until: now + GLOBAL_SPEND_TTL_MS };
+    return globalSpend.microUsd;
+  }
 
   /**
    * The gate both routes share: the token pinned to the account and fresh,
@@ -217,21 +236,33 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       return c.json({ ok: false, error: 'rate_limited', message: 'slow down a little; retry shortly' }, 429);
     }
 
-    // The fair-use cap, before any model call. Read only when a cap is set; an
-    // unreadable meter lets the turn through rather than lock everyone out.
+    // The global brake and the fair-use cap, before any model call. Each is
+    // read only when set; an unreadable meter lets the turn through rather
+    // than lock everyone out.
     const store = usageStore(c.env);
     const cap = parseTokenCap(c.env.CHAT_MONTHLY_TOKEN_CAP);
-    if (store && cap != null) {
+    const budget = parseBudgetMicroUsd(c.env.AI_MONTHLY_BUDGET_USD);
+    if (store && (cap != null || budget != null)) {
       const now = deps.now();
-      let used = 0;
-      try {
-        used = capTokens(await store.read(account, monthOf(now)));
-      } catch (err) {
-        log({ event: 'chat_usage_read_failed', reason: err instanceof Error ? err.message : String(err) });
+      const month = monthOf(now);
+      const quiet = <T>(p: Promise<T>, fallback: T) =>
+        p.catch((err) => {
+          log({ event: 'chat_usage_read_failed', reason: err instanceof Error ? err.message : String(err) });
+          return fallback;
+        });
+      const [spent, used] = await Promise.all([
+        budget != null ? quiet(spentThisMonth(store, month, now), 0) : 0,
+        cap != null ? quiet(store.read(account, month).then(capTokens), 0) : 0,
+      ]);
+      const resetsAt = monthResetsAt(now);
+      const retryAfter = String(Math.max(1, Math.ceil((resetsAt.getTime() - now) / 1000)));
+      if (budget != null && spent >= budget) {
+        log({ event: 'chat_budget_reached', month, spent_micro_usd: spent, budget_micro_usd: budget });
+        c.header('retry-after', retryAfter);
+        return c.json({ ok: false, error: 'ai_budget_reached', resetsAt: resetsAt.toISOString() }, 503);
       }
-      if (used >= cap) {
-        const resetsAt = monthResetsAt(now);
-        c.header('retry-after', String(Math.max(1, Math.ceil((resetsAt.getTime() - now) / 1000))));
+      if (cap != null && used >= cap) {
+        c.header('retry-after', retryAfter);
         return c.json({ ok: false, error: 'fair_use_cap', resetsAt: resetsAt.toISOString() }, 429);
       }
     }
@@ -248,7 +279,9 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       onTurn: store
         ? (usage) => {
             const at = deps.now();
-            background(c, store.record(account, monthOf(at), usageDelta(usage, at, log)));
+            const month = monthOf(at);
+            const delta = usageDelta(usage, at, log);
+            background(c, Promise.all([store.record(account, month, delta), store.recordGlobal(month, delta)]));
           }
         : undefined,
     });
