@@ -110,13 +110,14 @@ function actionSystem(today: string): string {
 /** The fixed replies, in the user's language (decided by the router). */
 export const FIXED_TEXT: Record<
   ChatLanguage,
-  { refuse: string; clarify: string; choose: string; empty: string; ready: (label: string) => string }
+  { refuse: string; clarify: string; choose: string; empty: string; unavailable: string; ready: (label: string) => string }
 > = {
   en: {
     refuse: "I can't help with that. I can help with your payments, your documents or finding work.",
     clarify: 'Do you want me to open something for you? I can open Send, Add money, your documents, your payments, Looking for work, or a new message.',
     choose: 'Did you mean one of these? Tap one to open it, or ask me another way.',
     empty: "Sorry, I couldn't put an answer together. Try asking another way.",
+    unavailable: 'The assistant is unavailable right now. Try again in a moment.',
     ready: (label) => `${label} is ready. Check the details and confirm there.`,
   },
   pt: {
@@ -124,6 +125,7 @@ export const FIXED_TEXT: Record<
     clarify: 'Quer que eu abra algo para você? Posso abrir Enviar, Adicionar dinheiro, seus documentos, seus pagamentos, Procurando trabalho ou uma nova mensagem.',
     choose: 'Você quis dizer uma destas? Toque em uma para abrir, ou pergunte de outro jeito.',
     empty: 'Desculpe, não consegui montar uma resposta. Tente perguntar de outro jeito.',
+    unavailable: 'O assistente está fora do ar agora. Tente de novo daqui a pouco.',
     ready: (label) => `${label} está pronto. Confira os detalhes e confirme lá.`,
   },
   es: {
@@ -131,6 +133,7 @@ export const FIXED_TEXT: Record<
     clarify: '¿Quieres que abra algo? Puedo abrir Enviar, Añadir dinero, tus documentos, tus pagos, Buscando trabajo o un mensaje nuevo.',
     choose: '¿Quisiste decir una de estas? Toca una para abrirla, o pregúntame de otra forma.',
     empty: 'Lo siento, no pude armar una respuesta. Intenta preguntarlo de otra forma.',
+    unavailable: 'El asistente no está disponible ahora. Intenta de nuevo en un momento.',
     ready: (label) => `${label} está listo. Revisa los detalles y confirma allí.`,
   },
 };
@@ -442,20 +445,34 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     };
 
     try {
-      try {
-        const t0 = Date.now();
-        router.called = true;
-        const clef = (await inference.run('chat-router', {
-          model: clefName(router.model),
-          state,
-          questions: routerQuestions(),
-        })) as { answers?: unknown };
-        decision = decideRoute(clef?.answers);
-        languageP = languageProbability(clef?.answers);
-        timings.router = Date.now() - t0;
-      } catch (err) {
-        // The router is an optimisation: without it, the everyday model answers.
-        opts.log?.({ event: 'chat_router_failed', reason: reasonOf(err) });
+      // The safety checks live in the router, so a turn never reaches a model
+      // without it: a failed call is retried once, and a second failure
+      // declines the turn. (The Thinking-tier evaluation of 2026-10-20 caught a
+      // refusal-worthy prompt answered after a router timeout under the old
+      // "answer without it" fallback.)
+      let routed = false;
+      for (let attempt = 1; attempt <= 2 && !routed; attempt++) {
+        try {
+          const t0 = Date.now();
+          router.called = true;
+          const clef = (await inference.run('chat-router', {
+            model: clefName(router.model),
+            state,
+            questions: routerQuestions(),
+          })) as { answers?: unknown };
+          decision = decideRoute(clef?.answers);
+          languageP = languageProbability(clef?.answers);
+          timings.router = Date.now() - t0;
+          routed = true;
+        } catch (err) {
+          opts.log?.({ event: 'chat_router_failed', attempt, reason: reasonOf(err) });
+        }
+      }
+      if (!routed) {
+        dropEarly();
+        opts.log?.({ event: 'chat_router_unavailable', tier, ms: Date.now() - started });
+        await emit({ type: 'error', message: FIXED_TEXT[opts.fallbackLanguage ?? 'en'].unavailable });
+        return;
       }
       // The effort only matters where the reasoning model answers.
       const answers = decision.route === 'answer' || decision.route === 'answer_long';
@@ -561,7 +578,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     } catch (err) {
       dropEarly();
       opts.log?.({ event: 'chat_turn_failed', route: decision.route, reason: reasonOf(err) });
-      await emit({ type: 'error', message: 'The assistant is unavailable right now. Try again in a moment.' }).catch(() => {});
+      await emit({ type: 'error', message: FIXED_TEXT[opts.fallbackLanguage ?? 'en'].unavailable }).catch(() => {});
     } finally {
       await writer.close().catch(() => {});
     }

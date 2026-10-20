@@ -296,10 +296,27 @@ describe('runChat', () => {
     expect(calls[0]!.signal?.aborted).toBe(true);
   });
 
-  it('answers with the early answer when the router fails', async () => {
-    const inference = fakeInference({ 'chat-router': new Error('down'), 'chat-answer': { choices: [{ message: { content: 'Hi!' } }] } });
-    const events = await collect(runChat({ inference, messages: user('hello') }));
-    expect(events).toContainEqual({ type: 'text', delta: 'Hi!' });
+  it('retries the router once, then declines the turn without a model answer', async () => {
+    const calls: Call[] = [];
+    const logs: Record<string, unknown>[] = [];
+    const inference = fakeInference({ 'chat-router': new Error('down'), 'chat-answer': () => sse(['Hi!']) }, calls);
+    const events = await collect(runChat({ inference, messages: user('hello'), fallbackLanguage: 'pt', log: (f) => logs.push(f) }));
+    expect(calls.filter((c) => c.op === 'chat-router')).toHaveLength(2);
+    expect(texts(events)).toBe('');
+    expect(events[events.length - 1]).toEqual({ type: 'error', message: 'O assistente está fora do ar agora. Tente de novo daqui a pouco.' });
+    expect(calls[0]!.signal?.aborted).toBe(true);
+    expect(logs.filter((l) => l.event === 'chat_router_failed')).toHaveLength(2);
+    expect(logs.some((l) => l.event === 'chat_router_unavailable')).toBe(true);
+
+    // One failure, then an answer: the turn goes on as usual.
+    let tries = 0;
+    const flaky = fakeInference({
+      'chat-router': () => (++tries === 1 ? new Error('blip') : clef('none', 0.8)),
+      'chat-answer': () => sse(['Hi!']),
+    });
+    const ok = await collect(runChat({ inference: flaky, messages: user('hello') }));
+    expect(texts(ok)).toBe('Hi!');
+    expect(tries).toBe(2);
   });
 
   it('answers on the reasoning model in the Thinking tier, with no early answer and low effort', async () => {
