@@ -199,7 +199,7 @@ describe('POST /v1/session/verify-attestation', () => {
       body: '{not json',
     });
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('invalid_json');
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_json');
   });
 });
 

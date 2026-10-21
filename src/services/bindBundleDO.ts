@@ -39,7 +39,7 @@ export class BindBundleDO extends DurableObject<Env> {
   }
 
   /** TTL: the object empties itself when the bundle expires. */
-  async alarm(): Promise<void> {
+  override async alarm(): Promise<void> {
     await this.ctx.storage.deleteAll();
   }
 }

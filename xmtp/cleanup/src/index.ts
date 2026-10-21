@@ -62,7 +62,7 @@ export default {
     const client = new Client({ connectionString: env.HYPERDRIVE.connectionString });
     await client.connect();
     try {
-      const report = await runCleanup(async (text, params) => (await client.query(text, params)).rows, cfg, previous);
+      const report = await runCleanup(async (text, params) => (await client.query<Record<string, unknown>>(text, params)).rows, cfg, previous);
       await env.CLEANUP_STATE.put(STATE_KEY, JSON.stringify(report.state));
       console.log(JSON.stringify({ job: 'xmtp-cleanup', ...report.deleted, timedOut: report.timedOut }));
     } finally {

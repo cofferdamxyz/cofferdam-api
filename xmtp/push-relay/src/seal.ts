@@ -60,7 +60,7 @@ const aad = (kid: number) => utf8.encode(`cofferdam-push-seal-v1:${kid}`);
 export function checkRecord(r: DeliveryRecord): string | null {
   if (r.platform !== 'ios' && r.platform !== 'android' && r.platform !== 'ios-fcm') return 'platform';
   if (typeof r.token !== 'string' || r.token.length < 8 || r.token.length > MAX_TOKEN_LENGTH) return 'token';
-  if (!/^[A-Za-z0-9_:.\-]+$/.test(r.token)) return 'token';
+  if (!/^[A-Za-z0-9_:.-]+$/.test(r.token)) return 'token';
   if (r.platform === 'ios' && !/^[0-9a-fA-F]{64,200}$/.test(r.token)) return 'token';
   if (!(r.signingKey instanceof Uint8Array) || r.signingKey.length !== SIGNING_KEY_BYTES) return 'signingKey';
   if (r.apnsEnv !== 'production' && r.apnsEnv !== 'sandbox') return 'apnsEnv';

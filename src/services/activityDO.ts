@@ -20,7 +20,7 @@ const MAX_LIST = 100;
 export class ActivityDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(
         `CREATE TABLE IF NOT EXISTS transfers (
            id TEXT PRIMARY KEY,

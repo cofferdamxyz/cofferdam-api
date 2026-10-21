@@ -33,7 +33,7 @@ interface AiCall {
   options: Record<string, unknown>;
 }
 
-function fakeAi(answer: (call: AiCall) => Promise<unknown> | unknown, calls: AiCall[] = []): AiBinding {
+function fakeAi(answer: (call: AiCall) => unknown, calls: AiCall[] = []): AiBinding {
   return {
     run: (async (model: string, input: Record<string, unknown>, options: Record<string, unknown>) => {
       const call = { model, input, options };

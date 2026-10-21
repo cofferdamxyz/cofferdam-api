@@ -36,17 +36,17 @@ async function backendWebhook(key: Uint8Array, body: string, ts = NOW, id = 'msg
 }
 
 async function pem(key: CryptoKey): Promise<string> {
-  const der = new Uint8Array(await crypto.subtle.exportKey('pkcs8', key));
+  const der = new Uint8Array((await crypto.subtle.exportKey('pkcs8', key)) as ArrayBuffer);
   return `-----BEGIN PRIVATE KEY-----\n${toB64(der)}\n-----END PRIVATE KEY-----\n`;
 }
 
 async function env(): Promise<Env> {
-  const ec = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-  const rsa = await crypto.subtle.generateKey(
+  const ec = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const rsa = (await crypto.subtle.generateKey(
     { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
     true,
     ['sign', 'verify'],
-  );
+  )) as CryptoKeyPair;
   return {
     SEAL_KEYS,
     SEAL_KID_CURRENT: '1',
@@ -98,7 +98,7 @@ describe('sealing', () => {
   it('refuses a tampered blob', async () => {
     const ring = await loadKeyRing(SEAL_KEYS);
     const raw = fromB64Url(await seal(record(), ring, 1))!;
-    raw[20] ^= 1;
+    raw[20]! ^= 1;
     const { toB64Url } = await import('../../xmtp/push-relay/src/b64.js');
     expect(await unseal(toB64Url(raw), ring)).toBeNull();
   });

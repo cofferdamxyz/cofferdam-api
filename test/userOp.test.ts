@@ -3,6 +3,7 @@
 
 /** The UserOperation relay: parsing, policy and the route against a fake submitter. */
 
+import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import { encodePacked, type Address, type Hex } from 'viem';
 
@@ -88,7 +89,7 @@ describe('POST /v1/aa/user-operation', () => {
   const env = (overrides: Partial<Env> = {}) => ({ RELAYER_PRIVATE_KEY: '0x' + '11'.repeat(32), ...overrides }) as unknown as Env;
   type Submit = (env: Env, op: unknown, admit: () => Promise<void>) => Promise<Hex>;
   const app = (submit: Submit) => {
-    const h = new (require('hono').Hono)();
+    const h = new Hono();
     h.route('/v1/aa', createAaRoutes({ policy, submit: submit as never }));
     return h;
   };

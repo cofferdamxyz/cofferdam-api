@@ -16,7 +16,7 @@ import { migrateUsageTables, readUsage, recordUsage, type ChatMonthUsage, type C
 export class ChatUsageDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       migrateUsageTables(this.ctx.storage.sql);
     });
   }

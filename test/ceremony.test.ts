@@ -11,7 +11,6 @@ import { privateKeyToAccount } from 'viem/accounts';
 import type { Env } from '../src/env.js';
 import { createCeremonyRoutes } from '../src/routes/ceremony.js';
 import {
-  ACTION_ENROLL_FIRST_HIGH,
   CeremonyRequestError,
   TIER,
   ZERO_WORD,
@@ -303,7 +302,7 @@ describe('POST /v1/ceremony/first-high', () => {
     const res = await post(h, body, fixtures.webauthn.token);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, account: FX_ACCOUNT, nonce: '3', attestation: { expiry: String(NOW + 600) } });
-    expect(seen[0].session).toEqual({ kind: 'passkey', publicKey: fixtures.webauthn.publicKey });
+    expect(seen[0]?.session).toEqual({ kind: 'passkey', publicKey: fixtures.webauthn.publicKey });
   });
   it('requires a fresh session token for the account', async () => {
     const h = app(async (_e, req) => issueFirstHighAttestation(deps({ readAccount: async () => fixturePartner }), req));
@@ -332,7 +331,7 @@ describe('POST /v1/ceremony/first-high', () => {
     const token = await sessionSignerToken(ACCOUNT, NOW * 1000 - 1_000);
     const res = await post(h, { ...body, account: ACCOUNT }, token);
     expect(res.status).toBe(200);
-    expect(seen[0].session).toEqual({ kind: 'session-signer', signer: MANAGED.address });
+    expect(seen[0]?.session).toEqual({ kind: 'session-signer', signer: MANAGED.address });
     const stranger = await sessionSignerToken(ACCOUNT, NOW * 1000 - 1_000, privateKeyToAccount(`0x${'43'.repeat(32)}`));
     expect((await post(h, { ...body, account: ACCOUNT }, stranger)).status).toBe(403);
     expect((await post(h, { ...body, account: ACCOUNT }, `${token}x`)).status).toBe(401);
