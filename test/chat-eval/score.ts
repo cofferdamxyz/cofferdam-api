@@ -146,12 +146,19 @@ export const PRICES: Record<string, Prices> = {
   'llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
 };
 
+/** Workers AI bills in neurons, $0.011 per 1,000 (pricing page, 2026-10-21); every chat model reports them in its usage, cached input priced as cached. */
+export const USD_PER_NEURON = 0.011 / 1_000;
+
 export interface CallCost {
   model: string;
   tokensIn: number;
   tokensOut: number;
+  /** Input tokens served from the prefix cache, when the model said. */
+  cachedIn?: number;
   /** True when a count was estimated (characters / 4) instead of reported. */
   estimated: boolean;
+  /** True when `usd` is the neurons the model reported, not the catalogue rate over the counts. */
+  billed: boolean;
   usd: number | null;
 }
 
@@ -160,7 +167,7 @@ export function callCost(call: RecordedCall, prices: Record<string, Prices> = PR
   const short = call.model.split('/').pop() ?? call.model;
   // A call refused before the model ran bills nothing.
   if (call.status === 'network' || (typeof call.status === 'number' && call.status >= 400)) {
-    return { model: short, tokensIn: 0, tokensOut: 0, estimated: false, usd: 0 };
+    return { model: short, tokensIn: 0, tokensOut: 0, estimated: false, billed: false, usd: 0 };
   }
   const price = prices[short];
   const clef = short.startsWith('clef');
@@ -169,8 +176,11 @@ export function callCost(call: RecordedCall, prices: Record<string, Prices> = PR
   const tokensIn = reportedIn ?? Math.ceil(call.inputChars / 4);
   const tokensOut = reportedOut ?? Math.ceil(call.outputChars / 4);
   const estimated = reportedIn === undefined || reportedOut === undefined;
-  const usd = price ? (tokensIn * price.input + tokensOut * price.output) / 1e6 : null;
-  return { model: short, tokensIn, tokensOut, estimated, usd };
+  const neurons = call.usage?.neurons;
+  const billed = typeof neurons === 'number' && neurons >= 0;
+  const usd = billed ? neurons * USD_PER_NEURON : price ? (tokensIn * price.input + tokensOut * price.output) / 1e6 : null;
+  const cachedIn = call.usage?.prompt_tokens_details?.cached_tokens;
+  return { model: short, tokensIn, tokensOut, ...(typeof cachedIn === 'number' ? { cachedIn } : {}), estimated, billed, usd };
 }
 
 export interface TurnResult {
@@ -296,7 +306,7 @@ export function scoreTurn(prompt: EvalPrompt, obs: TurnObservation): TurnResult 
     },
     calls,
     costUsd,
-    costEstimated: calls.some((c) => c.estimated),
+    costEstimated: calls.some((c) => c.estimated && !c.billed),
     clef: (routerCall?.result as { answers?: unknown } | undefined)?.answers,
   };
 }
@@ -510,7 +520,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   );
   out.push('## Summary', '', '```', summaryText(s), '```', '');
   out.push(
-    '"One tap away" counts an expected screen offered as the first choice of a clarify. Costs use the catalogue rates in `score.ts`; Clef input tokens are always estimated (characters / 4), and so are other counts when a model reports no usage. A cancelled early answer is charged its estimated input.',
+    '"One tap away" counts an expected screen offered as the first choice of a clarify. Costs are the neurons each model reported, cached input priced as cached, at $0.011 per 1,000; a call that reported none is priced at the catalogue rates in `score.ts` from its token counts, with Clef input always estimated (characters / 4) and other counts estimated when a model reports no usage. A cancelled early answer is charged its estimated input at the catalogue rate.',
     '',
   );
 

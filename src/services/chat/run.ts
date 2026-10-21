@@ -374,15 +374,26 @@ function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort): Recor
   };
 }
 
+/**
+ * The fields that keep an everyday call from reasoning, by model family: Gemma
+ * honours `enable_thinking` and GLM-5.3 needs `reasoning_effort` too (checked
+ * 2026-10-17); DeepSeek V4.1 Flash takes `reasoning_effort: 'none'` and reads
+ * `low` as reasoning on (2026-10-21), so a DeepSeek pin on an everyday op
+ * answers with no reasoning at all.
+ */
+export function thinkingOff(model: string): Record<string, unknown> {
+  return model.startsWith('@cf/deepseek-ai/')
+    ? { reasoning_effort: 'none' }
+    : { chat_template_kwargs: { enable_thinking: false }, reasoning_effort: 'low' };
+}
+
 /** The answer models' input: the conversation under the system prompt, streamed, thinking off. */
-function answerInput(messages: ChatMessage[], long: boolean): Record<string, unknown> {
+function answerInput(messages: ChatMessage[], long: boolean, model: string): Record<string, unknown> {
   return {
     messages: [{ role: 'system', content: answerSystem() }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
     stream: true,
     max_completion_tokens: long ? 1_200 : 400,
-    // Gemma honours enable_thinking; GLM-5.3 needs reasoning_effort too (checked 2026-10-17).
-    chat_template_kwargs: { enable_thinking: false },
-    reasoning_effort: 'low',
+    ...thinkingOff(model),
   };
 }
 
@@ -472,7 +483,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         tools: [tool],
         tool_choice: 'required',
         max_completion_tokens: 200,
-        chat_template_kwargs: { enable_thinking: false },
+        ...thinkingOff(model),
       });
       timings.fields = Date.now() - t;
       noteUsage(model, usageOf(res));
@@ -533,7 +544,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     const router = { model: routerModel, called: false, tokensIn: Math.ceil(state.length / 4), estimated: true as const };
     let languageP = 0;
     const early = new AbortController();
-    const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared), { signal: early.signal });
+    const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared, answerModel), { signal: early.signal });
     // No early answer in the Thinking tier: a cancelled reasoning call costs real money.
     const earlyAnswer = opts.early === false || thinking ? null : startAnswer();
     earlyAnswer?.catch(() => {});
@@ -635,7 +646,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
             : useEarly
               ? await earlyAnswer
               : long && !shared
-                ? await inference.run('chat-long', answerInput(messages, true))
+                ? await inference.run('chat-long', answerInput(messages, true, longModel))
                 : await startAnswer();
           let sent = 0;
           let usage = usageOf(res);

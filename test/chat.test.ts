@@ -19,6 +19,7 @@ import {
   routerState,
   runChat,
   SYSTEM_PROMPT,
+  thinkingOff,
   type ChatEvent,
   type ChatInference,
 } from '../src/services/chat/run.js';
@@ -425,6 +426,28 @@ describe('runChat', () => {
   it('tells the models that Portuguese is Brazilian and Spanish Mexican', () => {
     expect(SYSTEM_PROMPT).toContain('Portuguese means Brazilian Portuguese');
     expect(SYSTEM_PROMPT).toContain('Spanish means Mexican Spanish');
+  });
+
+  it('turns reasoning off the DeepSeek way when a DeepSeek model is pinned on an everyday op', async () => {
+    const DS = '@cf/deepseek-ai/deepseek-v4.1-flash-1017';
+    const calls: Call[] = [];
+    const inference = fakeInference(
+      {
+        'chat-router': clef('send', 0.97),
+        'chat-answer': () => sse(['never']),
+        'chat-action': { choices: [{ message: { tool_calls: [{ function: { arguments: '{"amount":20}' } }] } }] },
+      },
+      calls,
+      { 'chat-answer': DS, 'chat-action': DS },
+    );
+    await collect(runChat({ inference, messages: user('send 20 to ana') }));
+    const early = calls.find((c) => c.op === 'chat-answer')!;
+    expect(early.input).toMatchObject({ reasoning_effort: 'none' });
+    expect(early.input).not.toHaveProperty('chat_template_kwargs');
+    const fields = calls.find((c) => c.op === 'chat-action')!;
+    expect(fields.input).toMatchObject({ reasoning_effort: 'none' });
+    expect(fields.input).not.toHaveProperty('chat_template_kwargs');
+    expect(thinkingOff('@cf/google/gemma-4-26b-a4b-it')).toEqual({ chat_template_kwargs: { enable_thinking: false }, reasoning_effort: 'low' });
   });
 
   it('keeps the Ordinary tier as it was: the early answer, thinking off', async () => {

@@ -229,6 +229,19 @@ describe('scoring', () => {
     const gemma = callCost({ model: GEMMA, stream: true, inputChars: 1, ms: 1, status: 200, aborted: false, outputChars: 1, usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 } });
     expect(gemma).toMatchObject({ estimated: false });
     expect(gemma.usd).toBeCloseTo(0.4, 9);
+    // Neurons, when reported, are the bill: cached input priced as cached, so below the catalogue rate.
+    const billed = callCost({
+      model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
+      stream: true,
+      inputChars: 1,
+      ms: 1,
+      status: 200,
+      aborted: false,
+      outputChars: 1,
+      usage: { prompt_tokens: 1_060, completion_tokens: 100, neurons: 12, prompt_tokens_details: { cached_tokens: 960 } },
+    });
+    expect(billed).toMatchObject({ billed: true, cachedIn: 960, estimated: false });
+    expect(billed.usd).toBeCloseTo(0.000132, 9);
     expect(callCost({ model: '@cf/x/unknown', stream: false, inputChars: 4, ms: 1, status: 200, aborted: false, outputChars: 0 }).usd).toBeNull();
   });
 

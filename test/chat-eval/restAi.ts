@@ -25,6 +25,9 @@ import type { AiBinding } from '../../src/services/inference/index.js';
 export interface Usage {
   prompt_tokens?: number;
   completion_tokens?: number;
+  /** Workers AI's bill for the call, cached input priced as cached ($0.011 per 1,000). */
+  neurons?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
 }
 
 export interface RecordedCall {
