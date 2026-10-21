@@ -25,6 +25,8 @@ export interface ChatActionDef {
   description: string;
   /** JSON Schema of the fields the action model may fill; absent = opens with nothing prefilled. */
   fields?: Record<string, { type: 'number' | 'string'; description: string }>;
+  /** The screen shows a notice today (`docs/app/ux.md`): the chat still opens it, but says it is coming, never "ready". */
+  planned?: true;
 }
 
 /**
@@ -63,8 +65,8 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
       month: { type: 'string', description: 'The month, as YYYY-MM, only if named' },
     },
   },
-  { id: 'import_cv', description: 'Import or update a CV or resume' },
-  { id: 'add_document', description: 'Add or scan a new document' },
+  { id: 'import_cv', description: 'Import or update a CV or resume', planned: true },
+  { id: 'add_document', description: 'Add or scan a new document', planned: true },
   // A question about work is an answer, not this screen: "What's the average
   // offshore rotation in the Gulf of Mexico" opened Looking for work on the
   // founder's phone (2026-10-20); with this wording the Spanish "¿cuántas

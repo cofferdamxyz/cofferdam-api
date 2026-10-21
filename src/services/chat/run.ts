@@ -118,7 +118,16 @@ function actionSystem(today: string): string {
 /** The fixed replies, in the user's language (decided by the router). */
 export const FIXED_TEXT: Record<
   ChatLanguage,
-  { refuse: string; clarify: string; choose: string; empty: string; unavailable: string; ready: (label: string) => string }
+  {
+    refuse: string;
+    clarify: string;
+    choose: string;
+    empty: string;
+    unavailable: string;
+    ready: (label: string) => string;
+    /** A planned screen (decision 0048): opened, but never called ready. */
+    comingSoon: (label: string) => string;
+  }
 > = {
   en: {
     refuse: "I can't help with that. I can help with your payments, your documents or finding work.",
@@ -127,6 +136,7 @@ export const FIXED_TEXT: Record<
     empty: "Sorry, I couldn't put an answer together. Try asking another way.",
     unavailable: 'The assistant is unavailable right now. Try again in a moment.',
     ready: (label) => `${label} is ready. Check the details and confirm there.`,
+    comingSoon: (label) => `${label} isn't available yet; it's coming. The app shows what it is waiting for.`,
   },
   pt: {
     refuse: 'Não posso ajudar com isso. Posso ajudar com seus pagamentos, seus documentos ou a encontrar trabalho.',
@@ -135,6 +145,7 @@ export const FIXED_TEXT: Record<
     empty: 'Desculpe, não consegui montar uma resposta. Tente perguntar de outro jeito.',
     unavailable: 'O assistente está fora do ar agora. Tente de novo daqui a pouco.',
     ready: (label) => `${label} está pronto. Confira os detalhes e confirme lá.`,
+    comingSoon: (label) => `${label} ainda não está disponível; está chegando. O app mostra o que falta.`,
   },
   es: {
     refuse: 'No puedo ayudar con eso. Puedo ayudarte con tus pagos, tus documentos o a encontrar trabajo.',
@@ -143,6 +154,7 @@ export const FIXED_TEXT: Record<
     empty: 'Lo siento, no pude armar una respuesta. Intenta preguntarlo de otra forma.',
     unavailable: 'El asistente no está disponible ahora. Intenta de nuevo en un momento.',
     ready: (label) => `${label} está listo. Revisa los detalles y confirma allí.`,
+    comingSoon: (label) => `${label} todavía no está disponible; ya viene. La app muestra qué falta.`,
   },
 };
 
@@ -533,7 +545,8 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           const id = decision.action!;
           const fields = await actionFields(id, decision.language);
           await emit({ type: 'action', request: { id, ...fields } });
-          await emit({ type: 'text', delta: fixed.ready(ACTION_LABELS[replyLanguage][id] ?? id) });
+          const label = ACTION_LABELS[replyLanguage][id] ?? id;
+          await emit({ type: 'text', delta: CHAT_ACTIONS.find((a) => a.id === id)?.planned ? fixed.comingSoon(label) : fixed.ready(label) });
           break;
         }
         case 'answer':

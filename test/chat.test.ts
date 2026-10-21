@@ -202,6 +202,14 @@ describe('runChat', () => {
     expect(calls[0]!.signal?.aborted).toBe(true);
   });
 
+  it('says a planned screen is coming, never ready, and still opens it', async () => {
+    const inference = fakeInference({ 'chat-router': clef('import_cv', 0.95), 'chat-answer': () => sse(['x']) });
+    const events = await collect(runChat({ inference, messages: user('how do I upload my CV?') }));
+    expect(events).toContainEqual({ type: 'action', request: { id: 'import_cv' } });
+    expect(texts(events)).toMatch(/isn't available yet; it's coming/);
+    expect(texts(events)).not.toMatch(/is ready/);
+  });
+
   it('opens a field-less action without calling the action model', async () => {
     const calls: Call[] = [];
     const inference = fakeInference({ 'chat-router': clef('looking_for', 0.93), 'chat-answer': () => sse(['x']) }, calls);
