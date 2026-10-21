@@ -173,6 +173,13 @@ export function keepsAmount(text: string): boolean {
   return !mentionsOtherCurrency(text);
 }
 
+/**
+ * The first router attempt waits this long before the retry: Clef answers in
+ * about 0.3 to 0.8 s on the plane, and a stalled call that answered in 301 ms
+ * on retry cost a turn 6.3 s under the op's 6 s window (2026-10-20).
+ */
+export const ROUTER_FIRST_TRY_MS = 3_000;
+
 /** Earlier turns reach the router cut to this many characters; the latest message goes whole. */
 export const ROUTER_EARLIER_CHARS = 300;
 
@@ -457,11 +464,11 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         try {
           const t0 = Date.now();
           router.called = true;
-          const clef = (await inference.run('chat-router', {
-            model: clefName(router.model),
-            state,
-            questions: routerQuestions(),
-          })) as { answers?: unknown };
+          const clef = (await inference.run(
+            'chat-router',
+            { model: clefName(router.model), state, questions: routerQuestions() },
+            attempt === 1 ? { timeoutMs: ROUTER_FIRST_TRY_MS } : {},
+          )) as { answers?: unknown };
           decision = decideRoute(clef?.answers);
           languageP = languageProbability(clef?.answers);
           timings.router = Date.now() - t0;

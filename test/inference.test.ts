@@ -111,6 +111,14 @@ describe('createInference', () => {
     }
   });
 
+  it('lets a call override the op timeout', async () => {
+    const calls: AiCall[] = [];
+    const inference = createInference({}, { ai: fakeAi(() => new Promise(() => {}), calls) })!;
+    const t = Date.now();
+    await expect(inference.run('chat-router', {}, { timeoutMs: 20 })).rejects.toMatchObject({ ms: 20 });
+    expect(Date.now() - t).toBeLessThan(2_000);
+  });
+
   it("passes the caller's cancel through, after the call has answered too", async () => {
     const calls: AiCall[] = [];
     const inference = createInference({}, { ai: fakeAi(() => 'stream', calls) })!;

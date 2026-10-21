@@ -72,6 +72,7 @@ interface Call {
   op: InferenceOp;
   input: Record<string, unknown>;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 /** A fake seam keyed by op: a value, an Error to throw, or a function producing either. */
@@ -85,7 +86,7 @@ function fakeInference(
       return models[op] ?? OPS[op].model;
     },
     async run(op, input, call: InferenceCall = {}) {
-      calls.push({ op, input, signal: call.signal });
+      calls.push({ op, input, signal: call.signal, timeoutMs: call.timeoutMs });
       const r = responses[op];
       const v = typeof r === 'function' ? await (r as () => unknown)() : r;
       if (v instanceof Error) throw v;
@@ -302,6 +303,8 @@ describe('runChat', () => {
     const inference = fakeInference({ 'chat-router': new Error('down'), 'chat-answer': () => sse(['Hi!']) }, calls);
     const events = await collect(runChat({ inference, messages: user('hello'), fallbackLanguage: 'pt', log: (f) => logs.push(f) }));
     expect(calls.filter((c) => c.op === 'chat-router')).toHaveLength(2);
+    // The first attempt waits less than the op's window; the retry waits the full one.
+    expect(calls.filter((c) => c.op === 'chat-router').map((c) => c.timeoutMs)).toEqual([3_000, undefined]);
     expect(texts(events)).toBe('');
     expect(events[events.length - 1]).toEqual({ type: 'error', message: 'O assistente está fora do ar agora. Tente de novo daqui a pouco.' });
     expect(calls[0]!.signal?.aborted).toBe(true);

@@ -110,6 +110,8 @@ export interface InferenceEnv extends Partial<Record<InferenceModelVar, string>>
 export interface InferenceCall {
   /** Cancels the call at any time, a started stream included. */
   signal?: AbortSignal;
+  /** Overrides the op's timeout for this call (a first router attempt waits less, then retries). */
+  timeoutMs?: number;
 }
 
 export interface Inference {
@@ -182,6 +184,7 @@ export function createInference(env: InferenceEnv, opts: CreateInferenceOptions 
     model,
     async run(op, input, call = {}) {
       const spec = OPS[op];
+      const timeoutMs = call.timeoutMs ?? spec.timeoutMs;
       const id = await model(op);
       const ctl = new AbortController();
       if (call.signal?.aborted) ctl.abort(call.signal.reason);
@@ -190,8 +193,8 @@ export function createInference(env: InferenceEnv, opts: CreateInferenceOptions 
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           ctl.abort();
-          reject(new InferenceTimeout(op, spec.timeoutMs));
-        }, spec.timeoutMs);
+          reject(new InferenceTimeout(op, timeoutMs));
+        }, timeoutMs);
       });
       try {
         return await Promise.race([ai.run(id as never, input as never, aiOptions(env, op, ctl.signal) as never), timeout]);
