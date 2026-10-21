@@ -22,12 +22,14 @@
  * through the inference seam (`services/inference`), injected so the tests
  * drive the whole turn with fakes. Two tiers (decision 0047): Ordinary runs
  * every call with thinking off, since reasoning tokens bill as output and
- * delay the reply; Thinking, chosen by the user, answers on GLM-5.3 at low
- * effort (high above `highFloor` on Clef's reasoning score), with no early
- * answer. Actions, refusals and the fields run the same in both tiers.
+ * delay the reply; Thinking, chosen by the user, answers on the reasoning
+ * model (DeepSeek V4.1 Flash) at low effort (high above `highFloor` on Clef's
+ * reasoning score), with no early answer and one retry when the first attempt
+ * sends nothing in time. Actions, refusals and the fields run the same in
+ * both tiers.
  */
 
-import type { Inference } from '../inference/index.js';
+import { InferenceTimeout, OPS, type Inference } from '../inference/index.js';
 import { PRODUCT_FACTS } from './facts.generated.js';
 import { actionTool, CHAT_ACTIONS, decideRoute, routerQuestions, type ChatLanguage, type ChatRoute, type RouteDecision } from './router.js';
 
@@ -36,9 +38,9 @@ export interface ChatMessage {
   text: string;
 }
 
-/** Ordinary: gemma-4, thinking off. Thinking: GLM-5.3 with reasoning (decision 0047). */
+/** Ordinary: gemma-4, thinking off. Thinking: DeepSeek V4.1 Flash with reasoning (decision 0047). */
 export type ChatTier = 'ordinary' | 'thinking';
-/** GLM-5.3 accepts low, high and max (its default); medium and none quietly become max. */
+/** DeepSeek V4.1 Flash takes none, low, high (its default) and max, and reads medium as high (2026-10-21); GLM-5.3, pinnable, takes low, high and max. */
 export type ReasoningEffort = 'low' | 'high';
 
 export type ChatEvent =
@@ -96,6 +98,8 @@ export const SYSTEM_PROMPT = [
   'You are the Cofferdam assistant inside the Cofferdam app.',
   'Cofferdam helps people get paid for their work, find work nearby, and keep their documents safe.',
   "Reply in the language of the user's latest message, even when earlier messages are in another language. Be short, warm and plain: a few sentences unless asked for more.",
+  // DeepSeek V4.1 Flash wrote one Portuguese answer in ten as European Portuguese (2026-10-21).
+  'Portuguese means Brazilian Portuguese (você and celular, never tu or telemóvel) and Spanish means Mexican Spanish.',
   // The app shows replies as plain text (glm-5.3 answered in Markdown, checked 2026-10-17).
   'Write plain text only: no Markdown, asterisks, bold, headings or tables. For steps, use short numbered lines.',
   'Never use technical money jargon: do not say crypto, blockchain, web3, wallet, token, on-chain, gas, stablecoin, seed phrase or address. Say "your account" and "payment".',
@@ -197,6 +201,14 @@ export function keepsAmount(text: string): boolean {
  * on retry cost a turn 6.3 s under the op's 6 s window (2026-10-20).
  */
 export const ROUTER_FIRST_TRY_MS = 3_000;
+
+/**
+ * The first reasoning attempt waits this long for its first bytes before the
+ * retry: DeepSeek V4.1 Flash and GLM-5.3 each stalled once in 28 evaluation
+ * answers with nothing sent by the op's 45 s window, while every answered
+ * call began within 9 s (2026-10-21). The retry waits the full window.
+ */
+export const REASONING_FIRST_TRY_MS = 15_000;
 
 /** Earlier turns reach the router cut to this many characters; the latest message goes whole. */
 export const ROUTER_EARLIER_CHARS = 300;
@@ -314,7 +326,44 @@ function reasonOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** The answer models' input: the conversation under the system prompt, streamed, thinking off. */
+/**
+ * The same stream once its first chunk has arrived, or an `InferenceTimeout`
+ * when nothing came within `ms`: the seam's window ends when a stream starts,
+ * and a stalled model can start one and then send nothing.
+ */
+async function startedWithin(stream: ReadableStream<Uint8Array>, ms: number): Promise<ReadableStream<Uint8Array>> {
+  const reader = stream.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let first: Awaited<ReturnType<typeof reader.read>>;
+  try {
+    first = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new InferenceTimeout('chat-reasoning', ms)), ms);
+      }),
+    ]);
+  } catch (err) {
+    reader.cancel().catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (first.done) controller.close();
+      else controller.enqueue(first.value);
+    },
+    async pull(controller) {
+      const { value, done } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}
+
 /** The Thinking tier's input: the same conversation, reasoning on at `effort`, room for the answer after it. */
 function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort): Record<string, unknown> {
   return {
@@ -325,6 +374,7 @@ function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort): Recor
   };
 }
 
+/** The answer models' input: the conversation under the system prompt, streamed, thinking off. */
 function answerInput(messages: ChatMessage[], long: boolean): Record<string, unknown> {
   return {
     messages: [{ role: 'system', content: answerSystem() }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
@@ -373,6 +423,8 @@ export interface RunChatOptions {
   tier?: ChatTier;
   /** Clef's reasoning score at or above which a Thinking answer runs at high effort; null or absent: never. */
   highFloor?: number | null;
+  /** The first reasoning attempt's window before the retry, `REASONING_FIRST_TRY_MS` (tests shorten it). */
+  reasoningFirstTryMs?: number;
   /** One line per routed turn for Workers Logs (no message text). */
   log?: (fields: Record<string, unknown>) => void;
   /** Clock for the action model's date (tests pin it). */
@@ -440,6 +492,27 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     }
   }
 
+  /**
+   * The Thinking answer: a first attempt that has sent nothing within its
+   * window is cancelled and retried once with the op's full window. The
+   * dropped attempt reports no usage and is not metered (the meter is a floor).
+   */
+  async function reasoningCall(input: Record<string, unknown>): Promise<unknown> {
+    const firstTry = opts.reasoningFirstTryMs ?? REASONING_FIRST_TRY_MS;
+    for (let attempt = 1; ; attempt++) {
+      const window = attempt === 1 ? firstTry : OPS['chat-reasoning'].timeoutMs;
+      const t = Date.now();
+      try {
+        const res = await inference.run('chat-reasoning', input, attempt === 1 ? { timeoutMs: window } : {});
+        return res instanceof ReadableStream ? await startedWithin(res as ReadableStream<Uint8Array>, Math.max(1, window - (Date.now() - t))) : res;
+      } catch (err) {
+        if (attempt > 1) throw err;
+        turn.reasoning_retried = true;
+        opts.log?.({ event: 'chat_reasoning_retry', ms: Date.now() - t, reason: reasonOf(err) });
+      }
+    }
+  }
+
   (async () => {
     let decision: RouteDecision = { route: 'answer', action: null, confidence: 0, language: 'en', candidates: [], reasoning: 0 };
 
@@ -461,7 +534,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     let languageP = 0;
     const early = new AbortController();
     const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared), { signal: early.signal });
-    // No early answer in the Thinking tier: a cancelled GLM-5.3 call costs real money.
+    // No early answer in the Thinking tier: a cancelled reasoning call costs real money.
     const earlyAnswer = opts.early === false || thinking ? null : startAnswer();
     earlyAnswer?.catch(() => {});
     const dropEarly = () => {
@@ -558,7 +631,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           // The early answer's call began with the turn.
           const t2 = useEarly ? started : Date.now();
           const res = thinking
-            ? await inference.run('chat-reasoning', reasoningInput(messages, effort ?? 'low'))
+            ? await reasoningCall(reasoningInput(messages, effort ?? 'low'))
             : useEarly
               ? await earlyAnswer
               : long && !shared

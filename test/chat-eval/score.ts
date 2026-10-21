@@ -142,6 +142,7 @@ export const PRICES: Record<string, Prices> = {
   'glm-4.7-flash': { input: 0.06, output: 0.4 },
   'glm-5.3-flash': { input: 0.15, output: 0.5 },
   'glm-5.3': { input: 1.4, output: 4.4 },
+  'deepseek-v4.1-flash-1017': { input: 0.3, output: 1.2 },
   'llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
 };
 
@@ -478,6 +479,10 @@ export interface ReportMeta {
   date: string;
   models: Record<string, string>;
   early: boolean;
+  /** The tier every prompt ran in (decision 0047); absent in older reports: Ordinary. */
+  tier?: 'ordinary' | 'thinking';
+  /** The high-effort floor of a Thinking run; null or absent: never high. */
+  highFloor?: number | null;
   durationMs: number;
 }
 
@@ -500,7 +505,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   out.push(
     `Decision 0037's evaluation: ${s.n} prompts from \`test/chat-eval/prompts.json\` through the real turn (\`runChat\`, the inference seam, Workers AI over REST). Models: ${Object.entries(meta.models)
       .map(([op, m]) => `${op} \`${m}\``)
-      .join(', ')}. Early answer ${meta.early ? 'on' : 'off'}. Run time ${Math.round(meta.durationMs / 1000)} s.`,
+      .join(', ')}. Early answer ${meta.early ? 'on' : 'off'}. Tier ${meta.tier ?? 'ordinary'}${meta.tier === 'thinking' ? ` (high effort at or above ${meta.highFloor ?? 'never'})` : ''}. Run time ${Math.round(meta.durationMs / 1000)} s.`,
     '',
   );
   out.push('## Summary', '', '```', summaryText(s), '```', '');

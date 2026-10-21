@@ -44,26 +44,32 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   // glm-5.3-flash took 1.8-2.9 s to its first token and 7-20 s in all on long
   // answers, gemma-4 0.5-1.0 s and 4-7 s for as much text (2026-10-17).
   'chat-long': { model: '@cf/google/gemma-4-26b-a4b-it', envVar: 'CHAT_LONG_MODEL', timeoutMs: 30_000 },
-  // The Thinking tier (decision 0047): GLM-5.3 at low reasoning effort answered
-  // 1 to 13 s after the request, one outlier at 36 s (2026-10-20), so the wait
-  // to the first byte is long; the app shows a thinking state meanwhile.
-  'chat-reasoning': { model: '@cf/zai-org/glm-5.3', envVar: 'CHAT_REASONING_MODEL', timeoutMs: 45_000 },
+  // The Thinking tier (decision 0047, amended 2026-10-21): DeepSeek V4.1 Flash at
+  // low reasoning effort gave its first word in 3.7 s median and 8.1 s at worst
+  // over 27 evaluation answers, where GLM-5.3 ran 4.6 s median with eight of 28
+  // past 10 s (up to 44 s), at a third of the cost (2026-10-21). The wait to the
+  // first byte is still seconds, so the app shows a thinking state meanwhile;
+  // each model stalled once in 28 with nothing by this window, so the turn
+  // retries once (`chat/run.ts`, `REASONING_FIRST_TRY_MS`).
+  'chat-reasoning': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'CHAT_REASONING_MODEL', timeoutMs: 45_000 },
 };
 
 /**
  * Workers AI prices in US dollars per million tokens, input and output, for
- * the chat meter (`services/chatUsageStore.ts`). Read 2026-10-17, checked 2026-10-20 against the Workers AI pricing page (workspace
+ * the chat meter (`services/chatUsageStore.ts`). Read 2026-10-17, checked 2026-10-20 and 2026-10-21 (DeepSeek) against the Workers AI pricing page (workspace
  * `docs/product/engine.md`, Cost and latency); re-check when a pin moves.
  * Clef bills input only. A dollar per million tokens is a millionth of a
  * dollar per token, so `tokens × price` is already in micro-dollars. Cached
- * input is cheaper on the GLM models ($0.26 / M on `glm-5.3`, $0.03 / M on
- * `glm-5.3-flash`), but the meter reads no cached-token counts, so every
- * input token is priced at the full rate.
+ * input is cheaper on the reasoning models ($0.006 / M on DeepSeek V4.1 Flash,
+ * $0.26 / M on `glm-5.3`, $0.03 / M on `glm-5.3-flash`), but the meter reads
+ * no cached-token counts, so every input token is priced at the full rate.
  */
 export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   '@cf/google/gemma-4-26b-a4b-it': { input: 0.1, output: 0.3 },
   '@cf/cloudflare/clef-flash': { input: 0.038, output: 0 },
-  // The Thinking tier's model (workspace decision 0047), not pinned to any op yet; read 2026-10-20.
+  // The Thinking tier's model (workspace decision 0047, amended 2026-10-21); read 2026-10-21.
+  '@cf/deepseek-ai/deepseek-v4.1-flash-1017': { input: 0.3, output: 1.2 },
+  // The Thinking tier's model until 2026-10-21, kept for a pin; read 2026-10-20.
   '@cf/zai-org/glm-5.3': { input: 1.4, output: 4.4 },
   '@cf/zai-org/glm-5.3-flash': { input: 0.15, output: 0.5 },
   '@cf/zai-org/glm-4.7-flash': { input: 0.06, output: 0.4 },

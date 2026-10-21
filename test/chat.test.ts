@@ -13,14 +13,16 @@ import {
   CLARIFY_TEXT,
   keepsAmount,
   mentionsOtherCurrency,
+  REASONING_FIRST_TRY_MS,
   REFUSE_TEXT,
   parseChatRequest,
   routerState,
   runChat,
+  SYSTEM_PROMPT,
   type ChatEvent,
   type ChatInference,
 } from '../src/services/chat/run.js';
-import { OPS, type InferenceCall, type InferenceOp } from '../src/services/inference/index.js';
+import { InferenceTimeout, OPS, type InferenceCall, type InferenceOp } from '../src/services/inference/index.js';
 import fixtures from './fixtures/sdk-attestations.json';
 
 const ACCOUNT = '0x' + 'ab'.repeat(20);
@@ -345,6 +347,7 @@ describe('runChat', () => {
     expect(events[0]).toMatchObject({ type: 'route', route: 'answer', tier: 'thinking', effort: 'low', reasoning: 0.3 });
     expect(texts(events)).toBe('Deep answer');
     expect(calls.map((c) => c.op)).toEqual(['chat-router', 'chat-reasoning']);
+    expect(calls[1]!.timeoutMs).toBe(REASONING_FIRST_TRY_MS);
     expect(calls[1]!.input).toMatchObject({ stream: true, reasoning_effort: 'low', max_completion_tokens: 1_600 });
     expect(calls[1]!.input).not.toHaveProperty('chat_template_kwargs');
     expect(logs.find((l) => l.event === 'chat_turn')).toMatchObject({ tier: 'thinking', effort: 'low', reasoning: 0.3, tokens_in: 220, tokens_out: 60 });
@@ -376,6 +379,52 @@ describe('runChat', () => {
     expect(evs[0]).not.toHaveProperty('effort');
     expect(action.map((c) => c.op)).toEqual(['chat-router', 'chat-action']);
     expect(evs).toContainEqual({ type: 'action', request: { id: 'add_money', amount: 50 } });
+  });
+
+  it('retries the reasoning call once when the first attempt sends nothing in time', async () => {
+    // A first attempt that fails within its window: the retry waits the op's full one.
+    const calls: Call[] = [];
+    const logs: Record<string, unknown>[] = [];
+    let tries = 0;
+    const inference = fakeInference(
+      {
+        'chat-router': clef('none', 0.8, 'short', 0.9, 0.01, 0.01, {}, 0.9),
+        'chat-reasoning': () => (++tries === 1 ? new InferenceTimeout('chat-reasoning', 15_000) : sse(['Late ', 'answer'])),
+      },
+      calls,
+    );
+    const events = await collect(runChat({ inference, messages: user('why?'), tier: 'thinking', log: (f) => logs.push(f) }));
+    expect(texts(events)).toBe('Late answer');
+    expect(calls.filter((c) => c.op === 'chat-reasoning').map((c) => c.timeoutMs)).toEqual([REASONING_FIRST_TRY_MS, undefined]);
+    expect(logs.find((l) => l.event === 'chat_reasoning_retry')).toMatchObject({ reason: 'chat-reasoning gave no answer within 15000 ms' });
+    expect(logs.find((l) => l.event === 'chat_turn')).toMatchObject({ reasoning_retried: true });
+
+    // A stream that starts and then sends nothing is cancelled and retried too.
+    let cancelled = false;
+    const silent = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    let attempts = 0;
+    const stalled = fakeInference({
+      'chat-router': clef('none', 0.8),
+      'chat-reasoning': () => (++attempts === 1 ? silent : sse(['Second try'])),
+    });
+    const ok = await collect(runChat({ inference: stalled, messages: user('why?'), tier: 'thinking', reasoningFirstTryMs: 20 }));
+    expect(texts(ok)).toBe('Second try');
+    expect(cancelled).toBe(true);
+    expect(attempts).toBe(2);
+
+    // Two failures end the turn with the fixed error.
+    const down = fakeInference({ 'chat-router': clef('none', 0.8), 'chat-reasoning': new InferenceTimeout('chat-reasoning', 45_000) });
+    const failed = await collect(runChat({ inference: down, messages: user('why?'), tier: 'thinking' }));
+    expect(failed[failed.length - 1]!.type).toBe('error');
+  });
+
+  it('tells the models that Portuguese is Brazilian and Spanish Mexican', () => {
+    expect(SYSTEM_PROMPT).toContain('Portuguese means Brazilian Portuguese');
+    expect(SYSTEM_PROMPT).toContain('Spanish means Mexican Spanish');
   });
 
   it('keeps the Ordinary tier as it was: the early answer, thinking off', async () => {

@@ -134,6 +134,7 @@ describe('MODEL_PRICES', () => {
   it('prices the chat models per million tokens, in whole micro-dollars', () => {
     expect(MODEL_PRICES[GEMMA]).toEqual({ input: 0.1, output: 0.3 });
     expect(MODEL_PRICES[CLEF]).toEqual({ input: 0.038, output: 0 });
+    expect(MODEL_PRICES['@cf/deepseek-ai/deepseek-v4.1-flash-1017']).toEqual({ input: 0.3, output: 1.2 });
     expect(MODEL_PRICES['@cf/zai-org/glm-5.3']).toEqual({ input: 1.4, output: 4.4 });
     expect(MODEL_PRICES['@cf/zai-org/glm-5.3-flash']).toEqual({ input: 0.15, output: 0.5 });
     expect(MODEL_PRICES['@cf/zai-org/glm-4.7-flash']).toEqual({ input: 0.06, output: 0.4 });
@@ -141,8 +142,10 @@ describe('MODEL_PRICES', () => {
     expect(modelCostMicroUsd(GEMMA, 1_000, 200)).toBe(160);
     expect(modelCostMicroUsd(CLEF, 400, 0)).toBe(15);
     expect(modelCostMicroUsd(GEMMA, 1_000_000, 1_000_000)).toBe(400_000);
-    // Decision 0047's typical reasoning turn, 2,000 tokens in and 1,200 out on glm-5.3: about $0.008.
-    expect(modelCostMicroUsd('@cf/zai-org/glm-5.3', 2_000, 1_200)).toBe(8_080);
+    // A Thinking turn as measured on 2026-10-21, 1,070 tokens in and 280 out on DeepSeek V4.1 Flash: about $0.0007.
+    expect(modelCostMicroUsd('@cf/deepseek-ai/deepseek-v4.1-flash-1017', 1_070, 280)).toBe(657);
+    // The same turn on glm-5.3, the Thinking tier's model until 2026-10-21: about $0.0027.
+    expect(modelCostMicroUsd('@cf/zai-org/glm-5.3', 1_070, 280)).toBe(2_730);
     // Every default chat model has a price.
     for (const op of Object.values(OPS)) expect(MODEL_PRICES[op.model]).toBeDefined();
   });

@@ -85,7 +85,7 @@ export interface Env {
   CHAT_ACTION_MODEL?: string;
   CHAT_ANSWER_MODEL?: string;
   CHAT_LONG_MODEL?: string;
-  /** The Thinking tier's model (decision 0047); unset, `@cf/zai-org/glm-5.3`. */
+  /** The Thinking tier's model (decision 0047, amended 2026-10-21); unset, `@cf/deepseek-ai/deepseek-v4.1-flash-1017`. */
   CHAT_REASONING_MODEL?: string;
   /**
    * Clef's reasoning score (0 to 1) at or above which a Thinking turn runs at

@@ -35,7 +35,7 @@ const LIVE = process.env.CHAT_EVAL === '1';
 /** The action model's "today", so month expectations hold on any day. */
 const TODAY = Date.parse('2026-10-20T12:00:00Z');
 const ACCOUNT = '0x' + '00'.repeat(20);
-const OPS: InferenceOp[] = ['chat-router', 'chat-action', 'chat-answer', 'chat-long'];
+const OPS: InferenceOp[] = ['chat-router', 'chat-action', 'chat-answer', 'chat-long', 'chat-reasoning'];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -92,7 +92,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     console.log(summaryText(summary));
     const date = new Date().toISOString().slice(0, 10);
     const dir = join(__dirname, 'chat-eval');
-    const meta = { date, models, early, durationMs: Date.now() - started };
+    const meta = { date, models, early, tier, highFloor, durationMs: Date.now() - started };
     writeFileSync(join(dir, `report-${date}.md`), reportMarkdown(results, meta));
     writeFileSync(join(dir, `report-${date}.json`), JSON.stringify({ meta, summary, results }, null, 2) + '\n');
     expect(results).toHaveLength(selected.length);
