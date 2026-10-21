@@ -32,6 +32,10 @@ export interface EvalPrompt {
     action: string | null;
     fields?: Record<string, FieldExpectation>;
     candidates?: string[];
+    /** Regexes (case-insensitive) the reply must not match: wrong claims (decision 0048). */
+    avoid?: string[];
+    /** Regexes of which at least one must match the reply: the fact it must bring up. */
+    mention?: string[];
     notes: string;
   };
 }
@@ -65,6 +69,15 @@ export function validatePrompts(prompts: unknown): string[] {
       for (const k of Object.keys(e.fields)) if (!(k in declared)) errors.push(`${at}: field ${k} is not declared by ${String(e.action)}`);
     }
     if (typeof e.notes !== 'string') errors.push(`${at}: notes must be a string`);
+    for (const key of ['avoid', 'mention'] as const) {
+      for (const re of e[key] ?? []) {
+        try {
+          new RegExp(re, 'i');
+        } catch {
+          errors.push(`${at}: ${key} pattern ${re} is not a regex`);
+        }
+      }
+    }
     for (const m of p.history ?? []) {
       if ((m?.role !== 'user' && m?.role !== 'assistant') || typeof m?.text !== 'string') errors.push(`${at}: malformed history`);
     }
@@ -187,6 +200,10 @@ export interface TurnResult {
   markdown: boolean;
   /** The reply begged off ("I do not have information…") instead of answering. */
   declined: boolean;
+  /** The reply matched one of the prompt's `avoid` patterns: a wrong claim. */
+  claims: boolean;
+  /** The reply matched none of the prompt's `mention` patterns. */
+  unmentioned: boolean;
   /** Milliseconds from the turn's `chat_turn` line and the clock around it. */
   ms: { router?: number; first?: number; fields?: number; model?: number; total: number };
   calls: CallCost[];
@@ -267,6 +284,8 @@ export function scoreTurn(prompt: EvalPrompt, obs: TurnObservation): TurnResult 
     jargon: answered && JARGON.test(reply),
     markdown: answered && MARKDOWN.test(reply),
     declined: answered && DECLINED.test(reply),
+    claims: answered && (prompt.expect.avoid ?? []).some((re) => new RegExp(re, 'i').test(reply)),
+    unmentioned: answered && (prompt.expect.mention?.length ?? 0) > 0 && !prompt.expect.mention!.some((re) => new RegExp(re, 'i').test(reply)),
     ms: {
       router: num(turnLog?.router),
       first: num(turnLog?.first),
@@ -325,6 +344,8 @@ export interface Summary {
   jargon: number;
   markdown: number;
   declined: number;
+  claims: number;
+  unmentioned: number;
   errors: number;
   /** Wrong screen opened, or a screen opened where none was expected: the costly misses. */
   wrongAction: number;
@@ -381,6 +402,8 @@ export function summarize(results: TurnResult[]): Summary {
     jargon: results.filter((r) => r.jargon).length,
     markdown: results.filter((r) => r.markdown).length,
     declined: results.filter((r) => r.declined).length,
+    claims: results.filter((r) => r.claims).length,
+    unmentioned: results.filter((r) => r.unmentioned).length,
     errors: results.filter((r) => r.error).length,
     wrongAction: results.filter((r) => r.route === 'action' && r.action !== r.expect.action).length,
     missedAction: results.filter((r) => r.expect.route === 'action' && (r.route === 'answer' || r.route === 'answer_long' || r.route === 'refuse')).length,
@@ -503,6 +526,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   out.push(`- Router language matches the prompt: ${pct(s.routerLanguage.ok, s.routerLanguage.n)}.`);
   out.push(`- Answer written in the prompt's language (word-list guess): ${pct(s.replyLanguage.ok, s.replyLanguage.n)}.`);
   out.push(`- Answers with banned jargon: ${s.jargon}; with Markdown: ${s.markdown}; that declined to answer: ${s.declined}.`, '');
+  out.push(`- Wrong claims (an \`avoid\` pattern matched): ${s.claims}; facts not brought up (no \`mention\` pattern matched): ${s.unmentioned}.`, '');
 
   out.push('## Cost per turn by route taken', '', '| route | mean |', '|---|---|');
   for (const [k, v] of Object.entries(s.cost.byRoute)) out.push(`| ${k} | ${usd(v)} |`);

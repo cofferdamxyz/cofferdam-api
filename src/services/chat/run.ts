@@ -28,6 +28,7 @@
  */
 
 import type { Inference } from '../inference/index.js';
+import { PRODUCT_FACTS } from './facts.generated.js';
 import { actionTool, CHAT_ACTIONS, decideRoute, routerQuestions, type ChatLanguage, type ChatRoute, type RouteDecision } from './router.js';
 
 export interface ChatMessage {
@@ -104,6 +105,11 @@ export const SYSTEM_PROMPT = [
   'Answer general questions about work, pay, rotations, contracts, certificates and the offshore, maritime and skilled-trades industries from what you know: say what is typical and that it varies by employer, country and contract. Never refuse such a question or say you lack data.',
   "Only legal, tax or investment advice about the user's own case goes to a professional; say so briefly and still give the general picture.",
 ].join(' ');
+
+/** The answer models' system message: the rules, then the product facts (decision 0048). */
+export function answerSystem(): string {
+  return `${SYSTEM_PROMPT}\n\n${PRODUCT_FACTS}`;
+}
 
 function actionSystem(today: string): string {
   return `Today is ${today}. Fill the tool fields only from what the user typed. Leave a field out when the user did not give it. Never invent an amount or a recipient. A month without a year is the most recent such month up to today.`;
@@ -300,7 +306,7 @@ function reasonOf(err: unknown): string {
 /** The Thinking tier's input: the same conversation, reasoning on at `effort`, room for the answer after it. */
 function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort): Record<string, unknown> {
   return {
-    messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
+    messages: [{ role: 'system', content: answerSystem() }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
     stream: true,
     max_completion_tokens: 1_600,
     reasoning_effort: effort,
@@ -309,7 +315,7 @@ function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort): Recor
 
 function answerInput(messages: ChatMessage[], long: boolean): Record<string, unknown> {
   return {
-    messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
+    messages: [{ role: 'system', content: answerSystem() }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
     stream: true,
     max_completion_tokens: long ? 1_200 : 400,
     // Gemma honours enable_thinking; GLM-5.3 needs reasoning_effort too (checked 2026-10-17).
