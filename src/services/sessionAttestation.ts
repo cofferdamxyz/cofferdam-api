@@ -492,8 +492,9 @@ export function sessionAttestationVersion(token: unknown): number {
     throw new SessionAttestationDecodeError('not a Cofferdam session-attestation token.');
   }
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(base64urlToBytes(token.slice(PREFIX.length))));
-    return typeof parsed?.v === 'number' ? parsed.v : 0;
+    const parsed = JSON.parse(new TextDecoder().decode(base64urlToBytes(token.slice(PREFIX.length)))) as unknown;
+    const v = parsed !== null && typeof parsed === 'object' ? (parsed as { v?: unknown }).v : undefined;
+    return typeof v === 'number' ? v : 0;
   } catch {
     throw new SessionAttestationDecodeError('session-attestation payload is not valid base64url JSON.');
   }
@@ -618,8 +619,8 @@ export function verifyPopProof(
   let header: Record<string, unknown>;
   let payload: Record<string, unknown>;
   try {
-    header = JSON.parse(new TextDecoder().decode(base64urlToBytes(parts[0]!)));
-    payload = JSON.parse(new TextDecoder().decode(base64urlToBytes(parts[1]!)));
+    header = JSON.parse(new TextDecoder().decode(base64urlToBytes(parts[0]!))) as Record<string, unknown>;
+    payload = JSON.parse(new TextDecoder().decode(base64urlToBytes(parts[1]!))) as Record<string, unknown>;
   } catch {
     throw new PopProofError('proof header or payload is not base64url JSON.');
   }
@@ -637,7 +638,7 @@ export function verifyPopProof(
 
   const sig = base64urlToBytes(parts[2]!);
   const digest = hexToBytes(sha256(new TextEncoder().encode(`${parts[0]}.${parts[1]}`)));
-  let valid = false;
+  let valid: boolean;
   try {
     valid = sig.length === 64 && p256.verify(sig, digest, hexToBytes(concatHex(['0x04', pub.qx, pub.qy])), { lowS: false });
   } catch {

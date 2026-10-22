@@ -15,7 +15,7 @@ import { claimOnce, migrateReplayTable } from './popReplayStore.js';
 export class PopReplayDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       migrateReplayTable(this.ctx.storage.sql);
     });
   }
