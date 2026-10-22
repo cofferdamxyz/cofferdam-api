@@ -245,14 +245,56 @@ describe('scoring', () => {
     expect(callCost({ model: '@cf/x/unknown', stream: false, inputChars: 4, ms: 1, status: 200, aborted: false, outputChars: 0 }).usd).toBeNull();
   });
 
-  it('scores no route when the router failed, and bills nothing for a refused call', () => {
+  it('counts a retried first attempt as a retry, not an error, and a declined turn as an error', () => {
+    const prompt = { id: 'p', language: 'en', text: 'why?', expect: { route: 'answer', action: null } } as never;
+    const route = { type: 'route', route: 'answer', action: null, confidence: 0.9, tier: 'thinking', reasoning: 0.3 };
+    const base = { calls: [], totalMs: 20_000, routerModel: '@cf/cloudflare/clef-flash' };
+    const rescued = scoreTurn(prompt, {
+      ...base,
+      events: [route, { type: 'text', delta: 'Late answer' }, { type: 'done' }] as never,
+      log: [{ event: 'chat_reasoning_retry', ms: 15_001, reason: 'chat-reasoning gave no answer within 15000 ms' }, { event: 'chat_turn', route: 'answer', language: 'en' }],
+    });
+    expect(rescued.error).toBeUndefined();
+    expect(rescued.retried).toEqual(['chat_reasoning_retry: chat-reasoning gave no answer within 15000 ms']);
+    expect(rescued.routeOk).toBe(true);
+    const routerRetried = scoreTurn(prompt, {
+      ...base,
+      events: [route, { type: 'text', delta: 'Hi' }, { type: 'done' }] as never,
+      log: [{ event: 'chat_router_failed', attempt: 1, reason: 'blip' }, { event: 'chat_turn', route: 'answer', language: 'en' }],
+    });
+    expect(routerRetried.error).toBeUndefined();
+    expect(routerRetried.retried).toEqual(['chat_router_failed: blip']);
+    expect(routerRetried.routeOk).toBe(true);
+    const declined = scoreTurn(prompt, {
+      ...base,
+      events: [{ type: 'error', message: 'The assistant is unavailable right now. Try again in a moment.' }] as never,
+      log: [{ event: 'chat_router_failed', attempt: 1, reason: 'a' }, { event: 'chat_router_failed', attempt: 2, reason: 'b' }, { event: 'chat_router_unavailable' }],
+    });
+    expect(declined.error).toContain('chat_router_unavailable');
+    expect(declined.retried).toBeUndefined();
+    expect(declined.routeOk).toBe(false);
+    const s = summarize([rescued, routerRetried, declined]);
+    expect(s.errors).toBe(1);
+    expect(s.retries).toBe(2);
+  });
+
+  it('scores a declined turn as no route, and bills nothing for the refused router calls', () => {
     const prompt = set.find((p) => p.id === 'greet-en')!;
-    const evs = [{ type: 'route', route: 'answer', action: null, confidence: 0 }, { type: 'text', delta: 'Hi there! How can I help?' }, { type: 'done' }];
-    const calls: RecordedCall[] = [{ model: ROUTER, stream: false, inputChars: 2_000, ms: 5, status: 'network', aborted: false, outputChars: 0 }];
-    const log = [{ event: 'chat_router_failed', reason: 'fetch failed' }, { event: 'chat_turn', language: 'en', ms: 300 }];
+    // Both router attempts failed, so the turn declined with the fixed error and never reached a model (decision 0037 (v)).
+    const evs = [{ type: 'error', message: 'The assistant is unavailable right now. Try again in a moment.' }];
+    const calls: RecordedCall[] = [
+      { model: ROUTER, stream: false, inputChars: 2_000, ms: 5, status: 'network', aborted: false, outputChars: 0 },
+      { model: ROUTER, stream: false, inputChars: 2_000, ms: 5, status: 'network', aborted: false, outputChars: 0 },
+    ];
+    const log = [
+      { event: 'chat_router_failed', attempt: 1, reason: 'fetch failed' },
+      { event: 'chat_router_failed', attempt: 2, reason: 'fetch failed' },
+      { event: 'chat_router_unavailable', tier: 'ordinary', ms: 300 },
+    ];
     const r = scoreTurn(prompt, { events: evs, log, calls, totalMs: 300, routerModel: ROUTER });
-    expect(r).toMatchObject({ route: 'answer', routeOk: false, softOk: false, costUsd: 0 });
-    expect(r.error).toContain('chat_router_failed');
+    expect(r).toMatchObject({ route: null, routeOk: false, softOk: false, costUsd: 0 });
+    expect(r.error).toContain('chat_router_unavailable');
+    expect(r.retried).toBeUndefined();
   });
 
   it('sweeps the floors over recorded Clef answers and writes a report', () => {

@@ -197,6 +197,8 @@ export interface TurnResult {
   fields: Record<string, unknown> | null;
   reply: string;
   error?: string;
+  /** First attempts that failed and were retried on the way to an answer (router or reasoning); not errors. */
+  retried?: string[];
   /** Scores. */
   routeOk: boolean;
   actionOk: boolean;
@@ -242,7 +244,12 @@ export function scoreTurn(prompt: EvalPrompt, obs: TurnObservation): TurnResult 
   const errorEv = obs.events.find((x) => x.type === 'error');
   const reply = obs.events.filter((x) => x.type === 'text').map((x) => String(x.delta ?? '')).join('');
   const turnLog = obs.log.find((l) => l.event === 'chat_turn');
-  const failures = obs.log.filter((l) => l.event !== 'chat_turn').map((l) => `${String(l.event)}: ${String(l.reason ?? '')}`);
+  const routed = Boolean(routeEv);
+  // A retry is a first attempt that failed on a turn that still went on: the router's when the turn was routed, the reasoning call's always.
+  const isRetry = (l: Record<string, unknown>) => l.event === 'chat_reasoning_retry' || (l.event === 'chat_router_failed' && routed);
+  const describe = (l: Record<string, unknown>) => `${String(l.event)}: ${String(l.reason ?? '')}`;
+  const retried = obs.log.filter((l) => l.event !== 'chat_turn' && isRetry(l)).map(describe);
+  const failures = obs.log.filter((l) => l.event !== 'chat_turn' && !isRetry(l)).map(describe);
 
   const route = (routeEv?.route as ChatRoute | undefined) ?? null;
   const request = (actionEv?.request as Record<string, unknown> | undefined) ?? null;
@@ -250,8 +257,8 @@ export function scoreTurn(prompt: EvalPrompt, obs: TurnObservation): TurnResult 
   const action = route === 'action' ? ((request?.id as string | undefined) ?? (routeEv?.action as string | null) ?? null) : null;
   const candidates = requests.map((r) => String(r.id));
 
-  // A failed turn, or one the router never decided (the fallback answer), scores no route.
-  const failed = Boolean(errorEv) || obs.log.some((l) => l.event === 'chat_router_failed');
+  // A failed turn, or one the router never decided, scores no route; a retried router that then decided counts.
+  const failed = Boolean(errorEv) || !routed;
   const routeOk = !failed && route === e.route;
   const actionOk = routeOk && (e.action ?? null) === action;
   const softOk = actionOk || (e.route === 'action' && route === 'clarify' && candidates[0] === e.action);
@@ -284,6 +291,7 @@ export function scoreTurn(prompt: EvalPrompt, obs: TurnObservation): TurnResult 
     fields,
     reply,
     error: errorEv ? String(errorEv.message) + (failures.length ? ` (${failures.join('; ')})` : '') : failures.length ? failures.join('; ') : undefined,
+    ...(retried.length ? { retried } : {}),
     routeOk,
     actionOk,
     softOk,
@@ -358,6 +366,8 @@ export interface Summary {
   claims: number;
   unmentioned: number;
   errors: number;
+  /** Turns that answered after a retried router or reasoning first attempt. */
+  retries: number;
   /** Wrong screen opened, or a screen opened where none was expected: the costly misses. */
   wrongAction: number;
   /** A screen expected but the turn answered or refused. */
@@ -416,6 +426,7 @@ export function summarize(results: TurnResult[]): Summary {
     claims: results.filter((r) => r.claims).length,
     unmentioned: results.filter((r) => r.unmentioned).length,
     errors: results.filter((r) => r.error).length,
+    retries: results.filter((r) => r.retried?.length).length,
     wrongAction: results.filter((r) => r.route === 'action' && r.action !== r.expect.action).length,
     missedAction: results.filter((r) => r.expect.route === 'action' && (r.route === 'answer' || r.route === 'answer_long' || r.route === 'refuse')).length,
     missedRefusal: results.filter((r) => r.expect.route === 'refuse' && r.route !== 'refuse').length,
@@ -501,7 +512,7 @@ export function summaryText(s: Summary): string {
   const lines = [
     `chat eval: ${s.n} prompts, route ${pct(s.overall.route, s.n)}, action ${pct(s.overall.action, s.n)}, one tap away ${pct(s.overall.soft, s.n)}`,
     `fields ${pct(s.fields.ok, s.fields.scored)}, candidates ${pct(s.candidates.ok, s.candidates.scored)}, router language ${pct(s.routerLanguage.ok, s.routerLanguage.n)}, reply language ${pct(s.replyLanguage.ok, s.replyLanguage.n)}`,
-    `wrong screen opened ${s.wrongAction}, screen missed ${s.missedAction}, refusal missed ${s.missedRefusal}, errors ${s.errors}`,
+    `wrong screen opened ${s.wrongAction}, screen missed ${s.missedAction}, refusal missed ${s.missedRefusal}, errors ${s.errors}, retried ${s.retries}`,
     `cost per turn mean ${usd(s.cost.meanUsd)}, p50 ${usd(s.cost.p50Usd)}, max ${usd(s.cost.maxUsd)}${s.cost.estimated ? ' (partly estimated)' : ''}`,
     `latency ms p50/p95: router ${msf(s.latency.router.p50)}/${msf(s.latency.router.p95)}, first text ${msf(s.latency.first.p50)}/${msf(s.latency.first.p95)}, total ${msf(s.latency.total.p50)}/${msf(s.latency.total.p95)}`,
   ];
@@ -520,7 +531,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   );
   out.push('## Summary', '', '```', summaryText(s), '```', '');
   out.push(
-    '"One tap away" counts an expected screen offered as the first choice of a clarify. Costs are the neurons each model reported, cached input priced as cached, at $0.011 per 1,000; a call that reported none is priced at the catalogue rates in `score.ts` from its token counts, with Clef input always estimated (characters / 4) and other counts estimated when a model reports no usage. A cancelled early answer is charged its estimated input at the catalogue rate.',
+    '"One tap away" counts an expected screen offered as the first choice of a clarify. Costs are the neurons each model reported, cached input priced as cached, at $0.011 per 1,000; a call that reported none is priced at the catalogue rates in `score.ts` from its token counts, with Clef input always estimated (characters / 4) and other counts estimated when a model reports no usage. A cancelled early answer is charged its estimated input at the catalogue rate. A ↻ marks a turn that answered after a retried router or reasoning first attempt; retries are counted apart from errors.',
     '',
   );
 
@@ -572,7 +583,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
     const fields = Object.entries(r.fieldScores)
       .map(([k, ok]) => `${k}${ok ? '' : `✗(${JSON.stringify(r.fields?.[k] ?? null)})`}`)
       .join(' ');
-    const reply = r.error ? `error: ${r.error}` : r.reply.slice(0, 80) + (r.reply.length > 80 ? '…' : '');
+    const reply = (r.retried?.length ? '↻ ' : '') + (r.error ? `error: ${r.error}` : r.reply.slice(0, 80) + (r.reply.length > 80 ? '…' : ''));
     out.push(
       `| ${cell(r.id)} | ${r.language}${r.routerLanguageOk ? '' : `→${r.routerLanguage ?? '?'}`} | ${cell(expected)} | ${cell(got)} | ${r.confidence?.toFixed(2) ?? '–'} | ${cell(fields)} | ${msf(r.ms.router)} | ${msf(r.ms.first)} | ${msf(r.ms.total)} | ${usd(r.costUsd)} | ${cell(reply)} |`,
     );
