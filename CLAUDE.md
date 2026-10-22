@@ -11,7 +11,7 @@ present, and the `rules/<area>.md` for the area you touch.
 
 ## Validate here
 
-`yarn test` and `yarn typecheck`. Never `wrangler deploy` from a cloud session:
+`yarn test`, `yarn typecheck` and `yarn lint`. Never `wrangler deploy` from a cloud session:
 deploys run from the Mac with the workspace `.envrc` sourced (Cofferdam Inc.
 account).
 

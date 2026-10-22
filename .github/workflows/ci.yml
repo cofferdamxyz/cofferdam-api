@@ -29,6 +29,10 @@ jobs:
         run: yarn install --frozen-lockfile
       - id: typecheck
         run: yarn typecheck
+      - id: lint
+        run: yarn lint
+      - id: test
+        run: yarn test
 
       # On a pull request, one comment with the result of every step and the
       # run URL, updated in place on every run. The Cofferdam Development
@@ -43,6 +47,8 @@ jobs:
           STEP_LABELS: |
             install=yarn install --frozen-lockfile
             typecheck=yarn typecheck
+            lint=yarn lint
+            test=yarn test
         with:
           script: |
             const marker = `<!-- cofferdam-ci:${context.job} -->`;

@@ -37,7 +37,7 @@ const KEEPALIVE_MS = 60_000;
 export class XmtpBackend extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       this.ensureStarted();
       if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now() + KEEPALIVE_MS);
     });
@@ -53,7 +53,7 @@ export class XmtpBackend extends DurableObject<Env> {
     container.monitor().catch(() => undefined);
   }
 
-  async alarm(): Promise<void> {
+  override async alarm(): Promise<void> {
     this.ensureStarted();
     await this.ctx.storage.setAlarm(Date.now() + KEEPALIVE_MS);
   }
@@ -65,7 +65,7 @@ export class XmtpBackend extends DurableObject<Env> {
   }
 
   /** A client stream from the Worker's `connect()`, spliced to port 5050. */
-  async connect(socket: Socket): Promise<void> {
+  override async connect(socket: Socket): Promise<void> {
     this.ensureStarted();
     const upstream = await openUpstream(() =>
       this.ctx.container!.getTcpPort(BACKEND_PORT).connect(`10.0.0.1:${BACKEND_PORT}`),

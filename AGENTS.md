@@ -27,7 +27,7 @@ Cloudflare Workers API plane for Cofferdam.
 
 ## Validation and deploys
 
-- `yarn test` and `yarn typecheck` must pass.
+- `yarn test`, `yarn typecheck` (the Worker, then the Worker plus tests through `tsconfig.test.json`) and `yarn lint` (typescript-eslint, type-checked; `eslint.config.mjs`) must pass. The Mac lanes (`src/routes/chat.ts`, `src/services/chat/*`, `src/services/inference/*`) are downgraded to warnings in `eslint.config.mjs` until they are cleaned on the Mac; delete that block then.
 - Verify on-chain authority config matches SDK encoding before deploying.
 - Deploys run only from the Mac with the workspace `.envrc` loaded (`direnv exec .. yarn deploy`), never from a cloud session; when a contract pin moves, deploy the attester first. Runbook: `docs/runbooks/cloudflare-deploys.md` in the workspace. `src/chain/deployments.ts` mirrors `base-contracts/deployments/baseSepolia.json`.
 - Design: `docs/architecture/plane.md` in the workspace.

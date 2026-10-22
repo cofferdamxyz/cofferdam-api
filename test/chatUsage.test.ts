@@ -339,14 +339,13 @@ describe('the meter’s SQL, on node:sqlite', () => {
 describe('runChat onTurn', () => {
   it('fires once after done with the answer model, its tokens and the router estimate', async () => {
     const seen: ChatTurnUsage[] = [];
-    let doneBefore = false;
     const inference = fakeInference({
       'chat-router': clef('none', 0.8),
       'chat-answer': () => sse(['Hi'], { prompt_tokens: 120, completion_tokens: 2 }),
     });
     const stream = runChat({ inference, messages: user('hello there'), onTurn: (u) => seen.push(u) });
     const events = await collect(stream);
-    doneBefore = events.some((e) => e.type === 'done');
+    const doneBefore = events.some((e) => e.type === 'done');
     expect(doneBefore).toBe(true);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toEqual({

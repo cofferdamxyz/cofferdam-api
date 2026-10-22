@@ -64,7 +64,7 @@ export async function sendWithRetry(opts: SendWithRetryOptions): Promise<Hex> {
       const cls = classifySendError(message);
       opts.onAttemptError?.(attempt, cls, message);
       if (cls === 'already_known') return keccak256(raw);
-      if (cls === 'fatal' || attempt >= attempts) throw new Error(message);
+      if (cls === 'fatal' || attempt >= attempts) throw new Error(message, { cause: err });
       if (cls === 'nonce') raw = await opts.sign(true);
     }
   }

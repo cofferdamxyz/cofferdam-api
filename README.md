@@ -53,7 +53,8 @@ yarn only; never `npm install`.
 yarn install
 yarn dev          # wrangler dev --ip 0.0.0.0 on :8787 (reachable from a phone on the LAN)
 yarn test         # Vitest
-yarn typecheck
+yarn typecheck    # Worker, then Worker plus tests (tsconfig.test.json)
+yarn lint         # typescript-eslint, type-checked
 ```
 
 For local signing, run `cofferdam-attester` alongside (`yarn wrangler dev --port 8788` there); the local registry wires the `ATTESTER` binding. `.dev.vars` (ignored) holds `RELAYER_PRIVATE_KEY` and `ENVIRONMENT=development`, which lets the bundle pickup run without a `csa1:` token. Self's callback cannot reach a local Worker: bind tests use the deployed API.
