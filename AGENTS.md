@@ -32,6 +32,10 @@ Cloudflare Workers API plane for Cofferdam.
 - Deploys run only from the Mac with the workspace `.envrc` loaded (`direnv exec .. yarn deploy`), never from a cloud session; when a contract pin moves, deploy the attester first. Runbook: `docs/runbooks/cloudflare-deploys.md` in the workspace. `src/chain/deployments.ts` mirrors `base-contracts/deployments/baseSepolia.json`.
 - Design: `docs/architecture/plane.md` in the workspace.
 
+## Review
+
+`REVIEW.md` says what failure looks like here and how a reviewer reports it: any review (`/code-review`, a hosted reviewer) reads it with this file. Before the last push a delegated session reviews its own diff against it and answers every finding (workspace decision 0052, `docs/runbooks/code-review.md`).
+
 ## References
 
 - Workspace rules: `../AGENTS.md` (Cofferdam workspace) and the cross-entity index one level above
