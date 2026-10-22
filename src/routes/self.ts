@@ -57,11 +57,9 @@ import {
 } from '../services/selfBind.js';
 import { checkOnChainAuthority, type AuthorityCheck } from '../services/authorityCheck.js';
 import { TIER } from '../services/ceremony.js';
-import {
-  SessionAttestationError,
-  decodeAndVerifySessionAttestation,
-  type SessionAttestation,
-} from '../services/sessionAttestation.js';
+import { envReplayStore, type ReplayStore } from '../services/popReplayStore.js';
+import { type PasskeySession } from '../services/sessionAttestation.js';
+import { checkSession, isRefusal } from '../services/sessionGate.js';
 
 /** Minimal read surface of `NullifierRegistry` for the pre-flight. */
 const NULLIFIER_REGISTRY_ABI = [
@@ -100,12 +98,14 @@ export interface SelfRouteDeps {
   /** `NullifierRegistry.rebindCount(nullifier)`, the epoch a rebind co-sign is bound to (decision 0022). */
   rebindEpoch(env: Env, nullifier: bigint): Promise<bigint>;
   now(): number;
-  /** Max age of the `csa1:` attestation presented on pickup. */
+  /** Max age of a `csa1:` v1 bearer token presented on pickup (a v2 slow token carries its own). */
   attestationMaxAgeMs: number;
   /** The bundle store for this request, or null when the deployment lacks one. */
   store(env: Env): BundleStore | null;
   /** Is the token's key an active authority on the account it names? Read on Base. */
-  authorityCheck(env: Env, att: SessionAttestation): Promise<AuthorityCheck>;
+  authorityCheck(env: Env, att: PasskeySession): Promise<AuthorityCheck>;
+  /** The v2 proof replay cache, or null when `POP_REPLAY_DO` is not bound (default: from the env). */
+  replayStore?(env: Env): ReplayStore | null;
 }
 
 /** Rate-limit helper: absent binding or a binding error never blocks. */
@@ -352,25 +352,34 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
       return c.json({ ok: false, error: 'rate_limited', retryAfterSeconds: 10 }, 429);
     }
 
-    // Pickup gate: prove you hold a passkey on this account (csa1 session
-    // attestation pinned to the address). Development tolerates its absence
-    // so the smoke flow works before the app wires sign-in into this call.
-    const auth = c.req.header('authorization');
-    const token = auth?.replace(/^Bearer\s+/i, '').trim();
-    if (token) {
-      let att: SessionAttestation;
-      try {
-        att = decodeAndVerifySessionAttestation(token, {
-          expect: { accountAddress: account },
-          maxAgeMs: deps.attestationMaxAgeMs,
-          now: deps.now(),
-        });
-      } catch (err) {
-        if (err instanceof SessionAttestationError) {
-          return c.json({ ok: false, error: 'attestation_rejected', message: err.message }, 401);
-        }
-        throw err;
-      }
+    // Pickup gate: prove you hold a passkey on this account. The bundle links
+    // a nullifier to the account, so this is a slow route (workspace decision
+    // 0055): a device-bound slow token with its proof, or a v1 bearer token
+    // while those last. Development tolerates a missing token so the smoke
+    // flow works without sign-in.
+    const result = await checkSession(
+      {
+        env: c.env,
+        authorization: c.req.header('authorization'),
+        proof: c.req.header('dpop'),
+        method: c.req.method,
+        url: c.req.url,
+      },
+      {
+        account,
+        requiredTier: 'slow',
+        v1MaxAgeMs: deps.attestationMaxAgeMs,
+        now: deps.now(),
+        replay: (deps.replayStore ?? envReplayStore)(c.env),
+      },
+    );
+    const tolerated =
+      isRefusal(result) && result.body.error === 'attestation_required' && c.env.ENVIRONMENT === 'development';
+    if (isRefusal(result) && !tolerated) {
+      return c.json(result.body, result.status);
+    }
+    if (!isRefusal(result)) {
+      const att = result.session;
       // The envelope proves that a passkey signed it, not that the passkey is
       // on this account: anyone can mint one for any address. Read the account
       // on Base and require an active High authority before handing out a
@@ -390,11 +399,6 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
           401,
         );
       }
-    } else if (c.env.ENVIRONMENT !== 'development') {
-      return c.json(
-        { ok: false, error: 'attestation_required', hint: 'Authorization: Bearer csa1:…' },
-        401,
-      );
     }
     // Counted only now: account addresses are public on Base, so a bucket
     // spent before the gate would let anyone lock the owner out of pickup.

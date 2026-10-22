@@ -18,7 +18,7 @@ import { getAddress, type Address } from 'viem';
 
 import { getBaseSepoliaClient } from '../chain/client.js';
 import { BASE_SEPOLIA_CHAIN_ID, PASSKEY_AUTHORITY_MODULE_BY_SCHEME } from '../chain/deployments.js';
-import { encodePasskeyConfig, type SessionAttestation } from './sessionAttestation.js';
+import { encodePasskeyConfig, type PasskeySession } from './sessionAttestation.js';
 
 /** Authority-registry read surface of `CofferdamAccount4337`. */
 export const COFFERDAM_ACCOUNT_AUTHORITY_ABI = [
@@ -52,7 +52,7 @@ export type AuthorityCheck =
   | { status: 'check_failed'; message: string };
 
 /** Read the account's authority registry and confirm the attesting passkey is active on it. */
-export async function checkOnChainAuthority(att: SessionAttestation, rpcUrl: string): Promise<AuthorityCheck> {
+export async function checkOnChainAuthority(att: PasskeySession, rpcUrl: string): Promise<AuthorityCheck> {
   if (att.chainId !== BASE_SEPOLIA_CHAIN_ID) {
     return { status: 'chain_unsupported', chainId: att.chainId };
   }

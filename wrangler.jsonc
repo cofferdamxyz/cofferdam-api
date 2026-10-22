@@ -106,11 +106,16 @@
   //
   // CHAT_USAGE_DO: one SQLite-backed object per account, the chat's usage
   // meter (one row per UTC month: turns, tokens, router calls, estimated cost).
+  //
+  // POP_REPLAY_DO (workspace decision 0055): one SQLite-backed object per
+  // csa1 v2 device key, remembering each proof jti for two minutes and each
+  // slow token until it expires, so neither works twice.
   "durable_objects": {
     "bindings": [
       { "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" },
       { "name": "ACTIVITY_DO", "class_name": "ActivityDO" },
-      { "name": "CHAT_USAGE_DO", "class_name": "ChatUsageDO" }
+      { "name": "CHAT_USAGE_DO", "class_name": "ChatUsageDO" },
+      { "name": "POP_REPLAY_DO", "class_name": "PopReplayDO" }
     ]
   },
   // Workers AI, reached only through src/services/inference (decision 0037).
@@ -122,7 +127,8 @@
   "migrations": [
     { "tag": "v1-bind-bundles", "new_sqlite_classes": ["BindBundleDO"] },
     { "tag": "v2-activity", "new_sqlite_classes": ["ActivityDO"] },
-    { "tag": "v3-chat-usage", "new_sqlite_classes": ["ChatUsageDO"] }
+    { "tag": "v3-chat-usage", "new_sqlite_classes": ["ChatUsageDO"] },
+    { "tag": "v4-pop-replay", "new_sqlite_classes": ["PopReplayDO"] }
   ],
 
   // ─────────────────────────────────────────────────────────────────

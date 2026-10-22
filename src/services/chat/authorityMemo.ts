@@ -17,17 +17,17 @@
  */
 
 import type { AuthorityCheck } from '../authorityCheck.js';
-import type { SessionAttestation } from '../sessionAttestation.js';
+import type { PasskeySession } from '../sessionAttestation.js';
 
 export const CHAT_AUTHORITY_TTL_MS = 5 * 60_000;
 
 export interface AuthorityMemo {
-  get(att: SessionAttestation): Promise<AuthorityCheck | null>;
-  put(att: SessionAttestation, check: AuthorityCheck): Promise<void>;
+  get(att: PasskeySession): Promise<AuthorityCheck | null>;
+  put(att: PasskeySession, check: AuthorityCheck): Promise<void>;
 }
 
 /** Account, scheme and key: the same facts the on-chain check matches. */
-export function authorityKey(att: SessionAttestation): string {
+export function authorityKey(att: PasskeySession): string {
   return [att.accountAddress, att.alg, att.publicKey.qx, att.publicKey.qy].join(':').toLowerCase();
 }
 

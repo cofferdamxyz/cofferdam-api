@@ -18,6 +18,7 @@ import { Hono, type Context } from 'hono';
 export { BindBundleDO } from './services/bindBundleDO.js';
 export { ActivityDO } from './services/activityDO.js';
 export { ChatUsageDO } from './services/chatUsageDO.js';
+export { PopReplayDO } from './services/popReplayDO.js';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { Env } from './env.js';

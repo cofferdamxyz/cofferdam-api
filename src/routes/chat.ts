@@ -5,12 +5,14 @@
  * POST /v1/chat — one Cofferdam Cloud chat turn (workspace decisions 0024 and
  * 0037), streamed back as server-sent events (`services/chat/run.ts`).
  *
- *   Authorization: Bearer csa1:…   (a session attestation for the account)
+ *   Authorization: DPoP csa1:…    (a fast or slow device-bound session, decision 0055)
+ *   DPoP: <proof>                  (signed by the session's device key)
+ *   (or Authorization: Bearer csa1:… — a v1 token, while CSA1_V1_ACCEPTED allows it)
  *   { "account": "0x…", "messages": [{ "role": "user", "text": "…" }, …] }
  *
  * Workers AI spends money, so the route is gated like the bind-bundle pickup:
- * the attestation must verify, be pinned to the account and be at most an hour
- * old, and its key must be an active High authority on the account on Base
+ * the session must verify and be pinned to the account (a v1 token at most an
+ * hour old), and its key must be an active High authority on the account on Base
  * (503 when Base is unreadable). A passed check is remembered for five minutes
  * (`services/chat/authorityMemo.ts`), so only the first turn waits on Base.
  *
@@ -50,23 +52,27 @@ import {
   type ChatUsageStore,
 } from '../services/chatUsageStore.js';
 import { createInference } from '../services/inference/index.js';
-import {
-  SessionAttestationError,
-  decodeAndVerifySessionAttestation,
-  type SessionAttestation,
-} from '../services/sessionAttestation.js';
+import { envReplayStore, type ReplayStore } from '../services/popReplayStore.js';
+import { type PasskeySession } from '../services/sessionAttestation.js';
+import { checkSession, isRefusal } from '../services/sessionGate.js';
 
 export interface ChatRouteDeps {
-  /** Max age of the `csa1:` attestation: one Face ID covers an hour of chatting. */
+  /**
+   * Max age of a `csa1:` v1 bearer token: one Face ID covers an hour of
+   * chatting. A v2 fast token carries its own expiry (up to 24 hours,
+   * workspace decision 0055).
+   */
   attestationMaxAgeMs: number;
   now(): number;
-  authorityCheck(env: Env, att: SessionAttestation): Promise<AuthorityCheck>;
+  authorityCheck(env: Env, att: PasskeySession): Promise<AuthorityCheck>;
   /** Remembers a passed check for the chat only. */
   authorityMemo: AuthorityMemo;
   /** The inference seam for this request, or null when Workers AI is not bound. */
   inference(env: Env): ChatInference | null;
   /** The usage meter, or null when `CHAT_USAGE_DO` is not bound (default: from the env). */
   usageStore?(env: Env): ChatUsageStore | null;
+  /** The v2 proof replay cache, or null when `POP_REPLAY_DO` is not bound (default: from the env). */
+  replayStore?(env: Env): ReplayStore | null;
 }
 
 function envUsageStore(env: Env): ChatUsageStore | null {
@@ -123,7 +129,7 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
   const routes = new Hono<{ Bindings: Env }>();
 
   /** The on-chain check, remembered for five minutes once it passes. */
-  async function authority(env: Env, att: SessionAttestation): Promise<AuthorityCheck> {
+  async function authority(env: Env, att: PasskeySession): Promise<AuthorityCheck> {
     const remembered = await deps.authorityMemo.get(att);
     if (remembered) return remembered;
     const check = await deps.authorityCheck(env, att);
@@ -148,24 +154,29 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
    * the refusal, or null when the caller may go on.
    */
   async function gate(c: Context<{ Bindings: Env }>, account: `0x${string}`): Promise<Response | null> {
-    const token = c.req.header('authorization')?.replace(/^Bearer\s+/i, '').trim();
-    if (!token) {
-      if (c.env.ENVIRONMENT === 'development') return null;
-      return c.json({ ok: false, error: 'attestation_required', hint: 'Authorization: Bearer csa1:…' }, 401);
-    }
-    let att: SessionAttestation;
-    try {
-      att = decodeAndVerifySessionAttestation(token, {
-        expect: { accountAddress: account },
-        maxAgeMs: deps.attestationMaxAgeMs,
+    // A fast route (workspace decision 0055): a device-bound v2 token of
+    // either tier with its proof, or a v1 bearer token while those last.
+    const result = await checkSession(
+      {
+        env: c.env,
+        authorization: c.req.header('authorization'),
+        proof: c.req.header('dpop'),
+        method: c.req.method,
+        url: c.req.url,
+      },
+      {
+        account,
+        requiredTier: 'fast',
+        v1MaxAgeMs: deps.attestationMaxAgeMs,
         now: deps.now(),
-      });
-    } catch (err) {
-      if (err instanceof SessionAttestationError) {
-        return c.json({ ok: false, error: 'attestation_rejected', message: err.message }, 401);
-      }
-      throw err;
+        replay: (deps.replayStore ?? envReplayStore)(c.env),
+      },
+    );
+    if (isRefusal(result)) {
+      if (result.body.error === 'attestation_required' && c.env.ENVIRONMENT === 'development') return null;
+      return c.json(result.body, result.status);
     }
+    const att = result.session;
     // Anyone can mint an envelope for any address; only a High passkey on
     // the account itself may spend Workers AI on its behalf.
     const check = await authority(c.env, att);

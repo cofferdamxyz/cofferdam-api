@@ -80,6 +80,12 @@ export interface SessionAttestation extends SessionAttestationFields {
   sig: Hex;
 }
 
+/**
+ * What a gate needs from a verified passkey session, whichever version carried
+ * it: v1 bearer envelopes and v2 device-bound ones both satisfy it.
+ */
+export type PasskeySession = Omit<SessionAttestation, 'v' | 'sig'>;
+
 /** Base class for every session-attestation failure. */
 export class SessionAttestationError extends Error {
   constructor(message: string) {
@@ -389,6 +395,274 @@ export async function decodeAndVerifySessionSignerAttestation(
     throw new SessionAttestationVerificationError('session-signer attestation signature is not recoverable.');
   }
   return { fields, signer: getAddress(signer) };
+}
+
+// ── v2: device-bound, tiered, expiring (workspace decision 0055) ─────────────
+//
+// Mirrors cofferdam-sdk identity/sessionAttestation.ts (v2) and identity/popProof.ts
+// byte for byte: the same digest layout and the same proof checks. The fixed
+// vector in test/sessionAttestation.test.ts is the SDK's, asserted on both sides.
+
+/** Wire-format version of the device-bound envelope. */
+export const SESSION_ATTESTATION_V2 = 2;
+
+const DIGEST_DOMAIN_V2 = 'cofferdam-session-attestation-v2';
+
+/** The audience of tokens the plane accepts. */
+export const CSA_AUDIENCE_PLANE = 'cofferdam-plane';
+
+/** Fast: everyday features. Slow: one security-critical action. */
+export type SessionTier = 'fast' | 'slow';
+
+/** The longest lifetime the plane accepts for each tier. */
+export const SESSION_TIER_MAX_LIFETIME_MS: Readonly<Record<SessionTier, number>> = {
+  fast: 24 * 60 * 60 * 1000,
+  slow: 10 * 60 * 1000,
+};
+
+const JKT_RE = /^[A-Za-z0-9_-]{43}$/;
+const JTI_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+/** How far a proof's `iat` may sit from the plane's clock, in seconds. */
+export const POP_MAX_SKEW_S = 60;
+
+/** A decoded v2 envelope (`cnf.jkt` names the device key). */
+export interface SessionAttestationV2 extends SessionAttestationFields {
+  v: 2;
+  alg: AttestationScheme;
+  publicKey: P256PublicKey;
+  expiresAt: number;
+  aud: string;
+  tier: SessionTier;
+  cnf: { jkt: string };
+  sig: Hex;
+}
+
+/** The 32-byte digest the passkey signs for a v2 envelope. */
+export function sessionAttestationV2Digest(
+  f: SessionAttestationFields & { expiresAt: number; aud: string; tier: SessionTier; jkt: string },
+  publicKey: P256PublicKey,
+): Uint8Array {
+  const jkt = base64urlToBytes(f.jkt);
+  if (jkt.length !== 32) throw new SessionAttestationDecodeError('jkt must be a 32-byte thumbprint.');
+  const encoded = encodeAbiParameters(
+    [
+      { type: 'string' },
+      { type: 'string' },
+      { type: 'string' },
+      { type: 'address' },
+      { type: 'uint256' },
+      { type: 'bool' },
+      { type: 'uint64' },
+      { type: 'uint64' },
+      { type: 'string' },
+      { type: 'string' },
+      { type: 'bytes32' },
+      { type: 'bytes32' },
+      { type: 'bytes32' },
+    ],
+    [
+      DIGEST_DOMAIN_V2,
+      f.scope,
+      f.appPseudonym,
+      getAddress(f.accountAddress),
+      BigInt(f.chainId),
+      f.verified,
+      BigInt(f.issuedAt),
+      BigInt(f.expiresAt),
+      f.aud,
+      f.tier,
+      bytesToHex32(jkt),
+      publicKey.qx,
+      publicKey.qy,
+    ],
+  );
+  return hexToBytes(keccak256(encoded));
+}
+
+function bytesToHex32(b: Uint8Array): Hex {
+  let out = '0x';
+  for (const byte of b) out += byte.toString(16).padStart(2, '0');
+  return out as Hex;
+}
+
+/** The version of a `csa1:` token (1 or 2), without verifying it. */
+export function sessionAttestationVersion(token: unknown): number {
+  if (typeof token !== 'string' || !token.startsWith(PREFIX)) {
+    throw new SessionAttestationDecodeError('not a Cofferdam session-attestation token.');
+  }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(base64urlToBytes(token.slice(PREFIX.length))));
+    return typeof parsed?.v === 'number' ? parsed.v : 0;
+  } catch {
+    throw new SessionAttestationDecodeError('session-attestation payload is not valid base64url JSON.');
+  }
+}
+
+/** Parse a v2 token into a structurally valid envelope. Does not verify it. */
+export function decodeSessionAttestationV2(token: unknown): SessionAttestationV2 {
+  if (typeof token !== 'string' || !token.startsWith(PREFIX)) {
+    throw new SessionAttestationDecodeError('not a Cofferdam session-attestation token.');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(base64urlToBytes(token.slice(PREFIX.length))));
+  } catch {
+    throw new SessionAttestationDecodeError('session-attestation payload is not valid base64url JSON.');
+  }
+  const o = (parsed ?? {}) as Record<string, unknown>;
+  if (o.v !== SESSION_ATTESTATION_V2) {
+    throw new SessionAttestationDecodeError(`expected a v2 session attestation, got ${String(o.v)}.`);
+  }
+  const base = assertWellFormed({ ...o, v: SESSION_ATTESTATION_VERSION });
+  const cnf = o.cnf as Record<string, unknown> | undefined;
+  if (!cnf || typeof cnf.jkt !== 'string' || !JKT_RE.test(cnf.jkt)) {
+    throw new SessionAttestationDecodeError('session-attestation cnf.jkt is missing or malformed.');
+  }
+  if (typeof o.expiresAt !== 'number' || !Number.isFinite(o.expiresAt) || o.expiresAt <= 0) {
+    throw new SessionAttestationDecodeError('session-attestation expiresAt is missing or invalid.');
+  }
+  if (typeof o.aud !== 'string' || o.aud.length === 0) {
+    throw new SessionAttestationDecodeError('session-attestation aud is missing.');
+  }
+  if (o.tier !== 'fast' && o.tier !== 'slow') {
+    throw new SessionAttestationDecodeError('session-attestation tier must be fast or slow.');
+  }
+  const { v: _v, ...fields } = base;
+  return {
+    v: SESSION_ATTESTATION_V2,
+    ...fields,
+    expiresAt: o.expiresAt,
+    aud: o.aud,
+    tier: o.tier,
+    cnf: { jkt: cnf.jkt },
+  };
+}
+
+/**
+ * Verify a v2 envelope: the tier's lifetime cap, not expired, not issued in the
+ * future (60 s of skew), the audience, the optional pins and the passkey
+ * signature. Device possession is a separate check (`verifyPopProof`).
+ */
+export function verifySessionAttestationV2(
+  att: SessionAttestationV2,
+  opts: { audience?: string; expect?: SessionAttestationExpectation; now?: number } = {},
+): void {
+  const now = opts.now ?? Date.now();
+  const cap = SESSION_TIER_MAX_LIFETIME_MS[att.tier];
+  if (att.expiresAt <= att.issuedAt || att.expiresAt - att.issuedAt > cap) {
+    throw new SessionAttestationVerificationError(`a ${att.tier} session attestation may live at most ${cap} ms.`);
+  }
+  if (now >= att.expiresAt || att.issuedAt - now > 60_000) {
+    throw new SessionAttestationExpiredError(
+      `session attestation is expired or clock-skewed (issuedAt=${att.issuedAt}, expiresAt=${att.expiresAt}, now=${now}).`,
+    );
+  }
+  const audience = opts.audience ?? CSA_AUDIENCE_PLANE;
+  if (att.aud !== audience) {
+    throw new SessionAttestationVerificationError(`session attestation aud mismatch (expected ${audience}, got ${att.aud}).`);
+  }
+  checkFreshnessAndPins(att, { expect: opts.expect });
+  const digest = sessionAttestationV2Digest({ ...att, jkt: att.cnf.jkt }, att.publicKey);
+  const ok =
+    att.alg === 'webauthn'
+      ? verifyWebAuthnAssertion(att.sig, digest, att.publicKey)
+      : verifyP256Digest(att.publicKey, digest, att.sig);
+  if (!ok) {
+    throw new SessionAttestationVerificationError('session attestation signature failed: not signed by the presented passkey.');
+  }
+}
+
+/** Convenience: decode + verify a v2 token. */
+export function decodeAndVerifySessionAttestationV2(
+  token: unknown,
+  opts?: { audience?: string; expect?: SessionAttestationExpectation; now?: number },
+): SessionAttestationV2 {
+  const att = decodeSessionAttestationV2(token);
+  verifySessionAttestationV2(att, opts);
+  return att;
+}
+
+/** A proof that failed to decode or verify. */
+export class PopProofError extends SessionAttestationError {}
+
+/** RFC 7638 thumbprint of a P-256 public key. */
+export function jwkThumbprint(pub: P256PublicKey): string {
+  const x = bytesToBase64url(hexToBytes(pub.qx));
+  const y = bytesToBase64url(hexToBytes(pub.qy));
+  return bytesToBase64url(hexToBytes(sha256(new TextEncoder().encode(`{"crv":"P-256","kty":"EC","x":"${x}","y":"${y}"}`))));
+}
+
+/** The URL a proof names: origin and path, without query or fragment. */
+export function popHtu(url: string): string {
+  const u = new URL(url);
+  return `${u.origin}${u.pathname}`;
+}
+
+/** `ath` for a token: base64url(SHA-256(token)). */
+export function popAth(token: string): string {
+  return bytesToBase64url(hexToBytes(sha256(new TextEncoder().encode(token))));
+}
+
+/**
+ * Check a proof against the request and the token it accompanies. Returns the
+ * signing key's thumbprint and the proof's `jti`; the caller compares the
+ * thumbprint with the token's `cnf.jkt` and records the `jti` once.
+ */
+export function verifyPopProof(
+  proof: unknown,
+  expect: { token: string; htm: string; htu: string; now?: number; maxSkewS?: number },
+): { jkt: string; jti: string; iat: number } {
+  const parts = typeof proof === 'string' ? proof.split('.') : [];
+  if (parts.length !== 3) throw new PopProofError('a proof is a compact JWS (three parts).');
+  let header: Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    header = JSON.parse(new TextDecoder().decode(base64urlToBytes(parts[0]!)));
+    payload = JSON.parse(new TextDecoder().decode(base64urlToBytes(parts[1]!)));
+  } catch {
+    throw new PopProofError('proof header or payload is not base64url JSON.');
+  }
+  if (header.typ !== 'dpop+jwt' || header.alg !== 'ES256') {
+    throw new PopProofError('proof must be typ dpop+jwt, alg ES256.');
+  }
+  const jwk = header.jwk as Record<string, unknown> | undefined;
+  if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256' || typeof jwk.x !== 'string' || typeof jwk.y !== 'string' || 'd' in jwk) {
+    throw new PopProofError('proof jwk must be a public P-256 key.');
+  }
+  const x = base64urlToBytes(jwk.x);
+  const y = base64urlToBytes(jwk.y);
+  if (x.length !== 32 || y.length !== 32) throw new PopProofError('proof jwk coordinates must be 32 bytes.');
+  const pub: P256PublicKey = { qx: bytesToHex32(x), qy: bytesToHex32(y) };
+
+  const sig = base64urlToBytes(parts[2]!);
+  const digest = hexToBytes(sha256(new TextEncoder().encode(`${parts[0]}.${parts[1]}`)));
+  let valid = false;
+  try {
+    valid = sig.length === 64 && p256.verify(sig, digest, hexToBytes(concatHex(['0x04', pub.qx, pub.qy])), { lowS: false });
+  } catch {
+    valid = false;
+  }
+  if (!valid) throw new PopProofError('proof signature failed.');
+
+  const { htm, htu, iat, jti, ath } = payload;
+  if (typeof htm !== 'string' || htm !== expect.htm.toUpperCase()) {
+    throw new PopProofError('proof htm does not match the request method.');
+  }
+  if (typeof htu !== 'string' || htu !== popHtu(expect.htu)) {
+    throw new PopProofError('proof htu does not match the request URL.');
+  }
+  const nowS = Math.floor((expect.now ?? Date.now()) / 1000);
+  if (typeof iat !== 'number' || !Number.isInteger(iat) || Math.abs(nowS - iat) > (expect.maxSkewS ?? POP_MAX_SKEW_S)) {
+    throw new PopProofError('proof iat is missing or outside the allowed window.');
+  }
+  if (typeof jti !== 'string' || !JTI_RE.test(jti)) {
+    throw new PopProofError('proof jti must be 16 to 64 base64url characters.');
+  }
+  if (typeof ath !== 'string' || ath !== popAth(expect.token)) {
+    throw new PopProofError('proof ath does not match the session token.');
+  }
+  return { jkt: jwkThumbprint(pub), jti, iat };
 }
 
 function assertWellFormed(p: unknown): SessionAttestation {

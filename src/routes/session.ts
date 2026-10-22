@@ -21,6 +21,11 @@
  *   authority — the full authorisation gate. A counterfactual (not-yet-deployed)
  *   account returns `authority: 'account_not_deployed'`, which is expected before
  *   the user's first on-chain op and does NOT invalidate the attestation.
+ *
+ *   A `csa1:` v2 token (workspace decision 0055) is verified as an envelope:
+ *   its passkey signature, audience, expiry and pins. Its claims add `tier`,
+ *   `expiresAt`, `aud` and `jkt`. This route checks no request proof: device
+ *   possession is what the gated routes check on every request.
  */
 
 import { Hono } from 'hono';
@@ -28,10 +33,12 @@ import type { Env } from '../env.js';
 import { checkOnChainAuthority } from '../services/authorityCheck.js';
 import {
   decodeAndVerifySessionAttestation,
+  decodeAndVerifySessionAttestationV2,
+  sessionAttestationVersion,
   SessionAttestationDecodeError,
   SessionAttestationExpiredError,
   SessionAttestationVerificationError,
-  type SessionAttestation,
+  type PasskeySession,
   type SessionAttestationExpectation,
 } from '../services/sessionAttestation.js';
 
@@ -76,12 +83,22 @@ sessionRoutes.post('/verify-attestation', async (c) => {
       ? body.maxAgeMs
       : undefined;
 
-  let att: SessionAttestation;
+  let att: PasskeySession;
+  let v2Claims: { tier: string; expiresAt: number; aud: string; jkt: string } | undefined;
   try {
-    att = decodeAndVerifySessionAttestation(body.attestation, {
-      expect: parseExpect(body.expect),
-      maxAgeMs,
-    });
+    if (sessionAttestationVersion(body.attestation) === 2) {
+      const v2 = decodeAndVerifySessionAttestationV2(body.attestation, { expect: parseExpect(body.expect) });
+      if (maxAgeMs !== undefined && maxAgeMs > 0 && Date.now() - v2.issuedAt > maxAgeMs) {
+        throw new SessionAttestationExpiredError(`session attestation is older than ${maxAgeMs} ms.`);
+      }
+      att = v2;
+      v2Claims = { tier: v2.tier, expiresAt: v2.expiresAt, aud: v2.aud, jkt: v2.cnf.jkt };
+    } else {
+      att = decodeAndVerifySessionAttestation(body.attestation, {
+        expect: parseExpect(body.expect),
+        maxAgeMs,
+      });
+    }
   } catch (err) {
     // Map verification failures to a 400 with a stable, machine-readable code.
     let error = 'verification_failed';
@@ -103,6 +120,7 @@ sessionRoutes.post('/verify-attestation', async (c) => {
     issuedAt: att.issuedAt,
     alg: att.alg,
     publicKey: att.publicKey,
+    ...(v2Claims ?? {}),
   };
 
   // Signature verified — the holder of `publicKey` authorised exactly these

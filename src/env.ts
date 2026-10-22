@@ -14,6 +14,7 @@ import type { AttesterRpc } from './services/attester.js';
 import type { ActivityDO } from './services/activityDO.js';
 import type { BindBundleDO } from './services/bindBundleDO.js';
 import type { ChatUsageDO } from './services/chatUsageDO.js';
+import type { PopReplayDO } from './services/popReplayDO.js';
 
 export interface Env {
   // ── vars ────────────────────────────────────────────────────────
@@ -171,6 +172,20 @@ export interface Env {
    * `GET /v1/chat/usage` answers 503 `usage_store_unprovisioned`.
    */
   CHAT_USAGE_DO?: DurableObjectNamespace<ChatUsageDO>;
+
+  /**
+   * The `csa1:` v2 replay cache, one object per device key (services/popReplayDO.ts,
+   * workspace decision 0055). Unbound outside development: every v2 request
+   * answers 503 `replay_store_unavailable`, never an unchecked proof.
+   */
+  POP_REPLAY_DO?: DurableObjectNamespace<PopReplayDO>;
+
+  /**
+   * `"false"` refuses `csa1:` v1 bearer tokens on every gated route (workspace
+   * decision 0055). Any other value, or unset, accepts them during the move to
+   * v2; set it once the app build that sends v2 is out.
+   */
+  CSA1_V1_ACCEPTED?: string;
 
   // ── Rate limits (wrangler.jsonc `ratelimits`; permissive, per-colo) ──
   /** `POST /v1/self/verify`: per account and a global flood brake. */

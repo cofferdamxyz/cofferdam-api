@@ -38,12 +38,13 @@ import {
   type FirstHighRequest,
   type SessionEvidence,
 } from '../services/ceremony.js';
+import { envReplayStore, type ReplayStore } from '../services/popReplayStore.js';
 import {
   SESSION_SIGNER_PREFIX,
   SessionAttestationError,
-  decodeAndVerifySessionAttestation,
   decodeAndVerifySessionSignerAttestation,
 } from '../services/sessionAttestation.js';
+import { checkSession, isRefusal, sessionToken } from '../services/sessionGate.js';
 
 export interface CeremonyRouteDeps {
   /**
@@ -53,24 +54,18 @@ export interface CeremonyRouteDeps {
   issue: (env: Env, req: FirstHighCeremonyRequest, admit: () => Promise<void>) => Promise<FirstHighAttestation>;
   /** Unix milliseconds for the session token's freshness; tests inject one. */
   now?: () => number;
+  /** The v2 proof replay cache, or null when `POP_REPLAY_DO` is not bound (default: from the env). */
+  replayStore?: (env: Env) => ReplayStore | null;
 }
 
-/** A session token presented on the ceremony route is good for ten minutes. */
+/** A v1 or session-signer token presented on the ceremony route is good for ten minutes. */
 export const CEREMONY_SESSION_MAX_AGE_MS = 10 * 60 * 1000;
 
-/**
- * Verify the `Authorization: Bearer` session token for `account` and reduce it
- * to the evidence the gate matches against `signerId`.
- */
-async function sessionEvidence(token: string, account: Address, now: number): Promise<SessionEvidence> {
-  const opts = { expect: { accountAddress: account }, maxAgeMs: CEREMONY_SESSION_MAX_AGE_MS, now };
-  if (token.startsWith(SESSION_SIGNER_PREFIX)) {
-    const { signer } = await decodeAndVerifySessionSignerAttestation(token, opts);
-    return { kind: 'session-signer', signer };
-  }
-  const att = decodeAndVerifySessionAttestation(token, opts);
-  return { kind: 'passkey', publicKey: att.publicKey };
-}
+/** The gate's refusal codes, in the ceremony route's own words. */
+const CEREMONY_ERROR: Record<string, string> = {
+  attestation_required: 'session_required',
+  attestation_rejected: 'session_rejected',
+};
 
 const GLOBAL_KEY = 'ceremony:global';
 
@@ -166,22 +161,50 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
       return c.json({ error: 'rate_limited', message: 'too many requests from this network; retry shortly' }, 429);
     }
     // The signing authority's own session (decision 0016): without it, anyone
-    // who can read the chain could farm co-signs for any Partner account.
-    const token = c.req.header('authorization')?.replace(/^Bearer\s+/i, '').trim();
+    // who can read the chain could farm co-signs for any Partner account. The
+    // passkey lane is a slow route (workspace decision 0055): a device-bound
+    // slow token with its proof, or a v1 bearer token while those last. The
+    // Managed lane's csa-sess1 envelope is unchanged.
+    const now = deps.now ? deps.now() : Date.now();
+    const authorization = c.req.header('authorization');
+    const token = sessionToken(authorization);
     if (!token) {
       return c.json(
-        { error: 'session_required', message: 'Authorization: Bearer csa1:… (Partner passkey) or csa-sess1.… (Managed signer)' },
+        { error: 'session_required', message: 'Authorization: DPoP csa1:… with a DPoP proof (Partner passkey) or Bearer csa-sess1.… (Managed signer)' },
         401,
       );
     }
     let session: SessionEvidence;
-    try {
-      session = await sessionEvidence(token, req.account, deps.now ? deps.now() : Date.now());
-    } catch (err) {
-      if (err instanceof SessionAttestationError) {
-        return c.json({ error: 'session_rejected', message: err.message }, 401);
+    if (token.startsWith(SESSION_SIGNER_PREFIX)) {
+      try {
+        const { signer } = await decodeAndVerifySessionSignerAttestation(token, {
+          expect: { accountAddress: req.account },
+          maxAgeMs: CEREMONY_SESSION_MAX_AGE_MS,
+          now,
+        });
+        session = { kind: 'session-signer', signer };
+      } catch (err) {
+        if (err instanceof SessionAttestationError) {
+          return c.json({ error: 'session_rejected', message: err.message }, 401);
+        }
+        throw err;
       }
-      throw err;
+    } else {
+      const result = await checkSession(
+        { env: c.env, authorization, proof: c.req.header('dpop'), method: c.req.method, url: c.req.url },
+        {
+          account: req.account,
+          requiredTier: 'slow',
+          v1MaxAgeMs: CEREMONY_SESSION_MAX_AGE_MS,
+          now,
+          replay: (deps.replayStore ?? envReplayStore)(c.env),
+        },
+      );
+      if (isRefusal(result)) {
+        const { ok: _ok, error, ...rest } = result.body;
+        return c.json({ error: CEREMONY_ERROR[error] ?? error, ...rest }, result.status);
+      }
+      session = { kind: 'passkey', publicKey: result.session.publicKey };
     }
     try {
       // The per-account bucket is counted only once the session and the gate

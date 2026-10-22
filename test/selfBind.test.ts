@@ -25,6 +25,8 @@ import {
   toSolidityProof,
 } from '../src/services/selfBind.js';
 import { attesterErrorCode, createSelfRoutes, type BindStatus } from '../src/routes/self.js';
+import type { ReplayStore } from '../src/services/popReplayStore.js';
+import v2 from './fixtures/sdk-attestations-v2.json';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import fixtures from './fixtures/sdk-attestations.json';
 import { SEPOLIA_DEPLOYMENTS } from '../src/chain/deployments.js';
@@ -128,6 +130,8 @@ function harness(opts: {
   pickupIpLimit?: RateLimit;
   /** What the on-chain authority check answers for a presented token (default: an active High). */
   authorityCheck?: AuthorityCheck;
+  /** The csa1 v2 proof replay cache (default: none, as when POP_REPLAY_DO is unbound). */
+  replayStore?: ReplayStore | null;
 } = {}) {
   const signBind = vi.fn(opts.signBind ?? (async (req: SignBindRequest) => signedFor(req)));
   const signRebind = vi.fn(
@@ -153,6 +157,7 @@ function harness(opts: {
       store: () => store,
       authorityCheck: async () =>
         opts.authorityCheck ?? { status: 'active', authorityId: 0, module: ACCOUNT, tier: 3 },
+      replayStore: () => opts.replayStore ?? null,
     }),
   );
   const call = async (path: string, init?: RequestInit) => {
@@ -600,5 +605,58 @@ describe('GET /v1/self/bind-bundle/:account', () => {
     expect(
       (await h.call(`/v1/self/bind-bundle/${fxAccount}`, { headers: { authorization: 'Bearer csa1:zzz' } })).status,
     ).toBe(401);
+  });
+});
+
+describe('GET /v1/self/bind-bundle/:account with csa1 v2 (workspace decision 0055)', () => {
+  const account = v2.account as Address;
+  const now = v2.issuedAt + 1_000;
+  const tokens = v2.tokens.p256;
+
+  function memoryReplay(): ReplayStore {
+    const seen = new Map<string, number>();
+    return {
+      async claim(jkt, key, expiresAt, at) {
+        const k = `${jkt}|${key}`;
+        if ((seen.get(k) ?? 0) > at) return false;
+        seen.set(k, expiresAt);
+        return true;
+      },
+    };
+  }
+
+  async function withBundle(replayStore: ReplayStore | null = memoryReplay()) {
+    const store = memoryStore();
+    await harness({ store }).post(relayerBody(account));
+    return harness({ store, environment: 'staging', now, replayStore });
+  }
+
+  it('hands the bundle out on a slow token and its proof, and refuses the same proof twice', async () => {
+    const h = await withBundle();
+    const init = { headers: { authorization: `DPoP ${tokens.slow}`, dpop: tokens.proofs.pickup } };
+    const first = await h.call(`/v1/self/bind-bundle/${account}`, init);
+    expect(first.status).toBe(200);
+    expect(first.json.ok).toBe(true);
+    const replayed = await h.call(`/v1/self/bind-bundle/${account}`, init);
+    expect(replayed.status).toBe(401);
+    expect(replayed.json.error).toBe('proof_rejected');
+  });
+
+  it('asks for a step-up when a fast token comes to this slow route', async () => {
+    const h = await withBundle();
+    const res = await h.call(`/v1/self/bind-bundle/${account}`, {
+      headers: { authorization: `DPoP ${tokens.fast}`, dpop: tokens.proofs.pickup },
+    });
+    expect(res.status).toBe(401);
+    expect(res.json).toMatchObject({ error: 'step_up_required', requiredTier: 'slow' });
+  });
+
+  it('never accepts a v2 proof unchecked when the replay cache is unbound', async () => {
+    const h = await withBundle(null);
+    const res = await h.call(`/v1/self/bind-bundle/${account}`, {
+      headers: { authorization: `DPoP ${tokens.slow}`, dpop: tokens.proofs.pickup },
+    });
+    expect(res.status).toBe(503);
+    expect(res.json.error).toBe('replay_store_unavailable');
   });
 });
