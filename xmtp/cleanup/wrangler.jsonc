@@ -4,8 +4,10 @@
  *
  *   cd xmtp/cleanup && direnv exec ../../.. npx wrangler deploy
  *
- * Only after the backend has booted against the database once: it creates the
- * tables, and the hourly run fails on missing ones before that.
+ * Safe before the backend's first boot: each run checks the schema first
+ * (src/health.ts), stores it under the KV key `health`, and skips the deletion
+ * while the backend's tables are missing. GET /health answers the same check;
+ * with no route, reach it through `wrangler dev --remote`.
  *
  * Hyperdrive (caching disabled) points at the backend's PlanetScale Postgres,
  * port 5432, as the cleanup role (reads and deletes expired rows only).

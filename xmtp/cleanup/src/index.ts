@@ -13,11 +13,18 @@
  *
  * It logs one line per run with counts only: no topic, no id, nothing about a
  * user. Alert on zero deletions for several days while the database grows.
+ *
+ * Each run first checks the schema (health.ts) and stores the result under the
+ * `health` key; before the backend's first boot has migrated the database it
+ * skips the deletion instead of failing. `GET /health` answers the same check
+ * live. The Worker has no route and no workers.dev URL, so that is reachable
+ * only from the Mac: `npx wrangler dev --remote`, then curl localhost:8787/health.
  */
 
 import { Client } from 'pg';
 
-import { runCleanup, type CleanupConfig, type CleanupState } from './run.js';
+import { checkDatabase, cleanupBlockedBy } from './health.js';
+import { runCleanup, type CleanupConfig, type CleanupState, type Query } from './run.js';
 
 export interface Env {
   HYPERDRIVE: Hyperdrive;
@@ -33,6 +40,7 @@ export interface Env {
 }
 
 const STATE_KEY = 'state';
+const HEALTH_KEY = 'health';
 
 function positive(name: string, value: string | undefined, fallback?: number): number {
   const n = value === undefined ? fallback : Number(value);
@@ -55,18 +63,39 @@ export function configFrom(env: Env): CleanupConfig {
   };
 }
 
+async function withClient<T>(env: Env, ctx: ExecutionContext, use: (query: Query) => Promise<T>): Promise<T> {
+  const client = new Client({ connectionString: env.HYPERDRIVE.connectionString });
+  await client.connect();
+  try {
+    return await use(async (text, params) => (await client.query<Record<string, unknown>>(text, params)).rows);
+  } finally {
+    ctx.waitUntil(client.end());
+  }
+}
+
 export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const cfg = configFrom(env);
-    const previous = await env.CLEANUP_STATE.get<CleanupState>(STATE_KEY, 'json');
-    const client = new Client({ connectionString: env.HYPERDRIVE.connectionString });
-    await client.connect();
-    try {
-      const report = await runCleanup(async (text, params) => (await client.query<Record<string, unknown>>(text, params)).rows, cfg, previous);
+    await withClient(env, ctx, async (query) => {
+      const health = await checkDatabase(query);
+      await env.CLEANUP_STATE.put(HEALTH_KEY, JSON.stringify(health));
+      const blocked = cleanupBlockedBy(health, cfg.pushCursorGuard);
+      if (blocked.length > 0) {
+        // Before the backend's first boot: nothing to delete yet, and no error.
+        console.log(JSON.stringify({ job: 'xmtp-cleanup', skipped: 'schema_missing', missing: blocked.length }));
+        return;
+      }
+      const previous = await env.CLEANUP_STATE.get<CleanupState>(STATE_KEY, 'json');
+      const report = await runCleanup(query, cfg, previous);
       await env.CLEANUP_STATE.put(STATE_KEY, JSON.stringify(report.state));
       console.log(JSON.stringify({ job: 'xmtp-cleanup', ...report.deleted, timedOut: report.timedOut }));
-    } finally {
-      ctx.waitUntil(client.end());
-    }
+    });
+  },
+
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method !== 'GET' || url.pathname !== '/health') return new Response(null, { status: 404 });
+    const health = await withClient(env, ctx, (query) => checkDatabase(query));
+    return Response.json(health, { status: health.ok ? 200 : 503, headers: { 'cache-control': 'no-store' } });
   },
 } satisfies ExportedHandler<Env>;
