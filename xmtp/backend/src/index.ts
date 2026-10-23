@@ -20,7 +20,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 
-import { containerEnv, type BackendEnv } from './containerEnv.js';
+import { containerEnv, envFingerprint, type BackendEnv } from './containerEnv.js';
 import { openUpstream, splice } from './socket.js';
 
 export interface Env extends BackendEnv {
@@ -33,40 +33,55 @@ export interface Env extends BackendEnv {
 export const BACKEND_PORT = 5050;
 const INSTANCE = 'primary';
 const KEEPALIVE_MS = 60_000;
+/** Storage key: a fingerprint of the environment the running container was started with. */
+const STARTED_WITH = 'startedWith';
+
 
 export class XmtpBackend extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(async () => {
-      this.ensureStarted();
+      await this.ensureStarted();
       if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now() + KEEPALIVE_MS);
     });
   }
 
-  /** Start the container if it is not running. Throws if a secret is missing. */
-  private ensureStarted(): void {
+  /**
+   * Start the container if it is not running, and restart it when the
+   * environment changed since it started (a rotated secret or a new variable):
+   * the backend retries a failing database connection instead of exiting, so
+   * without this a corrected `XMTP_DATABASE_URL` never reached it. Throws if a
+   * secret is missing.
+   */
+  private async ensureStarted(): Promise<void> {
     const container = this.ctx.container;
     if (!container) throw new Error('XmtpBackend has no container: check `containers` in wrangler.jsonc');
-    if (container.running) return;
-    container.start({ enableInternet: true, env: containerEnv(this.env) });
+    const env = containerEnv(this.env);
+    const fingerprint = await envFingerprint(env);
+    if (container.running) {
+      if ((await this.ctx.storage.get<string>(STARTED_WITH)) === fingerprint) return;
+      await container.destroy();
+    }
+    container.start({ enableInternet: true, env });
+    await this.ctx.storage.put(STARTED_WITH, fingerprint);
     // When the process exits, the next alarm or socket starts it again.
     container.monitor().catch(() => undefined);
   }
 
   override async alarm(): Promise<void> {
-    this.ensureStarted();
+    await this.ensureStarted();
     await this.ctx.storage.setAlarm(Date.now() + KEEPALIVE_MS);
   }
 
   /** RPC for the cron and for `wrangler` checks: is the container up? */
   async status(): Promise<{ running: boolean }> {
-    this.ensureStarted();
+    await this.ensureStarted();
     return { running: this.ctx.container?.running ?? false };
   }
 
   /** A client stream from the Worker's `connect()`, spliced to port 5050. */
   override async connect(socket: Socket): Promise<void> {
-    this.ensureStarted();
+    await this.ensureStarted();
     const upstream = await openUpstream(() =>
       this.ctx.container!.getTcpPort(BACKEND_PORT).connect(`10.0.0.1:${BACKEND_PORT}`),
     );

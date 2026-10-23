@@ -48,3 +48,14 @@ export function containerEnv(env: BackendEnv): Record<string, string> {
   if (out.XMTP_APP_API_KEY!.length < 32) throw new Error('xmtp-backend: XMTP_APP_API_KEY must be 32+ characters');
   return out;
 }
+
+/**
+ * SHA-256 over the container environment, so a changed secret or variable is
+ * noticed without storing any value. The secrets are long random strings, so
+ * the digest reveals nothing about them.
+ */
+export async function envFingerprint(env: Record<string, string>): Promise<string> {
+  const canonical = JSON.stringify(Object.keys(env).sort().map((k) => [k, env[k]]));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}

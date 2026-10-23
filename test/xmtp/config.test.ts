@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { BACKEND_ENV_NAMES, containerEnv } from '../../xmtp/backend/src/containerEnv.js';
+import { BACKEND_ENV_NAMES, containerEnv, envFingerprint } from '../../xmtp/backend/src/containerEnv.js';
 import { openUpstream } from '../../xmtp/backend/src/socket.js';
 
 const root = join(__dirname, '../../xmtp');
@@ -114,5 +114,15 @@ describe('the ingress splice', () => {
     expect(opened).toBeDefined();
     attempts = 0;
     await expect(openUpstream(() => sock(false), 1_000, async () => undefined)).rejects.toThrow('refused');
+  });
+});
+
+describe('envFingerprint', () => {
+  it('ignores key order and changes when any value changes', async () => {
+    const a = await envFingerprint({ XMTP_DATABASE_URL: 'postgresql://a', XMTP_APP_API_KEY: 'k' });
+    expect(await envFingerprint({ XMTP_APP_API_KEY: 'k', XMTP_DATABASE_URL: 'postgresql://a' })).toBe(a);
+    expect(await envFingerprint({ XMTP_DATABASE_URL: 'postgresql://b', XMTP_APP_API_KEY: 'k' })).not.toBe(a);
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(a).not.toContain('postgresql');
   });
 });
