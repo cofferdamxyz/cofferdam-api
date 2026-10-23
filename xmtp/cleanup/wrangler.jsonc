@@ -2,13 +2,15 @@
  * cofferdam-xmtp-cleanup: hourly deletion of expired XMTP envelopes
  * (workspace decision 0042). Deploy from the Mac only:
  *
- *   npx wrangler hyperdrive create cofferdam-xmtp-cleanup \
- *     --connection-string="$XMTP_DATABASE_URL" --caching-disabled
- *   npx wrangler kv namespace create CLEANUP_STATE
- *   (paste both ids below, then) cd xmtp/cleanup && direnv exec ../../.. npx wrangler deploy
+ *   cd xmtp/cleanup && direnv exec ../../.. npx wrangler deploy
  *
- * The connection string is the backend's own (direct endpoint). Hyperdrive
- * pools in front of it; that is fine for this job, never for the backend.
+ * Only after the backend has booted against the database once: it creates the
+ * tables, and the hourly run fails on missing ones before that.
+ *
+ * Hyperdrive (caching disabled) points at the backend's PlanetScale Postgres,
+ * port 5432, as the cleanup role (reads and deletes expired rows only).
+ * Hyperdrive pools in front of it; that is fine for this job, never for the
+ * backend. Both ids below were created on 2026-10-23.
  */
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
@@ -36,6 +38,6 @@
     "PUSH_CURSOR_GUARD": "on"
   },
 
-  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<wrangler hyperdrive create … id>" }],
-  "kv_namespaces": [{ "binding": "CLEANUP_STATE", "id": "<wrangler kv namespace create … id>" }]
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "fe0d773fd1f84e46b9519408d952d9a7" }],
+  "kv_namespaces": [{ "binding": "CLEANUP_STATE", "id": "8d91e16741a74c1d8b85ddc4cbb5256b" }]
 }
