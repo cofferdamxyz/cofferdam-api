@@ -7,7 +7,8 @@
  * Secrets (wrangler secret put, from this directory), all required before the
  * container can start; containerEnv.ts names any that is missing:
  *   XMTP_DATABASE_URL          direct Postgres 17+ URL: PlanetScale on 5432 with
- *                            ?sslmode=require, never 6432 (Neon: no `-pooler`)
+ *                            ?sslmode=verify-full (no sslrootcert=system),
+ *                            never 6432 (Neon: no `-pooler`)
  *   XMTP_APP_API_KEY           openssl rand -base64 48 (the app holds the same)
  *   XMTP_R2_ENDPOINT           https://<account id>.r2.cloudflarestorage.com
  *   XMTP_R2_ACCESS_KEY_ID      R2 API token, Object Write on the bucket only

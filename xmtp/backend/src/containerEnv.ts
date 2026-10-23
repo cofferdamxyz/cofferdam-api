@@ -45,6 +45,12 @@ export function containerEnv(env: BackendEnv): Record<string, string> {
   if (/-pooler\./.test(out.XMTP_DATABASE_URL!) || /:6432\b/.test(out.XMTP_DATABASE_URL!)) {
     throw new Error('xmtp-backend: XMTP_DATABASE_URL must be a direct endpoint, not a transaction pooler');
   }
+  // libpq reads `sslrootcert=system` as "the OS trust store"; the backend's sqlx
+  // reads it as a file path and dies with "No such file or directory" before it
+  // ever dials (2026-10-23, PlanetScale's Node snippet carries it).
+  if (/[?&]sslrootcert=system\b/.test(out.XMTP_DATABASE_URL!)) {
+    throw new Error('xmtp-backend: drop sslrootcert=system from XMTP_DATABASE_URL (sqlx reads it as a file); keep sslmode=verify-full');
+  }
   if (out.XMTP_APP_API_KEY!.length < 32) throw new Error('xmtp-backend: XMTP_APP_API_KEY must be 32+ characters');
   return out;
 }

@@ -99,6 +99,12 @@ describe('the container environment', () => {
       /direct endpoint/,
     );
   });
+  it('refuses sslrootcert=system, which sqlx reads as a file path', () => {
+    expect(() =>
+      containerEnv({ ...full, XMTP_DATABASE_URL: 'postgresql://u:p@aws-us-east-1-5.pg.psdb.cloud:5432/postgres?sslmode=verify-full&sslrootcert=system' }),
+    ).toThrow(/sslrootcert=system/);
+    expect(() => containerEnv({ ...full, XMTP_DATABASE_URL: 'postgresql://u:p@aws-us-east-1-5.pg.psdb.cloud:5432/postgres?sslmode=verify-full' })).not.toThrow();
+  });
   it('passes a complete set through', () => {
     expect(containerEnv(full)).toEqual(full);
   });
