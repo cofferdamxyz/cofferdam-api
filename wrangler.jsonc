@@ -197,6 +197,23 @@
   // ],
   //
   // ─────────────────────────────────────────────────────────────────
+  // Cofferdam Work (workspace docs/product/engine.md; decisions 0018, 0019).
+  // Created by the founder, then uncommented (env.ts already declares them):
+  //   wrangler d1 create cofferdam-work --location=enam
+  //   wrangler d1 migrations apply cofferdam-work --remote
+  //   wrangler vectorize create token-registry-v1 --dimensions=1024 --metric=cosine
+  //   wrangler vectorize create-metadata-index token-registry-v1 --property-name=kind --type=string
+  // The metadata index must exist before the first insert, or those vectors
+  // cannot be filtered. Then the one-time ESCO import (test/esco.import.test.ts).
+  // ─────────────────────────────────────────────────────────────────
+  // "d1_databases": [
+  //   { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "<from wrangler d1 create>", "migrations_dir": "migrations/work" }
+  // ],
+  // "vectorize": [
+  //   { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v1" }
+  // ],
+  //
+  // ─────────────────────────────────────────────────────────────────
   // Durable Objects — SessionDO, ConversationDO, etc.
   // ─────────────────────────────────────────────────────────────────
   // "durable_objects": {

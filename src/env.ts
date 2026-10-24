@@ -129,6 +129,30 @@ export interface Env {
   WORK_EXTRACT_FALLBACK_MODEL?: string;
   /** The hirer's sentence into the intent's fields (S5); unset, llama-3.3-70b in JSON mode. */
   WORK_INTENT_MODEL?: string;
+  /**
+   * The token registry's models (decision 0018): embeddings (unset, `bge-m3`;
+   * changing it is a re-embed migration of `token-registry-v1`, never a quiet
+   * swap), Clef's choice in the τ band (unset, `clef-flash`), and a new
+   * token's English pivot (unset, `llama-3.3-70b` in JSON mode).
+   */
+  WORK_EMBED_MODEL?: string;
+  WORK_ADJUDICATE_MODEL?: string;
+  WORK_PIVOT_MODEL?: string;
+  /**
+   * τ for retrieve-then-choose, cosine in (0, 1]: at or above `WORK_TAU_AUTO`
+   * the best candidate snaps without a model; down to `WORK_TAU_LOW` Clef
+   * adjudicates; below, a mint. Unset or invalid: 0.95 and 0.6 (`services/work/registry.ts`).
+   */
+  WORK_TAU_AUTO?: string;
+  WORK_TAU_LOW?: string;
+  /**
+   * The Work plane's D1 database, `cofferdam-work`: the token registry (and,
+   * from step 4, the listing records). Not created yet; wrangler.jsonc keeps
+   * the binding commented until the founder creates it.
+   */
+  WORK_DB?: D1Database;
+  /** `token-registry-v1`: one bge-m3 vector per registry label (1024 dimensions, cosine), metadata index on `kind`. */
+  TOKEN_REGISTRY?: Vectorize;
   /** `/v1/work/*`: a global brake, and per account after the gate passes. */
   WORK_RL?: RateLimit;
   /** `/v1/work/*`: a generous per-IP ceiling before the gate. */

@@ -30,7 +30,10 @@ export type InferenceOp =
   | 'work-classify'
   | 'work-extract'
   | 'work-extract-fallback'
-  | 'work-intent';
+  | 'work-intent'
+  | 'work-embed'
+  | 'work-adjudicate'
+  | 'work-pivot';
 
 export type InferenceModelVar =
   | 'CHAT_ROUTER_MODEL'
@@ -41,7 +44,10 @@ export type InferenceModelVar =
   | 'WORK_CLASSIFY_MODEL'
   | 'WORK_EXTRACT_MODEL'
   | 'WORK_EXTRACT_FALLBACK_MODEL'
-  | 'WORK_INTENT_MODEL';
+  | 'WORK_INTENT_MODEL'
+  | 'WORK_EMBED_MODEL'
+  | 'WORK_ADJUDICATE_MODEL'
+  | 'WORK_PIVOT_MODEL';
 
 export interface OpSpec {
   /** The model when neither KV nor the environment pins one. */
@@ -82,6 +88,14 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   'work-extract-fallback': { model: '@cf/openai/gpt-oss-120b', envVar: 'WORK_EXTRACT_FALLBACK_MODEL', timeoutMs: 30_000 },
   // A hirer's sentence into the intent's fields (S5): once per vacancy, its own pin and meter.
   'work-intent': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_INTENT_MODEL', timeoutMs: 15_000 },
+  // The token registry (S3, decision 0018): embeddings for retrieve-then-choose
+  // (bge-m3 answered two short labels in 0.7 s from the Mac), Clef's choice
+  // in the τ band, and the English pivot of a new token (free text by nature,
+  // JSON mode, validated as a pivot). The index pins its embedding model:
+  // a change of `work-embed` is a re-embed migration, never a quiet swap.
+  'work-embed': { model: '@cf/baai/bge-m3', envVar: 'WORK_EMBED_MODEL', timeoutMs: 10_000 },
+  'work-adjudicate': { model: '@cf/cloudflare/clef-flash', envVar: 'WORK_ADJUDICATE_MODEL', timeoutMs: 6_000 },
+  'work-pivot': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 15_000 },
 };
 
 /**
@@ -110,6 +124,8 @@ export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   '@cf/cloudflare/clairic': { input: 0.1, output: 0 },
   '@cf/cloudflare/clef': { input: 0.24, output: 0 },
   '@cf/openai/gpt-oss-120b': { input: 0.35, output: 0.75 },
+  // Embeddings bill input only; bge-m3 also reports neurons, which the Work meter prefers.
+  '@cf/baai/bge-m3': { input: 0.012, output: 0 },
 };
 
 const unpriced = new Set<string>();

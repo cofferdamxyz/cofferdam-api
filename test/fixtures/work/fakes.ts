@@ -5,6 +5,7 @@
 
 import { GLOBAL_USAGE_NAME, type ChatMonthUsage, type ChatUsageDelta, type ChatUsageStore } from '../../../src/services/chatUsageStore.js';
 import { OPS, type Inference, type InferenceCall, type InferenceOp } from '../../../src/services/inference/index.js';
+import type { IndexMatch, IndexVector, VectorIndex } from '../../../src/services/work/registry.js';
 
 export interface FakeCall {
   op: InferenceOp;
@@ -88,4 +89,84 @@ export function clairicResult(values: Record<string, unknown>, usage = { input_t
 /** A Clef `choice` answer. */
 export function clefChoice(id: string, choice: string, probabilities: Record<string, number>, inputTokens = 260) {
   return { model: 'clef-flash', answers: { [id]: { type: 'choice', choice, probabilities } }, usage: { input_tokens: inputTokens } };
+}
+
+// ── An in-memory vector index (Vectorize's shape) ───────────────────────────
+
+
+export function cosine(a: readonly number[], b: readonly number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!;
+    na += a[i]! * a[i]!;
+    nb += b[i]! * b[i]!;
+  }
+  return na && nb ? dot / Math.sqrt(na * nb) : 0;
+}
+
+/** Vectorize caps topK at 50 when metadata comes back (decision 0019); the fake enforces it. */
+export const TOPK_WITH_METADATA = 50;
+
+export interface MemoryIndex extends VectorIndex {
+  vectors: Map<string, IndexVector>;
+  queries: { namespace?: string; topK: number; filter?: Record<string, unknown> }[];
+}
+
+export function memoryIndex(): MemoryIndex {
+  const vectors = new Map<string, IndexVector>();
+  const queries: MemoryIndex['queries'] = [];
+  return {
+    vectors,
+    queries,
+    async query(vector, opts) {
+      if (opts.topK > TOPK_WITH_METADATA) throw new Error(`topK ${opts.topK} is above Vectorize's ${TOPK_WITH_METADATA} with metadata`);
+      queries.push({ namespace: opts.namespace, topK: opts.topK, filter: opts.filter });
+      const matches: IndexMatch[] = [];
+      for (const v of vectors.values()) {
+        if ((v.namespace ?? '') !== (opts.namespace ?? '')) continue;
+        if (opts.filter && Object.entries(opts.filter).some(([k, want]) => v.metadata[k] !== want)) continue;
+        matches.push({ id: v.id, score: cosine(vector, v.values), metadata: { ...v.metadata } });
+      }
+      return matches.sort((a, b) => b.score - a.score).slice(0, opts.topK);
+    },
+    async upsert(list) {
+      for (const v of list) vectors.set(v.id, v);
+    },
+    async deleteByIds(ids) {
+      for (const id of ids) vectors.delete(id);
+    },
+  };
+}
+
+/** The unit vector along axis `a`. */
+export function axis(a: number, dims = 1024): number[] {
+  const v = new Array<number>(dims).fill(0);
+  v[a] = 1;
+  return v;
+}
+
+/** A unit vector with cosine `cos` to `axis(a)`, the rest along axis `b`. */
+export function near(a: number, b: number, cos: number, dims = 1024): number[] {
+  const v = new Array<number>(dims).fill(0);
+  v[a] = cos;
+  v[b] = Math.sqrt(Math.max(0, 1 - cos * cos));
+  return v;
+}
+
+/** A `work-embed` answer from a lookup of text to vector; unknown texts throw, so a test names every embedding it expects. */
+export function embedAnswer(table: Record<string, number[]>) {
+  return (input: Record<string, unknown>) => {
+    const texts = input.text as string[];
+    return {
+      shape: [texts.length, 1024],
+      data: texts.map((t) => {
+        const v = table[t];
+        if (!v) throw new Error(`no fake embedding for "${t}"`);
+        return v;
+      }),
+      meta: { cost_metric_value_1: texts.length * 4, neurons: 0.002 * texts.length },
+    };
+  };
 }
