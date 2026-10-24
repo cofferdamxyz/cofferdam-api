@@ -112,13 +112,15 @@ describe.skipIf(!LIVE)('one hirer query (live, Workers AI)', () => {
       const out = await hirerQuery(hire, { sentence: p.text, lang: LANG[p.locale]!, regions: [p.region] });
       const ms = Date.now() - t0;
       const found = out.ok && out.recall.ok ? out.recall.finalists.map((f) => byListing.get(f.listingId) ?? f.listingId) : [];
+      // A Curated tier-2 finalist (vector-strong, a token miss) is shown labelled, as the hirer would see it.
+      const shown = out.ok && out.recall.ok ? out.recall.finalists.map((f) => `${byListing.get(f.listingId) ?? f.listingId}${f.gateTier === 2 ? ' (tier 2)' : ''}`) : [];
       const expected = EXPECTED[p.id] ?? [];
       const ok = found.length === expected.length && expected.every((e) => found.includes(e));
       if (ok) hits++;
       const plan = out.ok ? out.plan : null;
       const cost = (out.ok ? out.calls : out.calls).reduce((s, c) => s + callCostMicroUsd(c), 0);
       rows.push(
-        `| ${p.id} | ${p.region} | ${plan ? `${plan.intent.scope}, ${plan.intent.mode}` : `refused: ${out.ok ? '' : out.error}`} | ${plan ? plan.needs.map((n) => `${n.token} ${n.p.toFixed(2)}`).join('; ') || '—' : '—'} | ${plan?.intent.allOf.join(', ') || '—'} | ${found.join(', ') || '—'} | ${expected.join(', ') || '—'} | ${ok ? 'yes' : '**no**'} | ${(ms / 1000).toFixed(1)} s | $${(cost / 1e6).toFixed(5)} |`,
+        `| ${p.id} | ${p.region} | ${plan ? `${plan.intent.scope}, ${plan.intent.mode}` : `refused: ${out.ok ? '' : out.error}`} | ${plan ? plan.needs.map((n) => `${n.token} ${n.p.toFixed(2)}`).join('; ') || '—' : '—'} | ${plan?.intent.allOf.join(', ') || '—'} | ${shown.join(', ') || '—'} | ${expected.join(', ') || '—'} | ${ok ? 'yes' : '**no**'} | ${(ms / 1000).toFixed(1)} s | $${(cost / 1e6).toFixed(5)} |`,
       );
       if (p.id === 'sink-en' && out.ok && out.recall.ok) {
         sinkSection = [
@@ -131,7 +133,7 @@ describe.skipIf(!LIVE)('one hirer query (live, Workers AI)', () => {
           `- ${(ms / 1000).toFixed(1)} s from the Mac and $${(cost / 1e6).toFixed(5)} of Workers AI.`,
         ];
       }
-      console.log(`${ok ? 'ok  ' : 'MISS'} ${p.id}: ${found.join(', ') || '—'}`);
+      console.log(`${ok ? 'ok  ' : 'MISS'} ${p.id}: ${shown.join(', ') || '—'}`);
     }
 
     const date = new Date().toISOString().slice(0, 10);

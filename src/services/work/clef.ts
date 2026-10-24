@@ -142,6 +142,7 @@ const KIND_NOUN: Record<TokenKind, string> = { pos: 'occupation', skill: 'skill'
  * registry's, with their English names and the label that matched.
  */
 export function adjudicationQuestions(kind: TokenKind, candidates: readonly Candidate[]): Record<string, ClefQuestion> {
+  if (kind === 'cert') return certificateQuestions(candidates);
   const criteria: Record<string, string> = {};
   candidates.forEach((c, i) => {
     criteria[`c${i}`] = c.matched === c.labelEn ? c.labelEn : `${c.labelEn} (matched "${c.matched}")`;
@@ -157,6 +158,31 @@ export function adjudicationQuestions(kind: TokenKind, candidates: readonly Cand
     specialization: {
       type: 'noul',
       instructions: `Is the text a narrower specialization of the entry that matches it (as "marine electrician" is of "electrician"), rather than the same ${noun}?`,
+    },
+  };
+}
+
+/**
+ * A certificate in the τ band (decision 0018, E10): which candidate, by key,
+ * is the same credential, its level and modules aside, or none. Each
+ * candidate is shown with its issuer, jurisdiction, levels and modules, and
+ * the plane has already kept only those the string names and whose words it
+ * can all read, so the level and modules come from the seed, never from
+ * Clef.
+ */
+export function certificateQuestions(candidates: readonly Candidate[]): Record<string, ClefQuestion> {
+  const criteria: Record<string, string> = {};
+  candidates.forEach((c, i) => {
+    const name = c.detail ?? c.labelEn;
+    criteria[`c${i}`] = c.matched === c.labelEn ? name : `${name} (matched "${c.matched}")`;
+  });
+  criteria.none = 'None of these: a different certificate or licence';
+  return {
+    match: {
+      type: 'choice',
+      instructions:
+        'Which entry is the same certificate or licence as the text, from the same issuer, and for the same state or country when the entry names one? A level, grade, module or endorsement written beside it does not make it a different one. Choose none when every entry is a different certificate or licence.',
+      criteria,
     },
   };
 }

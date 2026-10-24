@@ -25,8 +25,10 @@
  *     second Clef call: a yes or no per token on whether the job needs it.
  *     Those tokens are the gate's `anyOf`; a call that answers none of them
  *     stops the plan (fail closed).
- *  4. The credential snaps to a `cert:` token without minting, and the
- *     language maps to its `lang:` code: the gate's `allOf`. The job is
+ *  4. The credential snaps to a `cert:` token without minting, in the job's
+ *     region (`licensed electrician` in `us-tx` is the Texas licence), with
+ *     the level and modules it names as facet tokens, and the language maps
+ *     to its `lang:` code: the gate's `allOf`. The job is
  *     Instant only when every requirement the hirer stated is gated and an
  *     occupation or a skill gates it: a credential (matched or not: a person
  *     confirms a licence, E10), a language the lexicon cannot name, either
@@ -180,15 +182,18 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
     .filter((n): n is { token: string; label: string; p: number } => n.p != null && n.p >= NEED_FLOOR)
     .sort((a, b) => b.p - a.p);
 
-  // The credential and the language: what every finalist must hold.
+  // The credential and the language: what every finalist must hold. A licence phrase means the licence of the
+  // job's region (the hirer's own, first), and a level or module it names is required too.
   let certificate: string | null = null;
+  let certificateTokens: string[] = [];
   if (fields.credential) {
-    const s = await snap(deps.registry, { kind: 'cert', raw: fields.credential, lang: req.lang, mint: false });
+    const s = await snap(deps.registry, { kind: 'cert', raw: fields.credential, lang: req.lang, mint: false, region: req.regions[0] });
     calls.push(...s.calls);
     certificate = s.token;
+    certificateTokens = s.tokens;
   }
   const language = fields.languageCode ? `lang:${fields.languageCode}` : null;
-  const allOf = [certificate, language].filter((t): t is string => t != null);
+  const allOf = [...certificateTokens, ...(language ? [language] : [])];
   const anyOf = needs.map((n) => n.token);
   // Instant only when every stated requirement is gated and a needed token gates it (step 4). A credential or a
   // language the validation dropped (not a span, too long) was still stated: it counts as one the gate cannot hold.

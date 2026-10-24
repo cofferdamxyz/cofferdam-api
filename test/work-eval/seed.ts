@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The synthetic registry seed (`test/fixtures/work/registry-seed.json`),
- * embedded with the real `work-embed` model into an in-memory registry
- * (node:sqlite for D1, a cosine index for Vectorize), for the live
- * evaluations. No ESCO data: its codes come only from the founder's download.
+ * The synthetic registry seed (`test/fixtures/work/registry-seed.json`) and
+ * the curated certificate seed (`src/services/work/certificates.json`, as its
+ * import loads it), embedded with the real `work-embed` model into an
+ * in-memory registry (node:sqlite for D1, a cosine index for Vectorize), for
+ * the live evaluations. No ESCO data: its codes come only from the founder's
+ * download.
  */
 
 import type { Inference } from '../../src/services/inference/index.js';
+import { planCertificateImport } from '../../src/services/work/certificates.js';
 import { D1RegistryStore, embedTexts, labelIdOf, labelNorm, type RegistryDeps, type RegistryLabel, type TokenKind } from '../../src/services/work/registry.js';
 import { sqliteD1 } from '../fixtures/work/d1.js';
 import { memoryIndex } from '../fixtures/work/fakes.js';
@@ -38,6 +41,14 @@ export async function seededRegistry(inference: Inference) {
     if (!e.ok) throw new Error(`seed embedding failed for ${t.token}`);
     await store.insertToken({ token: t.token, kind: t.kind, source: 'seed', labelEn: t.labels.en?.[0] ?? t.token, escoUri: null, iscoCode: null, status: 'active', mergedInto: null }, labels, 0);
     await index.upsert(labels.map((l, i) => ({ id: l.labelId, values: e.vectors[i]!, metadata: { token: t.token, kind: t.kind, lang: l.lang, label: l.label, source: 'seed' } })));
+  }
+  const certificates = await planCertificateImport();
+  for (const t of certificates.tokens) {
+    const labels = certificates.labels.filter((l) => l.token === t.token);
+    const e = await embedTexts(inference, labels.map((l) => l.label));
+    if (!e.ok) throw new Error(`certificate embedding failed for ${t.token}`);
+    await store.insertToken(t, labels, 0);
+    await index.upsert(labels.map((l, i) => ({ id: l.labelId, values: e.vectors[i]!, metadata: { token: t.token, kind: 'cert', lang: l.lang, label: l.label, source: 'seed' } })));
   }
   const registry: RegistryDeps = { inference, store, index };
   return { db, store, index, registry };

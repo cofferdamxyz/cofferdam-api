@@ -231,8 +231,8 @@ const sql = (v: string | number | null) => (v == null ? 'NULL' : typeof v === 'n
 /** Rows per INSERT, well under D1's statement size. */
 const SQL_ROWS = 100;
 
-/** The plan as SQL for `wrangler d1 execute cofferdam-work --remote --file=…`; a re-run inserts nothing twice. */
-export function registrySql(plan: EscoPlan, at: number): string {
+/** A plan as SQL for `wrangler d1 execute cofferdam-work --remote --file=…` (ESCO's, or the certificate seed's); a re-run inserts nothing twice. */
+export function registrySql(plan: Pick<EscoPlan, 'tokens' | 'labels'>, at: number): string {
   const out: string[] = [];
   for (let i = 0; i < plan.tokens.length; i += SQL_ROWS) {
     const rows = plan.tokens

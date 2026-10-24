@@ -146,7 +146,12 @@ describe('publishListing', () => {
   it('snaps the claims, embeds the listing in its namespace with coarse metadata only, and keeps the exact tokens in D1', async () => {
     const { publish, jobsIndex, listings } = await world();
     const out = await publishListing(publish, draft({ certificates: ['Texas Journeyman Plumber License'], languages: ['en', 'es'] }));
-    expect(out).toMatchObject({ ok: true, namespace: 'us-tx:onsite', tokens: ['cert:plumber-license:us-tx', 'lang:en', 'lang:es', 'pos:plumber', 'skill:leak-repair'] });
+    // The journeyman's licence holds its level and the one below it, so a Tradesman job finds it and a Master job never does.
+    expect(out).toMatchObject({
+      ok: true,
+      namespace: 'us-tx:onsite',
+      tokens: ['cert:plumber-license:us-tx', 'cert:plumber-license:us-tx/journeyman', 'cert:plumber-license:us-tx/tradesman', 'lang:en', 'lang:es', 'pos:plumber', 'skill:leak-repair'],
+    });
     if (!out.ok) return;
     const v = jobsIndex.vectors.get(out.listingId)!;
     expect(v.namespace).toBe('us-tx:onsite');

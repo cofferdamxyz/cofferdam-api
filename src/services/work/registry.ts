@@ -23,6 +23,11 @@
  *     English name, the token's pivot, and the new token is `pending`: it
  *     snaps from then on, and waits for review and an `isco:` code.
  *
+ * A certificate takes its own path through the curated seed
+ * (`certificates.ts`): its level and modules are read off the string, a
+ * claim must name the credential, a hirer's phrase means the licence of the
+ * job's region, and Clef sees at most three candidates; it never mints.
+ *
  * No model ever writes an ESCO or ISCO code: those come only from the ESCO
  * export (`esco.ts`). Clef answers which of the candidates it was shown, by
  * key. Every decision past the exact-label shortcut is recorded
@@ -34,6 +39,7 @@
 
 import type { Inference } from '../inference/index.js';
 import { fold, scanText, type BlockLang } from './blocks.js';
+import { snapCertificate, type CertFacets, type CertificateCatalogue } from './certificates.js';
 import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, fieldsRequest, readFieldsAnswer, usageOrEstimate, withCalls, type FieldSet, type WorkCall } from './fields.js';
@@ -369,6 +375,13 @@ export interface SnapInput {
   lang: BlockLang;
   /** False for a hirer's words: an intent snaps to what exists and never mints. Default true. */
   mint?: boolean;
+  /**
+   * A hirer's requirement only (`mint: false`): the job's coarse region,
+   * which names the jurisdiction a licence phrase leaves open (`licensed
+   * electrician` in `us-tx` is the Texas licence). A worker's claim names its
+   * own, or matches no licence.
+   */
+  region?: string;
 }
 
 export interface Candidate {
@@ -378,6 +391,8 @@ export interface Candidate {
   matched: string;
   matchedLang: string;
   score: number;
+  /** A certificate's issuer, jurisdiction, levels and modules, as Clef reads the candidate. */
+  detail?: string;
 }
 
 export interface SnapResult {
@@ -388,8 +403,20 @@ export interface SnapResult {
   score: number | null;
   probability: number | null;
   candidates: Candidate[];
+  /** A certificate's level and modules, read off the string by the seed; null for an occupation or a skill. */
+  facets: CertFacets | null;
+  /**
+   * What the snap puts in an exact token list: the token, and a
+   * certificate's facet tokens (a claim: its level, every level below it and
+   * its modules; a requirement: the level and modules it names). Empty
+   * without a token.
+   */
+  tokens: string[];
   calls: WorkCall[];
 }
+
+/** A decision before its calls: the facets and tokens default to the token alone. */
+export type SnapOutcome = Omit<SnapResult, 'calls' | 'facets' | 'tokens'> & Partial<Pick<SnapResult, 'facets' | 'tokens'>>;
 
 export interface RegistryDeps {
   inference: Inference;
@@ -400,6 +427,8 @@ export interface RegistryDeps {
   /** A new decision id (default: a random UUID). */
   newId?: () => string;
   log?: (fields: Record<string, unknown>) => void;
+  /** The curated certificate seed (default: `certificates.json`). */
+  certificates?: CertificateCatalogue;
 }
 
 /** The JSON-mode request for a new token's English pivot. */
@@ -486,12 +515,12 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   const now = deps.now ?? Date.now;
   const tau = deps.tau ?? DEFAULT_TAU;
   const raw = input.raw.normalize('NFC').replace(/\s+/g, ' ').trim();
-  const result = (r: Omit<SnapResult, 'calls'>): SnapResult => ({ ...r, calls });
+  const result = (r: SnapOutcome): SnapResult => ({ facets: null, tokens: r.token ? [r.token] : [], ...r, calls });
   const none = { token: null, labelEn: null, specialization: false, score: null, probability: null, candidates: [] };
   if (!raw || raw.length > RAW_MAX_CHARS || scanText(raw)) return result({ decision: 'unmatched', ...none });
   const norm = labelNorm(raw);
   const at = now();
-  const record = async (r: Omit<SnapResult, 'calls'>, model: string | null) => {
+  const record = async (r: SnapOutcome, model: string | null) => {
     await deps.store.recordDecision({
       id: deps.newId?.() ?? crypto.randomUUID(),
       kind: input.kind,
@@ -510,6 +539,9 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   };
   const observe = async (token: string) =>
     deps.store.addLabels([{ labelId: await labelIdOf(token, input.lang, norm), token, lang: input.lang, label: raw, labelNorm: norm, kind: 'observed', embedded: false }], at);
+
+  // A certificate takes the seed's path, and never mints.
+  if (input.kind === 'cert') return snapCertificate(deps, input, { raw, norm, calls, tau, now, result, record, observe });
 
   // 1. An exact known label.
   const labelled = await deps.store.tokensByLabel(norm, input.kind);
@@ -566,9 +598,9 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
     if (pick.choice !== 'none') undecided = pick.p;
   }
 
-  // 3. Nothing matched: certificates (and anything a hirer wrote) stay unmatched; occupations and skills mint.
+  // 3. Nothing matched: anything a hirer wrote stays unmatched; occupations and skills mint.
   const score = top?.score ?? null;
-  if (input.kind === 'cert' || input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
+  if (input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const english = await pivot(deps, { ...input, raw }, calls);
   if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const token = tokenOf(input.kind, english);
