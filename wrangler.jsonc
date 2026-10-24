@@ -161,6 +161,34 @@
     { "name": "WORK_RL", "namespace_id": "1110", "simple": { "limit": 30, "period": 60 } },
     // /v1/work and /v1/jobs before the gate (work-ip:, jobs-ip: and work-off-ip: keys): as generous as chat's.
     { "name": "WORK_IP_RL", "namespace_id": "1111", "simple": { "limit": 120, "period": 60 } }
+  ],
+
+  // ─────────────────────────────────────────────────────────────────
+  // Cofferdam Work (workspace docs/product/engine.md; decisions 0018, 0019),
+  // created by the founder on 2026-10-24 (docs/runbooks/cloudflare-deploys.md,
+  // Cofferdam Work resources): D1 cofferdam-work with migrations/work applied,
+  // Vectorize token-registry-v1 (metadata index kind) and jobs-listings-v1
+  // (metadata index tier, namespaced by coarse region and scope, decision
+  // 0019). A metadata index must exist before the first insert, or those
+  // vectors cannot be filtered. The listing routes also need the secret
+  // WORK_PSEUDONYM_KEY (set 2026-10-24): the HMAC key of the account's Work
+  // pseudonym. Rotating it changes every pseudonym, and no listing can be
+  // re-keyed in place, so a rotation takes every listing down first and the
+  // phones publish again.
+  //
+  // "remote": true (the founder, 2026-10-24): wrangler dev, which the app on a
+  // device tests against, reaches these live resources, since Vectorize has
+  // no local mode. So a local run reads and writes the deployed plane's
+  // registry and listings: a listing published from wrangler dev is a real
+  // listing, and .dev.vars needs the deployed WORK_PSEUDONYM_KEY, or it lands
+  // under a pseudonym the deployed Worker never derives.
+  // ─────────────────────────────────────────────────────────────────
+  "d1_databases": [
+    { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "bcaf84d1-c870-4e4e-85e9-6b0dd822ecd5", "migrations_dir": "migrations/work", "remote": true }
+  ],
+  "vectorize": [
+    { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v1", "remote": true },
+    { "binding": "JOBS_LISTINGS", "index_name": "jobs-listings-v1", "remote": true }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources
@@ -197,32 +225,6 @@
   // ─────────────────────────────────────────────────────────────────
   // "d1_databases": [
   //   { "binding": "DB", "database_name": "cofferdam", "database_id": "<TBD>" }
-  // ],
-  //
-  // ─────────────────────────────────────────────────────────────────
-  // Cofferdam Work (workspace docs/product/engine.md; decisions 0018, 0019).
-  // Created by the founder, then uncommented (env.ts already declares them):
-  //   wrangler d1 create cofferdam-work --location=enam
-  //   wrangler d1 migrations apply cofferdam-work --remote
-  //   wrangler vectorize create token-registry-v1 --dimensions=1024 --metric=cosine
-  //   wrangler vectorize create-metadata-index token-registry-v1 --property-name=kind --type=string
-  //   wrangler vectorize create jobs-listings-v1 --dimensions=1024 --metric=cosine
-  //   wrangler vectorize create-metadata-index jobs-listings-v1 --property-name=tier --type=number
-  // A metadata index must exist before the first insert, or those vectors
-  // cannot be filtered. Then the one-time ESCO import (test/esco.import.test.ts).
-  // jobs-listings-v1 is namespaced by coarse region and scope (decision 0019).
-  // The listing routes also need the secret WORK_PSEUDONYM_KEY (wrangler
-  // secret put WORK_PSEUDONYM_KEY; at least 32 characters): the HMAC key of
-  // the account's Work pseudonym. Rotating it changes every pseudonym, and no
-  // listing can be re-keyed in place, so a rotation takes every listing down
-  // first and the phones publish again.
-  // ─────────────────────────────────────────────────────────────────
-  // "d1_databases": [
-  //   { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "<from wrangler d1 create>", "migrations_dir": "migrations/work" }
-  // ],
-  // "vectorize": [
-  //   { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v1" },
-  //   { "binding": "JOBS_LISTINGS", "index_name": "jobs-listings-v1" }
   // ],
   //
   // ─────────────────────────────────────────────────────────────────

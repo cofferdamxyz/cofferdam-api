@@ -146,9 +146,10 @@ export interface Env {
   WORK_TAU_AUTO?: string;
   WORK_TAU_LOW?: string;
   /**
-   * The Work plane's D1 database, `cofferdam-work`: the token registry (and,
-   * from step 4, the listing records). Not created yet; wrangler.jsonc keeps
-   * the binding commented until the founder creates it.
+   * The Work plane's D1 database, `cofferdam-work`: the token registry and
+   * the listing records (migrations in `migrations/work/`). Created
+   * 2026-10-24 and bound with `remote: true`, so `wrangler dev` uses the live
+   * database too.
    */
   WORK_DB?: D1Database;
   /** `token-registry-v1`: one bge-m3 vector per registry label (1024 dimensions, cosine), metadata index on `kind`. */
@@ -157,7 +158,9 @@ export interface Env {
    * `jobs-listings-v1`: one bge-m3 vector per published listing (1024, cosine),
    * namespaced by coarse region and scope (`us-tx:onsite`, `br:remote`,
    * decision 0019), metadata `{v, region, scope, tier, bloom, model}` only;
-   * metadata index on `tier`. Not created yet.
+   * metadata index on `tier`. Created 2026-10-24, like `token-registry-v1`
+   * (metadata index on `kind`); both bound with `remote: true`, since
+   * Vectorize has no local mode.
    */
   JOBS_LISTINGS?: Vectorize;
   /** Countries whose remote namespaces a remote intent queries, comma-separated ISO codes; unset, `us,br,mx`. */
