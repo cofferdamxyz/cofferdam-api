@@ -25,10 +25,10 @@ import { failureCode, type ExecutorOptions } from './executor.js';
 import {
   fieldsRequest,
   int,
-  NO_USAGE,
+  estimatedUsage,
   readFieldsAnswer,
   str,
-  usageOf,
+  usageOrEstimate,
   validateValues,
   type ExtractedField,
   type FieldSet,
@@ -109,15 +109,16 @@ export async function attemptIntent(inference: Inference, op: 'work-intent' | 'w
   const now = opts.now ?? Date.now;
   const model = await inference.model(op);
   const t0 = now();
+  const request = intentRequest(model, text);
   let result: unknown;
   try {
-    result = await inference.run(op, intentRequest(model, text), { signal: opts.signal });
+    result = await inference.run(op, request, { signal: opts.signal });
   } catch (err) {
     opts.log?.({ event: 'work_intent_failed', op, model, reason: failureCode(err) });
-    return { call: { op, model, ok: false, ms: now() - t0, usage: NO_USAGE }, fields: null, violations: [], intent: null, failure: 'call_failed' };
+    return { call: { op, model, ok: false, ms: now() - t0, usage: estimatedUsage(request) }, fields: null, violations: [], intent: null, failure: 'call_failed' };
   }
   const read = readFieldsAnswer(model, INTENT_FIELDS, result);
-  const call: WorkCall = { op, model, ok: read.ok, ms: now() - t0, usage: usageOf(result) };
+  const call: WorkCall = { op, model, ok: read.ok, ms: now() - t0, usage: usageOrEstimate(result, request) };
   if (!read.ok) {
     opts.log?.({ event: 'work_intent_failed', op, model, reason: read.reason });
     return { call, fields: null, violations: [], intent: null, failure: read.reason };

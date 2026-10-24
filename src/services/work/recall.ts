@@ -31,7 +31,7 @@
 import type { Inference } from '../inference/index.js';
 import { bloomHas, bloomProbe } from './bloom.js';
 import type { ExecutorOptions } from './executor.js';
-import type { WorkCall } from './fields.js';
+import { withCalls, type WorkCall } from './fields.js';
 import { namespaceOf, REGION, type ListingStore, type Scope } from './listings.js';
 import { embedTexts, type IndexMatch, type VectorIndex } from './registry.js';
 
@@ -110,12 +110,17 @@ interface Gated {
   gateTier: 1 | 2;
 }
 
-/** S6 and S7 for one intent: see the module comment. */
+/** S6 and S7 for one intent: see the module comment. An index or store failure throws a `WorkCallsError` carrying the embedding call. */
 export async function recall(deps: RecallDeps, intent: RecallIntent): Promise<RecallOutcome> {
   const namespaces = namespacesFor(intent, deps.remoteCountries, deps.namespacePrefix);
   if (!namespaces || !intent.queryText.trim()) return { ok: false, error: 'bad_intent', calls: [] };
+  return withCalls((calls) => recallWith(deps, intent, namespaces, calls));
+}
+
+async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: string[], calls: WorkCall[]): Promise<RecallOutcome> {
   const embedding = await embedTexts(deps.inference, [intent.queryText], { now: deps.now, log: deps.log });
-  if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls: [embedding.call] };
+  calls.push(embedding.call);
+  if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
   const vector = embedding.vectors[0]!;
 
   // S6: one query per namespace, in parallel, merged by score.
@@ -159,5 +164,5 @@ export async function recall(deps: RecallDeps, intent: RecallIntent): Promise<Re
       namespace: g.match.namespace,
     });
   }
-  return { ok: true, finalists, namespaces, recalled: merged.length, gated: gated.length, calls: [embedding.call] };
+  return { ok: true, finalists, namespaces, recalled: merged.length, gated: gated.length, calls };
 }

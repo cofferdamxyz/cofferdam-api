@@ -13,8 +13,12 @@
  *     above τ_auto the best token is taken; in the band down to τ_low,
  *     `clef-flash` (`work-adjudicate`) chooses one candidate or none and says
  *     whether the title is a specialization of it; below the band, or when
- *     Clef chooses none, an occupation or a skill is minted and a certificate
- *     stays unmatched (certificates are never minted).
+ *     Clef chooses none at or above its floor, an occupation or a skill is
+ *     minted and a certificate stays unmatched (certificates are never
+ *     minted). A Clef call that fails or answers nothing leaves the string
+ *     unmatched; one that answers below its floor is undecided, and the
+ *     string may still reach an existing token through the pivot, but never
+ *     mints.
  *  3. A mint asks the JSON-mode model (`work-pivot`) for the international-
  *     English name, the token's pivot, and the new token is `pending`: it
  *     snaps from then on, and waits for review and an `isco:` code.
@@ -32,7 +36,7 @@ import type { Inference } from '../inference/index.js';
 import { fold, scanText, type BlockLang } from './blocks.js';
 import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
-import { fieldsRequest, NO_USAGE, readFieldsAnswer, usageOf, type FieldSet, type WorkCall } from './fields.js';
+import { estimatedUsage, fieldsRequest, readFieldsAnswer, usageOrEstimate, withCalls, type FieldSet, type WorkCall } from './fields.js';
 
 export const TOKEN_KINDS = ['pos', 'skill', 'cert'] as const;
 export type TokenKind = (typeof TOKEN_KINDS)[number];
@@ -120,6 +124,8 @@ export interface RegistryStore {
   insertToken(token: RegistryToken, labels: RegistryLabel[], at: number): Promise<boolean>;
   /** Add labels to tokens that exist; a label already known is left as it is. */
   addLabels(labels: RegistryLabel[], at: number): Promise<void>;
+  /** The labels whose vectors are now in `token-registry-v1`. */
+  markEmbedded(labelIds: string[]): Promise<void>;
   recordDecision(record: SnapRecord): Promise<void>;
 }
 
@@ -222,6 +228,17 @@ export class D1RegistryStore implements RegistryStore {
     if (labels.length) await this.db.batch(labels.map((l) => this.labelStatement(l, at)));
   }
 
+  async markEmbedded(labelIds: string[]): Promise<void> {
+    const ids = [...new Set(labelIds)];
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50);
+      await this.db
+        .prepare(`UPDATE registry_labels SET embedded = 1 WHERE label_id IN (${chunk.map(() => '?').join(', ')})`)
+        .bind(...chunk)
+        .run();
+    }
+  }
+
   async recordDecision(r: SnapRecord): Promise<void> {
     await this.db
       .prepare(
@@ -287,14 +304,15 @@ export async function embedTexts(inference: Inference, texts: string[], opts: Ex
   const now = opts.now ?? Date.now;
   const model = await inference.model('work-embed');
   const t0 = now();
+  const request = { text: texts };
   let result: unknown;
   try {
-    result = await inference.run('work-embed', { text: texts }, { signal: opts.signal });
+    result = await inference.run('work-embed', request, { signal: opts.signal });
   } catch (err) {
     opts.log?.({ event: 'work_embed_failed', model, reason: failureCode(err) });
-    return { ok: false, call: { op: 'work-embed', model, ok: false, ms: now() - t0, usage: NO_USAGE } };
+    return { ok: false, call: { op: 'work-embed', model, ok: false, ms: now() - t0, usage: estimatedUsage(request) } };
   }
-  const usage = usageOf(result);
+  const usage = usageOrEstimate(result, request);
   const data = (result as { data?: unknown } | null)?.data;
   const ok =
     Array.isArray(data) &&
@@ -417,11 +435,11 @@ async function pivot(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): P
   try {
     const result = await deps.inference.run('work-pivot', req);
     const read = readFieldsAnswer(model, PIVOT_FIELDS, result);
-    calls.push({ op: 'work-pivot', model, ok: read.ok, ms: now() - t0, usage: usageOf(result) });
+    calls.push({ op: 'work-pivot', model, ok: read.ok, ms: now() - t0, usage: usageOrEstimate(result, req) });
     if (!read.ok || typeof read.fields.english?.value !== 'string') return null;
     return validPivot(read.fields.english.value);
   } catch (err) {
-    calls.push({ op: 'work-pivot', model, ok: false, ms: now() - t0, usage: NO_USAGE });
+    calls.push({ op: 'work-pivot', model, ok: false, ms: now() - t0, usage: estimatedUsage(req) });
     deps.log?.({ event: 'work_pivot_failed', model, reason: failureCode(err) });
     return null;
   }
@@ -455,11 +473,18 @@ export async function candidatesFor(deps: Pick<RegistryDeps, 'store' | 'index'>,
   return [...out.values()].sort((a, b) => b.score - a.score);
 }
 
-/** Retrieve, then choose: see the module comment. Never throws on a model failure; the decision says what happened. */
+/**
+ * Retrieve, then choose: see the module comment. Never throws on a model
+ * failure (the decision says what happened); a store or index failure throws
+ * a `WorkCallsError` carrying the calls already made.
+ */
 export async function snap(deps: RegistryDeps, input: SnapInput): Promise<SnapResult> {
+  return withCalls((calls) => snapWith(deps, input, calls));
+}
+
+async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): Promise<SnapResult> {
   const now = deps.now ?? Date.now;
   const tau = deps.tau ?? DEFAULT_TAU;
-  const calls: WorkCall[] = [];
   const raw = input.raw.normalize('NFC').replace(/\s+/g, ' ').trim();
   const result = (r: Omit<SnapResult, 'calls'>): SnapResult => ({ ...r, calls });
   const none = { token: null, labelEn: null, specialization: false, score: null, probability: null, candidates: [] };
@@ -507,44 +532,57 @@ export async function snap(deps: RegistryDeps, input: SnapInput): Promise<SnapRe
   }
 
   let clefModel: string | null = null;
+  /** Clef answered in the band, but below its floor: the pivot may find an existing token, never mint one. */
+  let undecided: number | null = null;
   if (top && top.score >= tau.low) {
     clefModel = await deps.inference.model('work-adjudicate');
+    const request = clefInput(clefModel, adjudicationState(input.kind, raw, input.lang), adjudicationQuestions(input.kind, candidates));
     const t0 = now();
+    let answer: unknown;
     try {
-      const answer = await deps.inference.run('work-adjudicate', clefInput(clefModel, adjudicationState(input.kind, raw, input.lang), adjudicationQuestions(input.kind, candidates)));
-      calls.push({ op: 'work-adjudicate', model: clefModel, ok: true, ms: now() - t0, usage: { ...usageOf(answer), neurons: null } });
-      const keys = [...candidates.map((_, i) => `c${i}`), 'none'];
-      const pick = readChoice(answer, 'match', keys, ADJUDICATION_FLOOR);
-      if (pick.choice && pick.choice !== 'none') {
-        const chosen = candidates[Number(pick.choice.slice(1))]!;
-        const specialization = (readNoul(answer, 'specialization') ?? 0) > SPECIALIZATION_FLOOR;
-        await observe(chosen.token);
-        return record({ decision: 'chosen', token: chosen.token, labelEn: chosen.labelEn, specialization, score: top.score, probability: pick.p, candidates }, clefModel);
-      }
+      answer = await deps.inference.run('work-adjudicate', request);
     } catch (err) {
-      calls.push({ op: 'work-adjudicate', model: clefModel, ok: false, ms: now() - t0, usage: NO_USAGE });
+      calls.push({ op: 'work-adjudicate', model: clefModel, ok: false, ms: now() - t0, usage: estimatedUsage(request) });
       deps.log?.({ event: 'work_adjudicate_failed', model: clefModel, reason: failureCode(err) });
       // Fail closed: no adjudication is no snap.
       return record({ decision: 'unmatched', ...none, score: top.score, candidates }, clefModel);
     }
+    const keys = [...candidates.map((_, i) => `c${i}`), 'none'];
+    const pick = readChoice(answer, 'match', keys, ADJUDICATION_FLOOR);
+    const answered = pick.p > 0 || Object.keys(pick.probabilities).length > 0;
+    calls.push({ op: 'work-adjudicate', model: clefModel, ok: answered, ms: now() - t0, usage: { ...usageOrEstimate(answer, request), neurons: null } });
+    if (pick.choice && pick.choice !== 'none') {
+      const chosen = candidates[Number(pick.choice.slice(1))]!;
+      const specialization = (readNoul(answer, 'specialization') ?? 0) > SPECIALIZATION_FLOOR;
+      await observe(chosen.token);
+      return record({ decision: 'chosen', token: chosen.token, labelEn: chosen.labelEn, specialization, score: top.score, probability: pick.p, candidates }, clefModel);
+    }
+    // Only Clef's own "none", at or above the floor, sends the string on to a
+    // mint. No answer is no snap; an answer below the floor goes on undecided.
+    if (!answered) {
+      deps.log?.({ event: 'work_adjudicate_failed', model: clefModel, reason: 'no_answer' });
+      return record({ decision: 'unmatched', ...none, score: top.score, candidates }, clefModel);
+    }
+    if (pick.choice !== 'none') undecided = pick.p;
   }
 
   // 3. Nothing matched: certificates (and anything a hirer wrote) stay unmatched; occupations and skills mint.
   const score = top?.score ?? null;
-  if (input.kind === 'cert' || input.mint === false) return record({ decision: 'unmatched', ...none, score, candidates }, clefModel);
+  if (input.kind === 'cert' || input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const english = await pivot(deps, { ...input, raw }, calls);
-  if (!english) return record({ decision: 'unmatched', ...none, score, candidates }, clefModel);
+  if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const token = tokenOf(input.kind, english);
   const existing = (await deps.store.tokens([token])).get(token);
   if (existing) {
     await observe(existing.token);
     return record({ decision: 'pivot', token: existing.token, labelEn: existing.labelEn, specialization: false, score, probability: null, candidates }, clefModel);
   }
+  if (undecided != null) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const labels: RegistryLabel[] = [
-    { labelId: await labelIdOf(token, 'en', labelNorm(english)), token, lang: 'en', label: english, labelNorm: labelNorm(english), kind: 'preferred', embedded: true },
+    { labelId: await labelIdOf(token, 'en', labelNorm(english)), token, lang: 'en', label: english, labelNorm: labelNorm(english), kind: 'preferred', embedded: false },
   ];
   if (input.lang !== 'en' || labelNorm(english) !== norm) {
-    labels.push({ labelId: await labelIdOf(token, input.lang, norm), token, lang: input.lang, label: raw, labelNorm: norm, kind: 'observed', embedded: true });
+    labels.push({ labelId: await labelIdOf(token, input.lang, norm), token, lang: input.lang, label: raw, labelNorm: norm, kind: 'observed', embedded: false });
   }
   const minted: RegistryToken = { token, kind: input.kind, source: 'emergent', labelEn: english, escoUri: null, iscoCode: null, status: 'pending', mergedInto: null };
   if (!(await deps.store.insertToken(minted, labels, at))) {
@@ -558,6 +596,9 @@ export async function snap(deps: RegistryDeps, input: SnapInput): Promise<SnapRe
   const pivotVector = labels.length > 1 ? (pivotEmbedding?.ok ? pivotEmbedding.vectors[0] : undefined) : vector;
   if (pivotVector) vectors.push({ id: labels[0]!.labelId, values: pivotVector, metadata: { token, kind: input.kind, lang: 'en', label: english, source: 'emergent' } });
   if (labels[1]) vectors.push({ id: labels[1].labelId, values: vector, metadata: { token, kind: input.kind, lang: input.lang, label: raw, source: 'emergent' } });
+  // A label is marked embedded only once its vector is in: a failed pivot
+  // embedding leaves the English label for the backfill to find.
   await deps.index.upsert(vectors);
+  await deps.store.markEmbedded(vectors.map((v) => v.id));
   return record({ decision: 'minted', token, labelEn: english, specialization: false, score, probability: null, candidates }, clefModel);
 }

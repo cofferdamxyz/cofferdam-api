@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { BLOOM_BITS, bloomHas, bloomOf, bloomProbe } from '../src/services/work/bloom.js';
-import { hirerQuery, planHire, type HireDeps } from '../src/services/work/hire.js';
+import type { BlockLang } from '../src/services/work/blocks.js';
+import { hirerQuery, planHire, type HireDeps, type HirerRequest } from '../src/services/work/hire.js';
 import {
   checkDraft,
   D1ListingStore,
@@ -16,6 +17,7 @@ import {
   type PublishDeps,
 } from '../src/services/work/listings.js';
 import { namespacesFor, parseRemoteCountries, recall, RECALL_TOP_K, type RecallDeps, type RecallIntent } from '../src/services/work/recall.js';
+import { WorkCallsError } from '../src/services/work/fields.js';
 import { D1RegistryStore, labelIdOf, labelNorm, type RegistryDeps, type TokenKind } from '../src/services/work/registry.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 import { fakeInference, jsonModeResult, memoryIndex, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
@@ -128,7 +130,9 @@ describe('namespaces and drafts', () => {
     expect(checkDraft(draft({ skills: ['Call (713) 555-0142'] }))).toBe('refused_pattern');
     expect(checkDraft(draft({ titles: [], skills: [] }))).toBe('no_claims');
     expect(checkDraft(draft({ profileId: 'Main Profile' }))).toBe('bad_shape');
+    expect(checkDraft(draft({ pseudonym: 'p'.repeat(65) }))).toBe('bad_shape');
     expect(checkDraft(draft({ languages: ['english'] }))).toBe('bad_shape');
+    expect(checkDraft(draft({ lang: 'fr' as BlockLang }))).toBe('bad_lang');
   });
 
   it('keys a listing by pseudonym and profile', async () => {
@@ -297,7 +301,97 @@ describe('one hirer query', () => {
     const unknown = await world({ 'work-intent': intentAnswer({ credential: 'certified welder' }), 'work-classify': clefSays(/plumber/) }, calls);
     const noCert = await planHire(unknown.hire, { sentence: `${SINK} Must be a certified welder.`, lang: 'en', regions: ['us-tx'] });
     expect(noCert.ok && noCert.plan.certificate).toBeNull();
+    // A credential the registry cannot name is still a requirement: a person checks it.
+    expect(noCert.ok && noCert.plan.intent.mode).toBe('curated');
     expect(calls.map((c) => c.op)).not.toContain('work-pivot');
+  });
+
+  it('checks the sentence, its language and its regions before any hosted call', async () => {
+    const calls: FakeCall[] = [];
+    const w = await world({ 'work-intent': intentAnswer(), 'work-classify': clefSays(/plumber/) }, calls);
+    const ask = (over: Partial<HirerRequest>) => planHire(w.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'], ...over });
+    const dash = String.fromCharCode(0x2011);
+    expect(await ask({ sentence: `${SINK} Call me at (713) 555-0142.` })).toMatchObject({ ok: false, error: 'text_refused', reason: 'long_number' });
+    expect(await ask({ sentence: `${SINK} Text 713${dash}555${dash}0142.` })).toMatchObject({ ok: false, error: 'text_refused', reason: 'long_number' });
+    expect(await ask({ sentence: `${SINK} Details at joaosilva.com.br` })).toMatchObject({ ok: false, error: 'text_refused', reason: 'url' });
+    expect(await ask({ sentence: '   ' })).toMatchObject({ ok: false, error: 'text_refused', reason: 'empty' });
+    expect(await ask({ sentence: 'x'.repeat(1_001) })).toMatchObject({ ok: false, error: 'text_refused', reason: 'too_long' });
+    expect(await ask({ lang: 'fr' as BlockLang })).toMatchObject({ ok: false, error: 'bad_request', reason: 'lang' });
+    for (const regions of [[], ['29.76,-95.37'], Array.from({ length: 9 }, (_, i) => `us-a${i}`)]) {
+      expect(await ask({ regions })).toMatchObject({ ok: false, error: 'bad_request', reason: 'regions' });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it('stops when Clef answers none of the needs, and goes Curated when the job needs none of them', async () => {
+    const safeOnly = (input: Record<string, unknown>) => {
+      const questions = input.questions as Record<string, unknown>;
+      return 'harmful' in questions
+        ? { answers: { harmful: { noul: 0.01 }, injection: { noul: 0.01 }, scope: { choice: 'onsite', probabilities: { onsite: 0.9 } } } }
+        : { answers: {} };
+    };
+    const silent = await world({ 'work-intent': intentAnswer(), 'work-classify': safeOnly });
+    const stopped = await planHire(silent.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] });
+    expect(stopped).toMatchObject({ ok: false, error: 'classification_failed' });
+    // Both Clef calls reported no tokens: each is metered at its estimated input, and the unanswered one failed.
+    expect(stopped.calls.filter((c) => c.op === 'work-classify').map((c) => [c.ok, c.usage.tokensIn > 0])).toEqual([
+      [true, true],
+      [false, true],
+    ]);
+    const none = await world({ 'work-intent': intentAnswer(), 'work-classify': clefSays(/nothing here/) });
+    const planned = await planHire(none.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] });
+    expect(planned.ok && planned.plan.intent).toMatchObject({ anyOf: [], mode: 'curated' });
+    const klingon = await world({ 'work-intent': intentAnswer({ language: 'Klingon' }), 'work-classify': clefSays(/plumber/) });
+    const unnamed = await planHire(klingon.hire, { sentence: `${SINK} Must speak Klingon.`, lang: 'en', regions: ['us-tx'] });
+    expect(unnamed.ok && unnamed.plan).toMatchObject({ language: null, intent: { mode: 'curated' } });
+    // A requirement the hirer stated but the model rewrote (not a span of the sentence) is dropped, and still counts.
+    for (const over of [{ credential: 'plumber license' }, { language: 'the Spanish language' }]) {
+      const rewritten = await world({ 'work-intent': intentAnswer(over), 'work-classify': clefSays(/plumber|leak/) });
+      const sentence = `${SINK} Must be a licensed plumber who speaks Spanish.`;
+      const plan = await planHire(rewritten.hire, { sentence, lang: 'en', regions: ['us-tx'] });
+      expect(plan.ok && plan.plan.intent, JSON.stringify(over)).toMatchObject({ mode: 'curated' });
+      expect(plan.ok && plan.plan.fields.credential).toBeNull();
+    }
+  });
+
+  it('carries every hosted call on a store or index failure, so the route can still meter them', async () => {
+    const ops = (e: unknown) => (e instanceof WorkCallsError ? e.calls.map((c) => c.op) : e);
+    const down = (what: string) => async () => {
+      throw new Error(`${what} down`);
+    };
+    // Publish: the claims snapped and the listing embedded, then the record write failed.
+    const p = await world();
+    p.listings.put = down('d1');
+    const published = ops(await publishListing(p.publish, draft({})).catch((e: unknown) => e)) as string[];
+    expect(published.filter((op) => op === 'work-embed').length).toBeGreaterThanOrEqual(2);
+    // The plan: the request checks, the parse and the task's embedding ran, then the registry's index failed.
+    const h = await world({ 'work-intent': intentAnswer(), 'work-classify': clefSays(/plumber/) });
+    h.registryIndex.query = down('vectorize');
+    expect(ops(await planHire(h.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] }).catch((e: unknown) => e))).toEqual([
+      'work-classify',
+      'work-intent',
+      'work-embed',
+    ]);
+    // The whole query: the plan's calls and recall's embedding, then the listing read failed.
+    const q = await world({ 'work-intent': intentAnswer(), 'work-classify': clefSays(/plumber|leak/) });
+    expect((await publishListing(q.publish, draft({}))).ok).toBe(true);
+    q.listings.get = down('d1');
+    expect(ops(await hirerQuery(q.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] }).catch((e: unknown) => e))).toEqual([
+      'work-classify',
+      'work-intent',
+      'work-embed',
+      'work-classify',
+      'work-embed',
+    ]);
+  });
+
+  it('meters a Clef call that threw at its estimated input', async () => {
+    const down = await world({ 'work-intent': intentAnswer(), 'work-classify': new Error('down') });
+    const out = await planHire(down.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] });
+    expect(out).toMatchObject({ ok: false, error: 'classification_failed' });
+    expect(out.calls).toHaveLength(1);
+    expect(out.calls[0]).toMatchObject({ op: 'work-classify', ok: false });
+    expect(out.calls[0]!.usage.tokensIn).toBeGreaterThan(50);
   });
 
   it('refuses a harmful request or an injection before anything is extracted, and stops when Clef is silent', async () => {

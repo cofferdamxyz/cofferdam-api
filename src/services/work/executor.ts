@@ -27,7 +27,6 @@ import {
 } from './blocks.js';
 import {
   clefInput,
-  clefInputTokens,
   documentQuestions,
   documentState,
   DOCUMENT_TYPE_FLOOR,
@@ -40,10 +39,10 @@ import {
   fieldsRequest,
   int,
   list,
-  NO_USAGE,
+  estimatedUsage,
   readFieldsAnswer,
   str,
-  usageOf,
+  usageOrEstimate,
   validateValues,
   type ExtractedField,
   type FieldSet,
@@ -240,15 +239,16 @@ export async function attemptBlock(
   const now = opts.now ?? Date.now;
   const model = await inference.model(op);
   const t0 = now();
+  const request = extractionRequest(model, kind, block);
   let result: unknown;
   try {
-    result = await inference.run(op, extractionRequest(model, kind, block), { signal: opts.signal });
+    result = await inference.run(op, request, { signal: opts.signal });
   } catch (err) {
     opts.log?.({ event: 'work_extract_failed', op, model, kind, reason: failureCode(err) });
-    return { call: { op, model, ok: false, ms: now() - t0, usage: NO_USAGE }, extraction: null, failure: 'call_failed' };
+    return { call: { op, model, ok: false, ms: now() - t0, usage: estimatedUsage(request) }, extraction: null, failure: 'call_failed' };
   }
   const read = readExtraction(model, kind, result);
-  const call: WorkCall = { op, model, ok: read.ok, ms: now() - t0, usage: usageOf(result) };
+  const call: WorkCall = { op, model, ok: read.ok, ms: now() - t0, usage: usageOrEstimate(result, request) };
   if (!read.ok) {
     opts.log?.({ event: 'work_extract_failed', op, model, kind, reason: read.reason });
     return { call, extraction: null, failure: read.reason };
@@ -291,14 +291,15 @@ export async function classifyDocument(inference: Inference, blocks: readonly De
   const now = opts.now ?? Date.now;
   const model = await inference.model('work-classify');
   const t0 = now();
+  const request = clefInput(model, documentState(blocks), documentQuestions());
   let result: unknown;
   try {
-    result = await inference.run('work-classify', clefInput(model, documentState(blocks), documentQuestions()), { signal: opts.signal });
+    result = await inference.run('work-classify', request, { signal: opts.signal });
   } catch (err) {
     opts.log?.({ event: 'work_classify_failed', model, reason: failureCode(err) });
-    return { ok: false, error: 'classification_failed', calls: [{ op: 'work-classify', model, ok: false, ms: now() - t0, usage: NO_USAGE }] };
+    return { ok: false, error: 'classification_failed', calls: [{ op: 'work-classify', model, ok: false, ms: now() - t0, usage: estimatedUsage(request) }] };
   }
-  const call: WorkCall = { op: 'work-classify', model, ok: true, ms: now() - t0, usage: { tokensIn: clefInputTokens(result), tokensOut: 0, neurons: null } };
+  const call: WorkCall = { op: 'work-classify', model, ok: true, ms: now() - t0, usage: { ...usageOrEstimate(result, request), neurons: null } };
   const reading = readChoice(result, 'document', DOCUMENT_TYPE_KEYS, DOCUMENT_TYPE_FLOOR);
   if (reading.p === 0 && Object.keys(reading.probabilities).length === 0) {
     opts.log?.({ event: 'work_classify_failed', model, reason: 'no_answer' });

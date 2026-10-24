@@ -9,6 +9,11 @@ import { createWorkRoutes, type WorkRouteDeps } from '../src/routes/work.js';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
 import { GLOBAL_USAGE_NAME, monthOf } from '../src/services/chatUsageStore.js';
+import { modelCostMicroUsd } from '../src/services/inference/index.js';
+import { checkBlock } from '../src/services/work/blocks.js';
+import { clefInput, documentQuestions, documentState } from '../src/services/work/clef.js';
+import { extractionRequest } from '../src/services/work/executor.js';
+import { estimatedUsage } from '../src/services/work/fields.js';
 import { clefChoice, fakeInference, jsonModeResult, memoryUsageStore, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
 import fixtures from './fixtures/sdk-attestations.json';
 
@@ -28,6 +33,15 @@ const BLOCK = {
 const ANSWER = { title: 'Service Plumber', rank: null, start: 'Jan 2018', end: 'Present', skills: ['repaired leaks under sinks and slabs'] };
 
 const STAGING = { ENVIRONMENT: 'staging', AI_GATEWAY_ID: 'cofferdam-strict' };
+const GPT_OSS = '@cf/openai/gpt-oss-120b';
+const CLEF_FLASH = '@cf/cloudflare/clef-flash';
+
+/** BLOCK as the route passes it on, after its own check. */
+function checkedBlock() {
+  const r = checkBlock(BLOCK);
+  if (!r.ok) throw new Error(`BLOCK refused: ${r.reason}`);
+  return r.block;
+}
 
 function limiter(deny: (key: string) => boolean = () => false) {
   const keys: string[] = [];
@@ -139,7 +153,7 @@ describe('POST /v1/work/extract', () => {
     for (const r of recorded) expect(r.delta).toEqual({ turns: 0, tokensIn: 360, tokensOut: 80, routerCalls: 0, estimatedMicroUsd: 294, model: LLAMA, modelMicroUsd: 294, at: now });
   });
 
-  it('meters a failed primary and answers 502 when the fallback fails too', async () => {
+  it('meters a failed primary, and the fallback that threw at its estimated input, and answers 502', async () => {
     const { store, recorded } = memoryUsageStore();
     const res = await app(STAGING, { usageStore: () => store }, { 'work-extract': { response: 'nope', usage: { prompt_tokens: 300, completion_tokens: 5, neurons: 10 } }, 'work-extract-fallback': new Error('down') }).extract({
       account: fxAccount,
@@ -148,7 +162,15 @@ describe('POST /v1/work/extract', () => {
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ ok: false, error: 'extraction_failed' });
     await new Promise((r) => setTimeout(r, 0));
-    expect(recorded.map((r) => r.delta.estimatedMicroUsd)).toEqual([110, 110]);
+    const thrown = estimatedUsage(extractionRequest(GPT_OSS, 'experience', checkedBlock())).tokensIn;
+    expect(thrown).toBeGreaterThan(100);
+    const thrownCost = modelCostMicroUsd(GPT_OSS, thrown, 0);
+    expect(recorded.map((r) => [r.account, r.delta.model, r.delta.tokensIn, r.delta.estimatedMicroUsd])).toEqual([
+      [getAddress(fxAccount), LLAMA, 300, 110],
+      ['global', LLAMA, 300, 110],
+      [getAddress(fxAccount), GPT_OSS, thrown, thrownCost],
+      ['global', GPT_OSS, thrown, thrownCost],
+    ]);
   });
 
   it('answers 503 without Workers AI', async () => {
@@ -172,12 +194,22 @@ describe('POST /v1/work/classify', () => {
     expect(await res.json()).toEqual({ ok: false, error: 'block_refused', reason: 'email', index: 1 });
   });
 
-  it('answers 502 when Clef fails, and meters the call it made', async () => {
+  it('answers 502 when Clef fails, and meters the call it made at its estimated input', async () => {
     const { store, recorded } = memoryUsageStore();
     const res = await app(STAGING, { usageStore: () => store }, { 'work-classify': new Error('down') }).classify({ account: fxAccount, blocks: [BLOCK] });
     expect(res.status).toBe(502);
     await new Promise((r) => setTimeout(r, 0));
-    expect(recorded).toEqual([]);
+    const estimated = estimatedUsage(clefInput(CLEF_FLASH, documentState([checkedBlock()]), documentQuestions())).tokensIn;
+    expect(estimated).toBeGreaterThan(100);
+    expect(recorded.map((r) => [r.account, r.delta.model, r.delta.tokensIn, r.delta.turns])).toEqual([
+      [getAddress(fxAccount), CLEF_FLASH, estimated, 0],
+      ['global', CLEF_FLASH, estimated, 0],
+    ]);
+    // A Clef answer that reports no tokens is metered at the same estimate.
+    const silent = memoryUsageStore();
+    await app(STAGING, { usageStore: () => silent.store }, { 'work-classify': { answers: { document: { choice: 'cv', probabilities: { cv: 0.9 } } } } }).classify({ account: fxAccount, blocks: [BLOCK] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(silent.recorded.map((r) => r.delta.tokensIn)).toEqual([estimated, estimated]);
     const ok = memoryUsageStore();
     await app(STAGING, { usageStore: () => ok.store }).classify({ account: fxAccount, blocks: [BLOCK] });
     await new Promise((r) => setTimeout(r, 0));

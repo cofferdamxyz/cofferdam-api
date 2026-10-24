@@ -12,7 +12,9 @@
  *
  * The cost is Workers AI's own bill when the model reports neurons ($0.011
  * per 1,000 neurons, so 11 micro-dollars a neuron), else the tokens priced by
- * `MODEL_PRICES` (Clairic and Clef report tokens only).
+ * `MODEL_PRICES` (Clairic and Clef report tokens only). A call that threw or
+ * reported nothing is metered at its estimated input (`estimatedUsage`), so a
+ * failing model never runs unmetered.
  */
 
 import type { ChatUsageDelta } from '../chatUsageStore.js';

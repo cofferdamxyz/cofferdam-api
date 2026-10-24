@@ -20,10 +20,10 @@
  */
 
 import type { Inference } from '../inference/index.js';
-import { scanText, type BlockLang } from './blocks.js';
+import { BLOCK_LANGS, scanText, type BlockLang } from './blocks.js';
 import { bloomOf } from './bloom.js';
 import type { ExecutorOptions } from './executor.js';
-import type { WorkCall } from './fields.js';
+import { withCalls, type WorkCall } from './fields.js';
 import { embedTexts, snap, type RegistryDeps, type TokenKind, type VectorIndex } from './registry.js';
 
 export const SCOPES = ['onsite', 'remote'] as const;
@@ -166,15 +166,18 @@ export async function listingIdOf(pseudonym: string, profileId: string): Promise
 
 export const DRAFT_LIMITS = { titles: 5, skills: 30, certificates: 20, languages: 8, chars: 120 } as const;
 
-export type DraftRefusal = 'bad_shape' | 'bad_region' | 'bad_scope' | 'bad_tier' | 'too_many' | 'too_long' | 'refused_pattern' | 'no_claims';
+export type DraftRefusal = 'bad_shape' | 'bad_region' | 'bad_scope' | 'bad_tier' | 'bad_lang' | 'too_many' | 'too_long' | 'refused_pattern' | 'no_claims';
 
 /** Check a draft before anything is snapped or embedded; every string passes the same tripwire as a block. */
 export function checkDraft(d: ListingDraft): DraftRefusal | null {
   const lists = [d.titles, d.skills, d.certificates, d.languages];
-  if (typeof d.pseudonym !== 'string' || !d.pseudonym || !/^[a-z0-9-]{1,32}$/.test(d.profileId) || lists.some((l) => !Array.isArray(l))) return 'bad_shape';
+  if (typeof d.pseudonym !== 'string' || !d.pseudonym || d.pseudonym.length > 64 || !/^[a-z0-9-]{1,32}$/.test(d.profileId) || lists.some((l) => !Array.isArray(l))) {
+    return 'bad_shape';
+  }
   if (!REGION.test(d.region)) return 'bad_region';
   if (!(SCOPES as readonly string[]).includes(d.scope)) return 'bad_scope';
   if (![0, 1, 2].includes(d.tier)) return 'bad_tier';
+  if (!(BLOCK_LANGS as readonly unknown[]).includes(d.lang)) return 'bad_lang';
   if (
     d.titles.length > DRAFT_LIMITS.titles ||
     d.skills.length > DRAFT_LIMITS.skills ||
@@ -215,12 +218,19 @@ export type PublishOutcome =
   | { ok: false; error: 'draft_refused'; reason: DraftRefusal; calls: WorkCall[] }
   | { ok: false; error: 'embedding_failed'; calls: WorkCall[] };
 
-/** Publish (or republish) a listing; the claims snap with minting allowed, certificates never mint. */
+/**
+ * Publish (or republish) a listing; the claims snap with minting allowed,
+ * certificates never mint. A store or index failure throws a
+ * `WorkCallsError` carrying the calls already made.
+ */
 export async function publishListing(deps: PublishDeps, draft: ListingDraft): Promise<PublishOutcome> {
-  const now = deps.now ?? Date.now;
   const refused = checkDraft(draft);
   if (refused) return { ok: false, error: 'draft_refused', reason: refused, calls: [] };
-  const calls: WorkCall[] = [];
+  return withCalls((calls) => publishWith(deps, draft, calls));
+}
+
+async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCall[]): Promise<PublishOutcome> {
+  const now = deps.now ?? Date.now;
   const tokens = new Set<string>();
   const english: string[] = [];
   const claims: [TokenKind, string[]][] = [

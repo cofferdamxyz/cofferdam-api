@@ -93,12 +93,6 @@ export function readScore(result: unknown, id: string, levels: number): number |
   return Math.round(Math.min(1, Math.max(0, s / (levels - 1))) * 1000) / 1000;
 }
 
-/** Input tokens a Clef call reported (it bills input only). */
-export function clefInputTokens(result: unknown): number {
-  const n = Number((result as { usage?: { input_tokens?: unknown } } | null)?.usage?.input_tokens);
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
-}
-
 // ── The document type (decision 0021 (d)) ───────────────────────────────────
 
 /** What a Vault document can be; each type chooses its extraction schema. */

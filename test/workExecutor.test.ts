@@ -16,7 +16,7 @@ import {
   toFragment,
   validateFields,
 } from '../src/services/work/executor.js';
-import { extractorFamily, jsonSchema, resolveSpan, usageOf, type WorkCall } from '../src/services/work/fields.js';
+import { estimatedUsage, extractorFamily, jsonSchema, resolveSpan, usageOf, usageOrEstimate, type WorkCall } from '../src/services/work/fields.js';
 import { callCostMicroUsd, workUsageDeltas } from '../src/services/work/meter.js';
 import { clairicResult, clefChoice, fakeInference, jsonModeResult, type FakeCall } from './fixtures/work/fakes.js';
 import { fixtureBlocks } from './fixtures/work/index.js';
@@ -147,6 +147,13 @@ describe('reading an answer', () => {
     expect(readExtraction(CLAIRIC, 'experience', { usage: {} })).toEqual({ ok: false, reason: 'no_answers' });
   });
 
+  it('estimates a call that reported nothing at four characters a token', () => {
+    const request = { state: 'x'.repeat(398) };
+    expect(estimatedUsage(request)).toEqual({ tokensIn: Math.ceil(JSON.stringify(request).length / 4), tokensOut: 0, neurons: null });
+    expect(usageOrEstimate({ answers: {} }, request)).toEqual(estimatedUsage(request));
+    expect(usageOrEstimate({ usage: { input_tokens: 7 } }, request)).toEqual({ tokensIn: 7, tokensOut: 0, neurons: null });
+  });
+
   it('reads usage in every shape Workers AI reports it', () => {
     expect(usageOf(jsonModeResult({}))).toEqual({ tokensIn: 360, tokensOut: 80, neurons: 26.7 });
     expect(usageOf(clairicResult({}))).toEqual({ tokensIn: 1350, tokensOut: 0, neurons: null });
@@ -175,6 +182,22 @@ describe('validateFields', () => {
     expect(fields.skills!.value).toEqual(['kept the planned maintenance records', 'engine room watches']);
     expect(violations).toEqual([
       { field: 'skills', reason: 'not_a_span' },
+      { field: 'skills', reason: 'placeholder' },
+    ]);
+  });
+
+  it('drops a placeholder cut at its bracket, which the phone could not re-identify', () => {
+    const { fields, violations } = validateFields(
+      'experience',
+      ENGINEER,
+      raw({ title: '[ORG_1', rank: null, start: null, end: null, skills: ['PLACE_1]', 'ORG_1', 'main engines'] }),
+      NOW,
+    );
+    expect(fields.title!.value).toBeNull();
+    expect(fields.skills!.value).toEqual(['main engines']);
+    expect(violations).toEqual([
+      { field: 'title', reason: 'placeholder' },
+      { field: 'skills', reason: 'placeholder' },
       { field: 'skills', reason: 'placeholder' },
     ]);
   });
@@ -251,6 +274,12 @@ describe('extractBlock', () => {
     const both = await extractBlock(fakeInference({ 'work-extract': new Error('down'), 'work-extract-fallback': new Error('down') }), ENGINEER);
     expect(both).toMatchObject({ ok: false, error: 'extraction_failed' });
     expect(both.calls).toHaveLength(2);
+    // A call that threw is metered at its estimated input, never at nothing.
+    expect(both.calls.map((c) => c.usage)).toEqual([
+      estimatedUsage(extractionRequest(LLAMA, 'experience', ENGINEER)),
+      estimatedUsage(extractionRequest(GPT_OSS, 'experience', ENGINEER)),
+    ]);
+    expect(both.calls[0]!.usage.tokensIn).toBeGreaterThan(100);
   });
 
   it('switches to Clairic’s request when the pin is Clairic', async () => {

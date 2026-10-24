@@ -21,7 +21,7 @@
  */
 
 import type { InferenceOp } from '../inference/index.js';
-import { fold, placeholdersIn, scanText } from './blocks.js';
+import { fold, PLACEHOLDER_CLASSES, placeholdersIn, scanText } from './blocks.js';
 import { parseCvDate } from './cv.js';
 
 export type FieldSpec =
@@ -111,6 +111,22 @@ export interface CallUsage {
 
 export const NO_USAGE: CallUsage = { tokensIn: 0, tokensOut: 0, neurons: null };
 
+/**
+ * A request's input at four characters a token (the chat's estimate for its
+ * router, `services/chat/run.ts`, over the whole request body here): what the
+ * meter counts for a call that threw or reported no tokens. A floor, not the
+ * bill: a call that timed out may still have been charged its output.
+ */
+export function estimatedUsage(request: unknown): CallUsage {
+  return { tokensIn: Math.ceil(JSON.stringify(request ?? '').length / 4), tokensOut: 0, neurons: null };
+}
+
+/** What a call reported, or its estimated input when it reported nothing. */
+export function usageOrEstimate(result: unknown, request: unknown): CallUsage {
+  const u = usageOf(result);
+  return u.tokensIn || u.tokensOut || u.neurons ? u : estimatedUsage(request);
+}
+
 const count = (v: unknown) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
@@ -135,6 +151,32 @@ export interface WorkCall {
   ok: boolean;
   ms: number;
   usage: CallUsage;
+}
+
+/**
+ * A store or index call failed after hosted calls had run. The calls ride on
+ * the error, so the route serving a registry, listing, recall or hirer
+ * function meters them even when the function fails: it meters the
+ * outcome's `calls`, or the error's.
+ */
+export class WorkCallsError extends Error {
+  readonly calls: readonly WorkCall[];
+  constructor(cause: unknown, calls: readonly WorkCall[]) {
+    super('a store or index call failed after hosted calls ran', { cause });
+    this.name = 'WorkCallsError';
+    this.calls = calls;
+  }
+}
+
+/** Run `body` with a calls list; an error leaves as a `WorkCallsError` with the calls made so far, nested ones included. */
+export async function withCalls<T>(body: (calls: WorkCall[]) => Promise<T>): Promise<T> {
+  const calls: WorkCall[] = [];
+  try {
+    return await body(calls);
+  } catch (err) {
+    if (err instanceof WorkCallsError) throw new WorkCallsError(err.cause, [...calls, ...err.calls]);
+    throw new WorkCallsError(err, calls);
+  }
 }
 
 /** One field as a model answered it, before validation. */
@@ -252,13 +294,20 @@ export function resolveSpan(text: string, value: string): string | null {
   return null;
 }
 
+/**
+ * A placeholder cut at its bracket ("[ORG_1", "PLACE_1]", "ORG_1"): the phone
+ * cannot re-identify a fragment, so a value holding one is dropped like a
+ * whole placeholder (Clairic answered "[ORG_1" on 2026-10-24).
+ */
+const PLACEHOLDER_FRAGMENT = new RegExp(`(?:^|[^A-Za-z])(?:${PLACEHOLDER_CLASSES.join('|')})_\\d{1,2}(?:\\]|\\b)`);
+
 /** A model string checked against the input: the span, or the reason it was dropped. */
 function spanOf(text: string, value: unknown): { span: string } | { reason: ViolationReason } {
   if (typeof value !== 'string') return { reason: 'not_a_string' };
   const span = resolveSpan(text, value);
   if (span == null) return { reason: 'not_a_span' };
   if (span.length > SPAN_MAX_CHARS) return { reason: 'too_long' };
-  if (placeholdersIn(span).length > 0) return { reason: 'placeholder' };
+  if (placeholdersIn(span).length > 0 || PLACEHOLDER_FRAGMENT.test(span)) return { reason: 'placeholder' };
   if (scanText(span)) return { reason: 'refused_pattern' };
   return { span };
 }

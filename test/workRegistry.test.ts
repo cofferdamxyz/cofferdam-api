@@ -18,6 +18,7 @@ import {
   type TokenKind,
 } from '../src/services/work/registry.js';
 import { adjudicationQuestions } from '../src/services/work/clef.js';
+import { WorkCallsError } from '../src/services/work/fields.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 import { axis, embedAnswer, fakeInference, jsonModeResult, memoryIndex, near, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
 
@@ -168,6 +169,56 @@ describe('snap: retrieve, then choose', () => {
     expect(await snap(deps, { kind: 'pos', raw: 'confeiteiro', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'pos:pastry-chef' });
   });
 
+  it('marks a minted label embedded only once its vector is in the index', async () => {
+    // No fake embedding for "pastry chef": the pivot's own vector fails.
+    const { deps, db, index } = await registry({
+      'work-embed': embedAnswer({ 'Confeiteiro': near(1, 11, 0.62) }),
+      'work-adjudicate': clef('none', 0.9),
+      'work-pivot': jsonModeResult({ english: 'Pastry Chef' }),
+    });
+    expect(await snap(deps, { kind: 'pos', raw: 'Confeiteiro', lang: 'pt' })).toMatchObject({ decision: 'minted', token: 'pos:pastry-chef' });
+    const rows = db.sqlite.prepare("SELECT lang, embedded FROM registry_labels WHERE token = 'pos:pastry-chef' ORDER BY lang").all();
+    expect(rows).toEqual([
+      { lang: 'en', embedded: 0 },
+      { lang: 'pt', embedded: 1 },
+    ]);
+    expect([...index.vectors.values()].filter((v) => v.metadata.token === 'pos:pastry-chef').map((v) => v.metadata.lang)).toEqual(['pt']);
+  });
+
+  it('mints only on Clef’s own none at its floor: an empty or unknown answer in the band is no token', async () => {
+    for (const answer of [{ answers: {} }, { answers: { match: { choice: 'c9', probabilities: { c9: 0.9 } } } }]) {
+      const calls: FakeCall[] = [];
+      const { deps, decisions } = await registry(
+        { 'work-embed': embedAnswer({ 'Confeiteiro': near(1, 11, 0.62) }), 'work-adjudicate': answer, 'work-pivot': jsonModeResult({ english: 'pastry chef' }) },
+        calls,
+      );
+      const out = await snap(deps, { kind: 'pos', raw: 'Confeiteiro', lang: 'pt' });
+      expect(out, JSON.stringify(answer)).toMatchObject({ decision: 'unmatched', token: null });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate']);
+      // A Clef call that reported no tokens is metered at its estimated input.
+      expect(out.calls[1]!.usage.tokensIn).toBeGreaterThan(0);
+      expect(out.calls[1]!.ok).toBe(false);
+      expect(decisions()).toMatchObject([{ decision: 'unmatched', token: null }]);
+    }
+  });
+
+  it('lets an answer below the floor reach an existing token through the pivot, and never mint', async () => {
+    for (const answer of [clef('none', 0.4), clef('c0', 0.3)]) {
+      const calls: FakeCall[] = [];
+      const fresh = await registry(
+        { 'work-embed': embedAnswer({ 'Confeiteiro': near(1, 11, 0.62) }), 'work-adjudicate': answer, 'work-pivot': jsonModeResult({ english: 'pastry chef' }) },
+        calls,
+      );
+      const out = await snap(fresh.deps, { kind: 'pos', raw: 'Confeiteiro', lang: 'pt' });
+      expect(out, JSON.stringify(answer)).toMatchObject({ decision: 'unmatched', token: null });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate', 'work-pivot']);
+      expect((await fresh.store.tokens(['pos:pastry-chef'])).size).toBe(0);
+      expect(fresh.decisions()).toMatchObject([{ decision: 'unmatched', token: null, probability: answer.answers.match.probabilities[answer.answers.match.choice] }]);
+      const known = await registry({ 'work-embed': embedAnswer({ 'Encanador': near(1, 11, 0.62) }), 'work-adjudicate': answer, 'work-pivot': jsonModeResult({ english: 'plumber' }) });
+      expect(await snap(known.deps, { kind: 'pos', raw: 'Encanador', lang: 'pt' })).toMatchObject({ decision: 'pivot', token: 'pos:plumber' });
+    }
+  });
+
   it('snaps to an existing token when the pivot names one', async () => {
     const { deps } = await registry({ 'work-embed': embedAnswer({ 'Encanador': near(1, 11, 0.5) }), 'work-pivot': jsonModeResult({ english: 'plumber' }) });
     expect(await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt' })).toMatchObject({ decision: 'pivot', token: 'pos:plumber' });
@@ -194,6 +245,17 @@ describe('snap: retrieve, then choose', () => {
     const refused = await registry({}, quiet);
     expect(await snap(refused.deps, { kind: 'pos', raw: 'Welder, call (713) 555-0142', lang: 'en' })).toMatchObject({ decision: 'unmatched' });
     expect(quiet).toEqual([]);
+  });
+
+  it('carries the calls it made on a store failure, so the route can still meter them', async () => {
+    const { deps, store } = await registry({ 'work-embed': embedAnswer({ 'Journeyman Electrician': near(0, 10, 0.97) }) });
+    store.recordDecision = async () => {
+      throw new Error('d1 down');
+    };
+    const err = await snap(deps, { kind: 'pos', raw: 'Journeyman Electrician', lang: 'en' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkCallsError);
+    expect((err as WorkCallsError).calls.map((c) => c.op)).toEqual(['work-embed']);
+    expect((err as WorkCallsError).cause).toMatchObject({ message: 'd1 down' });
   });
 
   it('asks Clef about the kind it is snapping', () => {
