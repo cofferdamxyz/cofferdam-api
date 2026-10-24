@@ -105,8 +105,9 @@ export const OPS: Record<InferenceOp, OpSpec> = {
  * Clef bills input only. A dollar per million tokens is a millionth of a
  * dollar per token, so `tokens × price` is already in micro-dollars. Cached
  * input is cheaper on the reasoning models ($0.006 / M on DeepSeek V4.1 Flash,
- * $0.26 / M on `glm-5.3`, $0.03 / M on `glm-5.3-flash`), but the meter reads
- * no cached-token counts, so every input token is priced at the full rate.
+ * $0.26 / M on `glm-5.3`, $0.03 / M on `glm-5.3-flash`), which the meter sees
+ * through the neurons a model reports: these rates price a call only when its
+ * model reported none (`services/chatUsageStore.ts`, `usageDelta`).
  */
 export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   '@cf/google/gemma-4-26b-a4b-it': { input: 0.1, output: 0.3 },
