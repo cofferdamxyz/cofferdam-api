@@ -153,6 +153,15 @@ export interface Env {
   WORK_DB?: D1Database;
   /** `token-registry-v1`: one bge-m3 vector per registry label (1024 dimensions, cosine), metadata index on `kind`. */
   TOKEN_REGISTRY?: Vectorize;
+  /**
+   * `jobs-listings-v1`: one bge-m3 vector per published listing (1024, cosine),
+   * namespaced by coarse region and scope (`us-tx:onsite`, `br:remote`,
+   * decision 0019), metadata `{v, region, scope, tier, bloom, model}` only;
+   * metadata index on `tier`. Not created yet.
+   */
+  JOBS_LISTINGS?: Vectorize;
+  /** Countries whose remote namespaces a remote intent queries, comma-separated ISO codes; unset, `us,br,mx`. */
+  WORK_REMOTE_COUNTRIES?: string;
   /** `/v1/work/*`: a global brake, and per account after the gate passes. */
   WORK_RL?: RateLimit;
   /** `/v1/work/*`: a generous per-IP ceiling before the gate. */

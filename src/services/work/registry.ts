@@ -349,6 +349,8 @@ export interface SnapInput {
   kind: TokenKind;
   raw: string;
   lang: BlockLang;
+  /** False for a hirer's words: an intent snaps to what exists and never mints. Default true. */
+  mint?: boolean;
 }
 
 export interface Candidate {
@@ -453,7 +455,7 @@ async function pivot(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): P
 }
 
 /** The nearest tokens of the kind, best score per token, active or pending only, best first. */
-async function candidatesFor(deps: RegistryDeps, kind: TokenKind, vector: number[]): Promise<Candidate[]> {
+export async function candidatesFor(deps: Pick<RegistryDeps, 'store' | 'index'>, kind: TokenKind, vector: number[]): Promise<Candidate[]> {
   const matches = await deps.index.query(vector, { topK: 20, filter: { kind } });
   const best = new Map<string, IndexMatch>();
   for (const m of matches) {
@@ -554,9 +556,9 @@ export async function snap(deps: RegistryDeps, input: SnapInput): Promise<SnapRe
     }
   }
 
-  // 3. Nothing matched: certificates stay unmatched; occupations and skills mint.
+  // 3. Nothing matched: certificates (and anything a hirer wrote) stay unmatched; occupations and skills mint.
   const score = top?.score ?? null;
-  if (input.kind === 'cert') return record({ decision: 'unmatched', ...none, score, candidates }, clefModel);
+  if (input.kind === 'cert' || input.mint === false) return record({ decision: 'unmatched', ...none, score, candidates }, clefModel);
   const english = await pivot(deps, { ...input, raw }, calls);
   if (!english) return record({ decision: 'unmatched', ...none, score, candidates }, clefModel);
   const token = tokenOf(input.kind, english);

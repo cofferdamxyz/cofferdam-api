@@ -135,3 +135,46 @@ export function documentState(blocks: readonly DeidentifiedBlock[]): string {
     .join('\n\n')
     .slice(0, CLASSIFY_STATE_MAX_CHARS);
 }
+
+// ── A hirer's intent (S5) ───────────────────────────────────────────────────
+
+/** Where the work is done; the hirer confirms it on the card. */
+export const SCOPE_CRITERIA = {
+  onsite: 'Done in person, at a place the worker goes to',
+  remote: 'Done from anywhere, online or by phone',
+} as const;
+export type IntentScope = keyof typeof SCOPE_CRITERIA;
+export const SCOPE_KEYS = Object.keys(SCOPE_CRITERIA) as IntentScope[];
+/** Below this the scope is on-site, the safer default: it never widens a job to the world. */
+export const SCOPE_FLOOR = 0.5;
+/** A registry token the task needs counts at or above this. */
+export const NEED_FLOOR = 0.5;
+
+export interface NeedCandidate {
+  token: string;
+  /** Its English name, as Clef reads it. */
+  label: string;
+  kind: 'pos' | 'skill';
+}
+
+/**
+ * One Clef call for an intent: the scope as a `choice`, and one `noul` per
+ * nearby registry token ("does the job need a plumber?"), so the tokens the
+ * gate requires are chosen among the registry's, never written by a model.
+ */
+export function intentQuestions(candidates: readonly NeedCandidate[]): Record<string, ClefQuestion> {
+  const questions: Record<string, ClefQuestion> = {
+    scope: { type: 'choice', instructions: 'Where is this job done?', criteria: { ...SCOPE_CRITERIA } },
+  };
+  candidates.forEach((c, i) => {
+    questions[`need_${i}`] = {
+      type: 'noul',
+      instructions: c.kind === 'pos' ? `Does this job need a ${c.label}?` : `Does this job need someone who can do ${c.label}?`,
+    };
+  });
+  return questions;
+}
+
+export function intentState(sentence: string, lang: string): string {
+  return `A hirer wrote this request, in ${lang}:\n${sentence}`;
+}

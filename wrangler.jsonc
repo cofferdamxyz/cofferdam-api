@@ -203,14 +203,18 @@
   //   wrangler d1 migrations apply cofferdam-work --remote
   //   wrangler vectorize create token-registry-v1 --dimensions=1024 --metric=cosine
   //   wrangler vectorize create-metadata-index token-registry-v1 --property-name=kind --type=string
-  // The metadata index must exist before the first insert, or those vectors
+  //   wrangler vectorize create jobs-listings-v1 --dimensions=1024 --metric=cosine
+  //   wrangler vectorize create-metadata-index jobs-listings-v1 --property-name=tier --type=number
+  // A metadata index must exist before the first insert, or those vectors
   // cannot be filtered. Then the one-time ESCO import (test/esco.import.test.ts).
+  // jobs-listings-v1 is namespaced by coarse region and scope (decision 0019).
   // ─────────────────────────────────────────────────────────────────
   // "d1_databases": [
   //   { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "<from wrangler d1 create>", "migrations_dir": "migrations/work" }
   // ],
   // "vectorize": [
-  //   { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v1" }
+  //   { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v1" },
+  //   { "binding": "JOBS_LISTINGS", "index_name": "jobs-listings-v1" }
   // ],
   //
   // ─────────────────────────────────────────────────────────────────
