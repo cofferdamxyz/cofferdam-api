@@ -1,0 +1,630 @@
+{
+  "about": "Synthetic CV blocks for the Cofferdam Work pipeline (cofferdam-api test/fixtures/work). Every person, employer, school and place is invented, and identifying strings are already replaced by the phone's placeholders ([ORG_1], [PLACE_1]); no real personal data. Each block is what the phone's cloud executor sends: one block per request, never the header, contact, references or personal blocks (decision 0021). `expected` holds the gold fields for the extraction evaluation; dates are parsed values (YYYY or YYYY-MM) and every other string is an exact span of the block. `listing` is the coarse projection the worker would publish (region and scope only).",
+  "cvs": [
+    {
+      "id": "en-marine-engineer",
+      "locale": "en-US",
+      "listing": { "region": "us-la", "scope": "onsite", "tier": 1 },
+      "blocks": [
+        {
+          "id": "en-marine-engineer/summary",
+          "kind": "summary",
+          "lang": "en",
+          "text": "Marine engineer with 9 years on offshore supply vessels and anchor handlers in the Gulf of Mexico. Experienced in main engine overhauls, power management systems and engine room watchkeeping.",
+          "expected": { "title": "Marine engineer", "years": 9, "skills": ["main engine overhauls", "power management systems", "engine room watchkeeping"] }
+        },
+        {
+          "id": "en-marine-engineer/experience-1",
+          "kind": "experience",
+          "lang": "en",
+          "text": "Third Assistant Engineer, [ORG_1], [PLACE_1]\nJun 2019 – Present\nStood engine room watches on DP2 platform supply vessels. Maintained main engines, ship service generators and purifiers, and kept the planned maintenance records.",
+          "expected": {
+            "title": "Third Assistant Engineer",
+            "rank": 3,
+            "employer": "[ORG_1]",
+            "location": "[PLACE_1]",
+            "start": "2019-06",
+            "end": null,
+            "current": true,
+            "skills": ["engine room watches", "main engines", "ship service generators", "purifiers", "planned maintenance records"]
+          }
+        },
+        {
+          "id": "en-marine-engineer/experience-2",
+          "kind": "experience",
+          "lang": "en",
+          "text": "Engine Cadet, [ORG_2], [PLACE_2]\n08/2016 - 05/2019\nAssisted with fuel and lube oil purifier maintenance, bunkering operations and bilge water management on anchor handling tugs.",
+          "expected": {
+            "title": "Engine Cadet",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": "[PLACE_2]",
+            "start": "2016-08",
+            "end": "2019-05",
+            "current": false,
+            "skills": ["fuel and lube oil purifier maintenance", "bunkering operations", "bilge water management"]
+          }
+        },
+        {
+          "id": "en-marine-engineer/skills",
+          "kind": "skills",
+          "lang": "en",
+          "text": "Diesel engine maintenance · Power management systems · Purifiers and separators · Hydraulic systems · Planned maintenance software",
+          "expected": { "skills": ["Diesel engine maintenance", "Power management systems", "Purifiers and separators", "Hydraulic systems", "Planned maintenance software"] }
+        },
+        {
+          "id": "en-marine-engineer/certificates",
+          "kind": "certificates",
+          "lang": "en",
+          "text": "USCG Merchant Mariner Credential (Third Assistant Engineer Unlimited); STCW Basic Safety Training; BOSIET with CA-EBS; TWIC card",
+          "expected": { "certificates": ["USCG Merchant Mariner Credential (Third Assistant Engineer Unlimited)", "STCW Basic Safety Training", "BOSIET with CA-EBS", "TWIC card"] }
+        },
+        {
+          "id": "en-marine-engineer/languages",
+          "kind": "languages",
+          "lang": "en",
+          "text": "English (native), Spanish (basic)",
+          "expected": { "fluent": ["English"], "basic": ["Spanish"] }
+        },
+        {
+          "id": "en-marine-engineer/education",
+          "kind": "education",
+          "lang": "en",
+          "text": "B.S. Marine Engineering Technology, [ORG_3], 2016",
+          "expected": { "qualification": "B.S. Marine Engineering Technology", "institution": "[ORG_3]", "end": "2016" }
+        }
+      ]
+    },
+    {
+      "id": "en-electrician",
+      "locale": "en-US",
+      "listing": { "region": "us-tx", "scope": "onsite", "tier": 1 },
+      "blocks": [
+        {
+          "id": "en-electrician/summary",
+          "kind": "summary",
+          "lang": "en",
+          "text": "Licensed journeyman electrician with 7 years of residential and light commercial work. I install EV chargers, panel upgrades and generator transfer switches.",
+          "expected": { "title": "journeyman electrician", "years": 7, "skills": ["EV chargers", "panel upgrades", "generator transfer switches"] }
+        },
+        {
+          "id": "en-electrician/experience-1",
+          "kind": "experience",
+          "lang": "en",
+          "text": "Journeyman Electrician, [ORG_1]\nMarch 2020 – present\nInstalled Level 2 EV chargers and 200 A service upgrades, troubleshot GFCI and AFCI circuits, and pulled permits for city inspections.",
+          "expected": {
+            "title": "Journeyman Electrician",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": null,
+            "start": "2020-03",
+            "end": null,
+            "current": true,
+            "skills": ["Level 2 EV chargers", "200 A service upgrades", "GFCI and AFCI circuits", "permits for city inspections"]
+          }
+        },
+        {
+          "id": "en-electrician/experience-2",
+          "kind": "experience",
+          "lang": "en",
+          "text": "Electrician Apprentice, [ORG_2], [PLACE_1]\n2016 – 2020\nRan conduit, wired new homes and installed lighting under a master electrician.",
+          "expected": {
+            "title": "Electrician Apprentice",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": "[PLACE_1]",
+            "start": "2016",
+            "end": "2020",
+            "current": false,
+            "skills": ["Ran conduit", "wired new homes", "installed lighting"]
+          }
+        },
+        {
+          "id": "en-electrician/certificates",
+          "kind": "certificates",
+          "lang": "en",
+          "text": "Texas Journeyman Electrician License; OSHA 10-Hour Construction; NFPA 70E Arc Flash Training",
+          "expected": { "certificates": ["Texas Journeyman Electrician License", "OSHA 10-Hour Construction", "NFPA 70E Arc Flash Training"] }
+        },
+        {
+          "id": "en-electrician/languages",
+          "kind": "languages",
+          "lang": "en",
+          "text": "English (fluent); Spanish (fluent)",
+          "expected": { "fluent": ["English", "Spanish"], "basic": [] }
+        },
+        {
+          "id": "en-electrician/education",
+          "kind": "education",
+          "lang": "en",
+          "text": "Certificate in Electrical Technology, [ORG_3], 2017",
+          "expected": { "qualification": "Certificate in Electrical Technology", "institution": "[ORG_3]", "end": "2017" }
+        }
+      ]
+    },
+    {
+      "id": "en-plumber",
+      "locale": "en-US",
+      "listing": { "region": "us-tx", "scope": "onsite", "tier": 1 },
+      "blocks": [
+        {
+          "id": "en-plumber/summary",
+          "kind": "summary",
+          "lang": "en",
+          "text": "Residential plumber with 12 years fixing leaks, replacing water heaters and clearing drains for homeowners.",
+          "expected": { "title": "Residential plumber", "years": 12, "skills": ["fixing leaks", "replacing water heaters", "clearing drains"] }
+        },
+        {
+          "id": "en-plumber/experience-1",
+          "kind": "experience",
+          "lang": "en",
+          "text": "Service Plumber | [ORG_1] | [PLACE_1]\nJan 2018 – Present\nFound and repaired leaks under sinks and slabs, replaced tank and tankless water heaters, and cleared main line clogs with a camera and jetter.",
+          "expected": {
+            "title": "Service Plumber",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": "[PLACE_1]",
+            "start": "2018-01",
+            "end": null,
+            "current": true,
+            "skills": ["repaired leaks under sinks and slabs", "replaced tank and tankless water heaters", "cleared main line clogs"]
+          }
+        },
+        {
+          "id": "en-plumber/experience-2",
+          "kind": "experience",
+          "lang": "en",
+          "text": "Plumber's Helper | [ORG_2]\n2013 – 2017\nCut and soldered copper pipe and installed PEX lines and fixtures.",
+          "expected": {
+            "title": "Plumber's Helper",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": null,
+            "start": "2013",
+            "end": "2017",
+            "current": false,
+            "skills": ["soldered copper pipe", "installed PEX lines", "fixtures"]
+          }
+        },
+        {
+          "id": "en-plumber/skills",
+          "kind": "skills",
+          "lang": "en",
+          "text": "Leak detection; Water heater installation; Drain cleaning; Copper soldering; PEX repiping; Fixture installation",
+          "expected": { "skills": ["Leak detection", "Water heater installation", "Drain cleaning", "Copper soldering", "PEX repiping", "Fixture installation"] }
+        },
+        {
+          "id": "en-plumber/certificates",
+          "kind": "certificates",
+          "lang": "en",
+          "text": "Texas Journeyman Plumber License; Backflow Prevention Assembly Tester",
+          "expected": { "certificates": ["Texas Journeyman Plumber License", "Backflow Prevention Assembly Tester"] }
+        },
+        {
+          "id": "en-plumber/languages",
+          "kind": "languages",
+          "lang": "en",
+          "text": "English (fluent)",
+          "expected": { "fluent": ["English"], "basic": [] }
+        }
+      ]
+    },
+    {
+      "id": "pt-welder",
+      "locale": "pt-BR",
+      "listing": { "region": "br-rj", "scope": "onsite", "tier": 1 },
+      "blocks": [
+        {
+          "id": "pt-welder/summary",
+          "kind": "summary",
+          "lang": "pt",
+          "text": "Soldador com 11 anos de experiência em manutenção offshore e estaleiros, com processos TIG e eletrodo revestido em tubulação de aço carbono e inox.",
+          "expected": { "title": "Soldador", "years": 11, "skills": ["manutenção offshore", "TIG", "eletrodo revestido", "tubulação de aço carbono e inox"] }
+        },
+        {
+          "id": "pt-welder/experience-1",
+          "kind": "experience",
+          "lang": "pt",
+          "text": "Soldador de Tubulação – [ORG_1], [PLACE_1]\n03/2018 – atual\nSoldagem TIG e eletrodo revestido em linhas de processo de plataformas, leitura de isométricos e inspeção visual de soldas.",
+          "expected": {
+            "title": "Soldador de Tubulação",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": "[PLACE_1]",
+            "start": "2018-03",
+            "end": null,
+            "current": true,
+            "skills": ["Soldagem TIG e eletrodo revestido", "leitura de isométricos", "inspeção visual de soldas"]
+          }
+        },
+        {
+          "id": "pt-welder/experience-2",
+          "kind": "experience",
+          "lang": "pt",
+          "text": "Caldeireiro – [ORG_2], [PLACE_2]\nfev/2014 – jan/2018\nMontagem de estruturas metálicas, traçagem e corte com maçarico em estaleiro.",
+          "expected": {
+            "title": "Caldeireiro",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": "[PLACE_2]",
+            "start": "2014-02",
+            "end": "2018-01",
+            "current": false,
+            "skills": ["Montagem de estruturas metálicas", "traçagem", "corte com maçarico"]
+          }
+        },
+        {
+          "id": "pt-welder/skills",
+          "kind": "skills",
+          "lang": "pt",
+          "text": "Soldagem TIG, MIG e eletrodo revestido; Leitura de desenho isométrico; Corte com maçarico; Esmerilhamento",
+          "expected": { "skills": ["Soldagem TIG, MIG e eletrodo revestido", "Leitura de desenho isométrico", "Corte com maçarico", "Esmerilhamento"] }
+        },
+        {
+          "id": "pt-welder/certificates",
+          "kind": "certificates",
+          "lang": "pt",
+          "text": "Qualificação de soldador ASME IX; NR-34 Trabalho a Quente; NR-35 Trabalho em Altura; CBSP; HUET",
+          "expected": { "certificates": ["Qualificação de soldador ASME IX", "NR-34 Trabalho a Quente", "NR-35 Trabalho em Altura", "CBSP", "HUET"] }
+        },
+        {
+          "id": "pt-welder/languages",
+          "kind": "languages",
+          "lang": "pt",
+          "text": "Português (nativo); Inglês (básico)",
+          "expected": { "fluent": ["Português"], "basic": ["Inglês"] }
+        },
+        {
+          "id": "pt-welder/education",
+          "kind": "education",
+          "lang": "pt",
+          "text": "Técnico em Soldagem – [ORG_3], 2013",
+          "expected": { "qualification": "Técnico em Soldagem", "institution": "[ORG_3]", "end": "2013" }
+        }
+      ]
+    },
+    {
+      "id": "pt-electrician",
+      "locale": "pt-BR",
+      "listing": { "region": "br-sp", "scope": "onsite", "tier": 0 },
+      "blocks": [
+        {
+          "id": "pt-electrician/summary",
+          "kind": "summary",
+          "lang": "pt",
+          "text": "Eletricista industrial com mais de 8 anos em manutenção de painéis elétricos, motores e comandos em fábricas.",
+          "expected": { "title": "Eletricista industrial", "years": 8, "skills": ["manutenção de painéis elétricos", "motores", "comandos"] }
+        },
+        {
+          "id": "pt-electrician/experience-1",
+          "kind": "experience",
+          "lang": "pt",
+          "text": "Eletricista de Manutenção Industrial – [ORG_1], [PLACE_1]\nago. 2019 – presente\nManutenção preventiva e corretiva em painéis de comando, inversores de frequência e CLPs; montagem de quadros de distribuição.",
+          "expected": {
+            "title": "Eletricista de Manutenção Industrial",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": "[PLACE_1]",
+            "start": "2019-08",
+            "end": null,
+            "current": true,
+            "skills": ["Manutenção preventiva e corretiva em painéis de comando", "inversores de frequência", "CLPs", "montagem de quadros de distribuição"]
+          }
+        },
+        {
+          "id": "pt-electrician/experience-2",
+          "kind": "experience",
+          "lang": "pt",
+          "text": "Ajudante de Eletricista – [ORG_2]\n2015 – 2019\nPassagem de cabos, instalação de eletrodutos e iluminação predial.",
+          "expected": {
+            "title": "Ajudante de Eletricista",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": null,
+            "start": "2015",
+            "end": "2019",
+            "current": false,
+            "skills": ["Passagem de cabos", "instalação de eletrodutos", "iluminação predial"]
+          }
+        },
+        {
+          "id": "pt-electrician/certificates",
+          "kind": "certificates",
+          "lang": "pt",
+          "text": "NR-10 Básico; NR-10 SEP; NR-35; Curso de CLP Siemens S7",
+          "expected": { "certificates": ["NR-10 Básico", "NR-10 SEP", "NR-35", "Curso de CLP Siemens S7"] }
+        },
+        {
+          "id": "pt-electrician/languages",
+          "kind": "languages",
+          "lang": "pt",
+          "text": "Português (nativo), Espanhol (intermediário)",
+          "expected": { "fluent": ["Português"], "basic": ["Espanhol"] }
+        },
+        {
+          "id": "pt-electrician/education",
+          "kind": "education",
+          "lang": "pt",
+          "text": "Técnico em Eletrotécnica – [ORG_3], 2014",
+          "expected": { "qualification": "Técnico em Eletrotécnica", "institution": "[ORG_3]", "end": "2014" }
+        }
+      ]
+    },
+    {
+      "id": "pt-gardener",
+      "locale": "pt-BR",
+      "listing": { "region": "us-fl", "scope": "onsite", "tier": 0 },
+      "blocks": [
+        {
+          "id": "pt-gardener/summary",
+          "kind": "summary",
+          "lang": "pt",
+          "text": "Jardineiro e paisagista com 6 anos de experiência em manutenção de jardins residenciais.",
+          "expected": { "title": "Jardineiro e paisagista", "years": 6, "skills": ["manutenção de jardins residenciais"] }
+        },
+        {
+          "id": "pt-gardener/experience-1",
+          "kind": "experience",
+          "lang": "pt",
+          "text": "Jardineiro – [ORG_1]\nabril de 2021 – atualmente\nCorte de grama, poda de cercas vivas, plantio de flores e manutenção de sistemas de irrigação.",
+          "expected": {
+            "title": "Jardineiro",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": null,
+            "start": "2021-04",
+            "end": null,
+            "current": true,
+            "skills": ["Corte de grama", "poda de cercas vivas", "plantio de flores", "manutenção de sistemas de irrigação"]
+          }
+        },
+        {
+          "id": "pt-gardener/experience-2",
+          "kind": "experience",
+          "lang": "pt",
+          "text": "Auxiliar de Paisagismo – [ORG_2], [PLACE_1]\n2018 – 2021\nPreparo de canteiros, instalação de grama em placas e limpeza de áreas verdes.",
+          "expected": {
+            "title": "Auxiliar de Paisagismo",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": "[PLACE_1]",
+            "start": "2018",
+            "end": "2021",
+            "current": false,
+            "skills": ["Preparo de canteiros", "instalação de grama em placas", "limpeza de áreas verdes"]
+          }
+        },
+        {
+          "id": "pt-gardener/skills",
+          "kind": "skills",
+          "lang": "pt",
+          "text": "Poda; Irrigação por gotejamento; Corte de grama; Controle de pragas em jardins",
+          "expected": { "skills": ["Poda", "Irrigação por gotejamento", "Corte de grama", "Controle de pragas em jardins"] }
+        },
+        {
+          "id": "pt-gardener/languages",
+          "kind": "languages",
+          "lang": "pt",
+          "text": "Português (nativo); Inglês (intermediário); Espanhol (básico)",
+          "expected": { "fluent": ["Português"], "basic": ["Inglês", "Espanhol"] }
+        }
+      ]
+    },
+    {
+      "id": "es-rigger",
+      "locale": "es-MX",
+      "listing": { "region": "us-tx", "scope": "onsite", "tier": 1 },
+      "blocks": [
+        {
+          "id": "es-rigger/summary",
+          "kind": "summary",
+          "lang": "es",
+          "text": "Aparejador con 10 años en maniobras de carga y operación de grúas en patios industriales y muelles.",
+          "expected": { "title": "Aparejador", "years": 10, "skills": ["maniobras de carga", "operación de grúas"] }
+        },
+        {
+          "id": "es-rigger/experience-1",
+          "kind": "experience",
+          "lang": "es",
+          "text": "Aparejador (Rigger) – [ORG_1], [PLACE_1]\nene. 2020 – actualidad\nPlaneación de maniobras, selección de eslingas y grilletes, y señalización a operadores de grúa en muelle.",
+          "expected": {
+            "title": "Aparejador (Rigger)",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": "[PLACE_1]",
+            "start": "2020-01",
+            "end": null,
+            "current": true,
+            "skills": ["Planeación de maniobras", "selección de eslingas y grilletes", "señalización a operadores de grúa"]
+          }
+        },
+        {
+          "id": "es-rigger/experience-2",
+          "kind": "experience",
+          "lang": "es",
+          "text": "Operador de Grúa Móvil – [ORG_2], [PLACE_2]\n03/2015 – 12/2019\nOperación de grúas telescópicas de hasta 60 toneladas e inspección diaria del equipo.",
+          "expected": {
+            "title": "Operador de Grúa Móvil",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": "[PLACE_2]",
+            "start": "2015-03",
+            "end": "2019-12",
+            "current": false,
+            "skills": ["Operación de grúas telescópicas", "inspección diaria del equipo"]
+          }
+        },
+        {
+          "id": "es-rigger/certificates",
+          "kind": "certificates",
+          "lang": "es",
+          "text": "NCCCO Aparejador Nivel II; NCCCO Operador de Grúa Telescópica; OSHA 30 horas",
+          "expected": { "certificates": ["NCCCO Aparejador Nivel II", "NCCCO Operador de Grúa Telescópica", "OSHA 30 horas"] }
+        },
+        {
+          "id": "es-rigger/languages",
+          "kind": "languages",
+          "lang": "es",
+          "text": "Español (nativo), Inglés (fluido)",
+          "expected": { "fluent": ["Español", "Inglés"], "basic": [] }
+        },
+        {
+          "id": "es-rigger/education",
+          "kind": "education",
+          "lang": "es",
+          "text": "Bachillerato Técnico en Mecánica Industrial – [ORG_3], 2014",
+          "expected": { "qualification": "Bachillerato Técnico en Mecánica Industrial", "institution": "[ORG_3]", "end": "2014" }
+        }
+      ]
+    },
+    {
+      "id": "es-translator",
+      "locale": "es-MX",
+      "listing": { "region": "mx", "scope": "remote", "tier": 1 },
+      "blocks": [
+        {
+          "id": "es-translator/summary",
+          "kind": "summary",
+          "lang": "es",
+          "text": "Traductora inglés-español con 5 años de experiencia en contratos, manuales técnicos y documentos legales, trabajando de forma remota.",
+          "expected": { "title": "Traductora inglés-español", "years": 5, "skills": ["contratos", "manuales técnicos", "documentos legales"] }
+        },
+        {
+          "id": "es-translator/experience-1",
+          "kind": "experience",
+          "lang": "es",
+          "text": "Traductora Independiente\nmayo 2021 – presente\nTraducción de contratos comerciales y manuales técnicos del inglés al español para despachos jurídicos y empresas; revisión y corrección de estilo.",
+          "expected": {
+            "title": "Traductora Independiente",
+            "rank": null,
+            "employer": null,
+            "location": null,
+            "start": "2021-05",
+            "end": null,
+            "current": true,
+            "skills": ["Traducción de contratos comerciales", "manuales técnicos", "revisión y corrección de estilo"]
+          }
+        },
+        {
+          "id": "es-translator/experience-2",
+          "kind": "experience",
+          "lang": "es",
+          "text": "Traductora Jr. – [ORG_1], [PLACE_1]\n2019 – 2021\nTraducción de manuales de usuario y localización de sitios web.",
+          "expected": {
+            "title": "Traductora Jr.",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": "[PLACE_1]",
+            "start": "2019",
+            "end": "2021",
+            "current": false,
+            "skills": ["Traducción de manuales de usuario", "localización de sitios web"]
+          }
+        },
+        {
+          "id": "es-translator/certificates",
+          "kind": "certificates",
+          "lang": "es",
+          "text": "Perito Traductor certificado; Diplomado en Traducción Jurídica",
+          "expected": { "certificates": ["Perito Traductor certificado", "Diplomado en Traducción Jurídica"] }
+        },
+        {
+          "id": "es-translator/languages",
+          "kind": "languages",
+          "lang": "es",
+          "text": "Español (lengua materna); Inglés (C2); Portugués (básico)",
+          "expected": { "fluent": ["Español", "Inglés"], "basic": ["Portugués"] }
+        },
+        {
+          "id": "es-translator/education",
+          "kind": "education",
+          "lang": "es",
+          "text": "Licenciatura en Lenguas Modernas – [ORG_2], 2018",
+          "expected": { "qualification": "Licenciatura en Lenguas Modernas", "institution": "[ORG_2]", "end": "2018" }
+        }
+      ]
+    },
+    {
+      "id": "es-plumber",
+      "locale": "es-MX",
+      "listing": { "region": "mx-nle", "scope": "onsite", "tier": 0 },
+      "blocks": [
+        {
+          "id": "es-plumber/summary",
+          "kind": "summary",
+          "lang": "es",
+          "text": "Plomero con 15 años de experiencia en instalaciones hidráulicas y sanitarias para casas y comercios.",
+          "expected": { "title": "Plomero", "years": 15, "skills": ["instalaciones hidráulicas y sanitarias"] }
+        },
+        {
+          "id": "es-plumber/experience-1",
+          "kind": "experience",
+          "lang": "es",
+          "text": "Plomero Oficial – [ORG_1], [PLACE_1]\n2016 – a la fecha\nReparación de fugas, instalación de calentadores de agua y destape de drenajes.",
+          "expected": {
+            "title": "Plomero Oficial",
+            "rank": null,
+            "employer": "[ORG_1]",
+            "location": "[PLACE_1]",
+            "start": "2016",
+            "end": null,
+            "current": true,
+            "skills": ["Reparación de fugas", "instalación de calentadores de agua", "destape de drenajes"]
+          }
+        },
+        {
+          "id": "es-plumber/experience-2",
+          "kind": "experience",
+          "lang": "es",
+          "text": "Ayudante de Plomería – [ORG_2]\n2010 – 2015\nInstalación de tubería de cobre y PVC y colocación de muebles de baño.",
+          "expected": {
+            "title": "Ayudante de Plomería",
+            "rank": null,
+            "employer": "[ORG_2]",
+            "location": null,
+            "start": "2010",
+            "end": "2015",
+            "current": false,
+            "skills": ["Instalación de tubería de cobre y PVC", "colocación de muebles de baño"]
+          }
+        },
+        {
+          "id": "es-plumber/skills",
+          "kind": "skills",
+          "lang": "es",
+          "text": "Detección de fugas; Instalación de calentadores; Soldadura de cobre; Tubería de PVC y CPVC",
+          "expected": { "skills": ["Detección de fugas", "Instalación de calentadores", "Soldadura de cobre", "Tubería de PVC y CPVC"] }
+        },
+        {
+          "id": "es-plumber/languages",
+          "kind": "languages",
+          "lang": "es",
+          "text": "Español (nativo)",
+          "expected": { "fluent": ["Español"], "basic": [] }
+        }
+      ]
+    }
+  ],
+  "refused": [
+    { "id": "email", "reason": "email", "block": { "kind": "summary", "lang": "en", "text": "Marine engineer with 9 years at sea. Write to worker.one@example.com for references." } },
+    { "id": "domain", "reason": "url", "block": { "kind": "summary", "lang": "pt", "text": "Soldador com 11 anos de experiência. Portfólio: linkedin.com/in/soldador-exemplo" } },
+    { "id": "url", "reason": "url", "block": { "kind": "summary", "lang": "es", "text": "Traductora con 5 años de experiencia. Muestras en https://example.org/muestras" } },
+    { "id": "handle", "reason": "handle", "block": { "kind": "summary", "lang": "pt", "text": "Soldador TIG. Fotos dos meus trabalhos no Instagram @soldador.exemplo" } },
+    { "id": "phone-br", "reason": "long_number", "block": { "kind": "summary", "lang": "pt", "text": "Eletricista industrial. Cel. (21) 99876-5432" } },
+    { "id": "phone-us", "reason": "long_number", "block": { "kind": "summary", "lang": "en", "text": "Residential plumber. Call (713) 555-0142 after 5pm." } },
+    { "id": "ssn", "reason": "long_number", "block": { "kind": "summary", "lang": "en", "text": "Journeyman electrician, SSN 000-12-3456" } },
+    { "id": "licence-number", "reason": "long_number", "block": { "kind": "certificates", "lang": "en", "text": "Texas Journeyman Electrician License #1234567; OSHA 10-Hour Construction" } },
+    { "id": "cpf", "reason": "personal_field", "block": { "kind": "summary", "lang": "pt", "text": "Soldador com 11 anos de experiência. CPF: 123.456.789-09" } },
+    { "id": "birth-date", "reason": "personal_field", "block": { "kind": "summary", "lang": "pt", "text": "Jardineiro. Data de nascimento: 01/01/1990" } },
+    { "id": "marital-status", "reason": "personal_field", "block": { "kind": "summary", "lang": "es", "text": "Plomero con 15 años de experiencia. Estado civil: soltero" } },
+    { "id": "passport", "reason": "personal_field", "block": { "kind": "certificates", "lang": "en", "text": "STCW Basic Safety Training; Passport No. X0000000, valid until 2030" } },
+    { "id": "curp", "reason": "id_number", "block": { "kind": "summary", "lang": "es", "text": "Aparejador con 10 años. Clave XEXX010101HNEXXXA4" } },
+    { "id": "card-number", "reason": "id_number", "block": { "kind": "certificates", "lang": "en", "text": "TWIC card number AB1234567" } },
+    { "id": "header", "reason": "kind_not_allowed", "block": { "kind": "header", "lang": "en", "text": "[PERSON_1]\nMarine Engineer" } },
+    { "id": "contact", "reason": "kind_not_allowed", "block": { "kind": "contact", "lang": "pt", "text": "[PLACE_1]" } },
+    { "id": "references", "reason": "kind_not_allowed", "block": { "kind": "references", "lang": "es", "text": "[PERSON_2], [ORG_4]" } },
+    { "id": "french", "reason": "lang_not_supported", "block": { "kind": "summary", "lang": "fr", "text": "Plombier avec 12 ans d'expérience." } },
+    { "id": "bidi-override", "reason": "hidden_characters", "block": { "kind": "skills", "lang": "en", "text": "Leak detection; ‮Drain cleaning" } },
+    { "id": "blank", "reason": "empty", "block": { "kind": "skills", "lang": "en", "text": "   \n " } }
+  ]
+}
