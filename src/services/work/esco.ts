@@ -15,7 +15,10 @@
  * ones the import needs stops it, naming the columns it has. Labels inside a
  * cell are one per line. An occupation's ISCO-08 unit group is its
  * `iscoGroup` (a code or a URI ending in one), else the four digits before
- * the dot of its ESCO `code`. Concepts not `released` are skipped.
+ * the dot of its ESCO `code`. Concepts not `released` are skipped, and a
+ * concept the export lists twice is read once, its labels merged: v1.2.1
+ * repeats 25 rows, and a second token for one URI breaks D1's unique
+ * `esco_uri` and then the labels' foreign key.
  *
  * The plan is pure: `test/esco.import.test.ts` (opt-in, from the Mac) reads
  * the files, embeds the labels with `bge-m3` and writes the SQL and NDJSON
@@ -128,21 +131,31 @@ export function readEscoFile(text: string, pillar: EscoPillar): EscoConcept[] {
     pillar === 'occupation' && at.isco < 0 && at.code < 0 && 'iscoGroup or code',
   ].filter(Boolean);
   if (missing.length) throw new EscoFormatError(`missing ${missing.join(', ')}; the header has: ${head.join(', ')}`);
-  const concepts: EscoConcept[] = [];
+  const concepts = new Map<string, EscoConcept>();
   for (const r of rows) {
     const uri = r[at.uri]?.trim() ?? '';
     const preferred = r[at.preferred]?.trim() ?? '';
     if (!uri || !preferred) continue;
     if (at.status >= 0 && r[at.status] && r[at.status]!.trim().toLowerCase() !== 'released') continue;
-    concepts.push({
+    const alternatives = at.alternatives >= 0 ? lines(r[at.alternatives]) : [];
+    const hidden = at.hidden >= 0 ? lines(r[at.hidden]) : [];
+    const prior = concepts.get(uri);
+    if (prior) {
+      // The export lists a few concepts twice (v1.2.1: 4 occupations and 21
+      // skills, identical rows): one concept, so one token, its labels merged.
+      prior.alternatives = [...new Set([...prior.alternatives, ...alternatives])];
+      prior.hidden = [...new Set([...prior.hidden, ...hidden])];
+      continue;
+    }
+    concepts.set(uri, {
       uri,
       preferred,
-      alternatives: at.alternatives >= 0 ? lines(r[at.alternatives]) : [],
-      hidden: at.hidden >= 0 ? lines(r[at.hidden]) : [],
+      alternatives,
+      hidden,
       isco: pillar === 'occupation' ? iscoOf(at.isco >= 0 ? r[at.isco] : undefined, at.code >= 0 ? r[at.code] : undefined) : null,
     });
   }
-  return concepts;
+  return [...concepts.values()];
 }
 
 // ── The plan ────────────────────────────────────────────────────────────────

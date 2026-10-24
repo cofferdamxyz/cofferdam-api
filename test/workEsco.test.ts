@@ -55,6 +55,16 @@ describe('readEscoFile', () => {
     expect(concepts[2]!.isco).toBe('9991');
   });
 
+  it('reads a concept the export lists twice once, its labels merged, and plans one token for it', async () => {
+    const repeated = [OCC_EN, 'Occupation,http://data.europa.eu/esco/occupation/test-0001,9990,ship engineer,"marine engineer\nship\'s engineer",,released,,,,,,,9990.1'].join('\r\n');
+    const concepts = readEscoFile(repeated, 'occupation');
+    expect(concepts.map((c) => c.uri.slice(-9))).toEqual(['test-0001', 'test-0002', 'test-0003']);
+    expect(concepts[0]).toMatchObject({ alternatives: ['marine engineer', 'engine officer', "ship's engineer"], hidden: ['ship enginer'] });
+    const plan = await planEscoImport({ occupations: { en: repeated } });
+    expect(plan.tokens.filter((t) => t.escoUri?.endsWith('test-0001')).map((t) => t.token)).toEqual(['pos:ship-engineer']);
+    expect(plan.counts).toMatchObject({ occupations: 3, renamed: 1 });
+  });
+
   it('takes the ISCO group from the column, a URI ending in it, or the ESCO code', () => {
     expect(iscoOf('9990', undefined)).toBe('9990');
     expect(iscoOf('http://data.europa.eu/esco/isco/C9990', undefined)).toBe('9990');
