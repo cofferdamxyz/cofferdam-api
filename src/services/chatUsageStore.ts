@@ -27,7 +27,9 @@
  * The same object class also keeps one plane-wide row per month (the object
  * named `plane:global`): the sum of every account's spend, which the global
  * brake `AI_MONTHLY_BUDGET_USD` reads. Every hosted AI op reports to both
- * rows: the chat today, the cloud document extraction when it lands. The
+ * rows: the chat and, from 2026-10-24, the Work routes' document calls,
+ * which record with no turns (`capEstimate` keeps their spend out of the
+ * cost of a turn, and in the cap). The
  * plane-wide row is split per model the same way; no route reads that yet.
  *
  * Counted: every completed turn, the routed model's tokens when it reports
@@ -129,6 +131,8 @@ export function parseUsdMicro(raw: string | undefined): number | null {
 export const TYPICAL_TURN_MICRO_USD = 200;
 /** Turns an account needs this month before its own average is used. */
 export const OWN_AVERAGE_AFTER_TURNS = 10;
+/** Workers AI bills in neurons, $0.011 per 1,000 (pricing page, 2026-10-21): eleven millionths of a dollar each. */
+export const MICRO_USD_PER_NEURON = 11;
 
 const DAY_MS = 86_400_000;
 
@@ -147,7 +151,11 @@ export function capEstimate(capMicroUsd: number, usage: ChatMonthUsage | null, n
   const spent = usage?.estimatedMicroUsd ?? 0;
   const remaining = Math.max(0, capMicroUsd - spent);
   const turns = usage?.turns ?? 0;
-  const perTurn = turns >= OWN_AVERAGE_AFTER_TURNS && spent > 0 ? spent / turns : TYPICAL_TURN_MICRO_USD;
+  // Hosted AI that is not a turn (a document parsed on the plane) records to a
+  // model row with no turns: it counts against the cap, not in the cost of a turn.
+  const turnless = (usage?.models ?? []).filter((m) => m.turns === 0).reduce((n, m) => n + m.estimatedMicroUsd, 0);
+  const spentOnTurns = Math.max(0, spent - turnless);
+  const perTurn = turns >= OWN_AVERAGE_AFTER_TURNS && spentOnTurns > 0 ? spentOnTurns / turns : TYPICAL_TURN_MICRO_USD;
   const turnsLeft = Math.floor(remaining / perTurn);
   const resetsAt = monthResetsAt(now);
   const daysLeft = Math.max(1, Math.ceil((resetsAt.getTime() - now) / DAY_MS));
@@ -166,7 +174,12 @@ const int = (n: unknown) => {
   return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
 };
 
-/** What a finished turn adds to the meter, priced with `MODEL_PRICES`. */
+/**
+ * What a finished turn adds to the meter: the model from the neurons it
+ * reported (the bill, cached input included) and from `MODEL_PRICES` when it
+ * reported none; the router from Clef's input tokens, reported or estimated,
+ * at its rate.
+ */
 export function usageDelta(
   usage: ChatTurnUsage,
   at: number,
@@ -175,7 +188,14 @@ export function usageDelta(
   const tokensIn = int(usage.tokensIn);
   const tokensOut = int(usage.tokensOut);
   const routerIn = usage.router.called ? int(usage.router.tokensIn) : 0;
-  const model = usage.model && (tokensIn || tokensOut) ? modelCostMicroUsd(usage.model, tokensIn, tokensOut, log) : 0;
+  const billed = typeof usage.neurons === 'number' && usage.neurons >= 0;
+  const model = !usage.model
+    ? 0
+    : billed
+      ? Math.round(usage.neurons! * MICRO_USD_PER_NEURON)
+      : tokensIn || tokensOut
+        ? modelCostMicroUsd(usage.model, tokensIn, tokensOut, log)
+        : 0;
   const router = routerIn ? modelCostMicroUsd(usage.router.model, routerIn, 0, log) : 0;
   return {
     turns: 1,

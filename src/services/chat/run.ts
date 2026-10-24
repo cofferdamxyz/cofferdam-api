@@ -400,6 +400,10 @@ function answerInput(messages: ChatMessage[], long: boolean, model: string): Rec
 interface Usage {
   prompt_tokens?: number;
   completion_tokens?: number;
+  /** Clef's name for its input count (seen over REST 2026-10-24). */
+  input_tokens?: number;
+  /** Workers AI's bill for the call, cached input priced as cached ($0.011 per 1,000); every chat model reports it. */
+  neurons?: number;
 }
 
 function usageOf(v: unknown): Usage | null {
@@ -415,13 +419,16 @@ export interface ChatTurnUsage {
   /** That model's tokens, when it reported them. */
   tokensIn: number | null;
   tokensOut: number | null;
+  /** The neurons Workers AI billed for that model's call, when it reported them: the bill itself, cached input included. */
+  neurons: number | null;
   router: {
     model: string;
     /** Whether the router was called (a failed call still counts). */
     called: boolean;
-    /** Characters of the router state divided by four: Clef reports no usage. */
+    /** Clef's reported input tokens, or the router state's characters divided by four when it reported none. */
     tokensIn: number;
-    estimated: true;
+    /** True when `tokensIn` is the characters-over-four estimate. */
+    estimated: boolean;
   };
 }
 
@@ -456,11 +463,17 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
   const timings: Record<string, number> = {};
   const turn: Record<string, unknown> = {};
   /** The routed model's spend, for `onTurn`. */
-  const spent: { model: string | null; tokensIn: number | null; tokensOut: number | null } = { model: null, tokensIn: null, tokensOut: null };
+  const spent: { model: string | null; tokensIn: number | null; tokensOut: number | null; neurons: number | null } = {
+    model: null,
+    tokensIn: null,
+    tokensOut: null,
+    neurons: null,
+  };
   const noteUsage = (model: string, usage: Usage | null) => {
     spent.model = model;
     if (usage?.prompt_tokens != null) spent.tokensIn = usage.prompt_tokens;
     if (usage?.completion_tokens != null) spent.tokensOut = usage.completion_tokens;
+    spent.neurons = typeof usage?.neurons === 'number' && usage.neurons >= 0 ? usage.neurons : null;
   };
   const emit = (ev: ChatEvent) => {
     if (ev.type === 'text' && timings.first === undefined) timings.first = Date.now() - started;
@@ -541,7 +554,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     const thinking = tier === 'thinking';
     const shared = answerModel === longModel;
     const state = routerState(messages);
-    const router = { model: routerModel, called: false, tokensIn: Math.ceil(state.length / 4), estimated: true as const };
+    const router = { model: routerModel, called: false, tokensIn: Math.ceil(state.length / 4), estimated: true };
     let languageP = 0;
     const early = new AbortController();
     const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared, answerModel), { signal: early.signal });
@@ -570,7 +583,10 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
             'chat-router',
             { model: clefName(router.model), state, questions: routerQuestions() },
             attempt === 1 ? { timeoutMs: ROUTER_FIRST_TRY_MS } : {},
-          )) as { answers?: unknown };
+          )) as { answers?: unknown; usage?: Usage };
+          // Clef reports its input count; the estimate stands when it does not.
+          const reported = clef?.usage?.input_tokens ?? clef?.usage?.prompt_tokens;
+          if (typeof reported === 'number' && reported > 0) Object.assign(router, { tokensIn: reported, estimated: false });
           decision = decideRoute(clef?.answers);
           languageP = languageProbability(clef?.answers);
           timings.router = Date.now() - t0;
@@ -665,7 +681,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
             if (text) await emit({ type: 'text', delta: text });
           }
           timings.model = Date.now() - t2;
-          if (usage) Object.assign(turn, { tokens_in: usage.prompt_tokens, tokens_out: usage.completion_tokens });
+          if (usage) Object.assign(turn, { tokens_in: usage.prompt_tokens, tokens_out: usage.completion_tokens, ...(typeof usage.neurons === 'number' ? { neurons: usage.neurons } : {}) });
           noteUsage(thinking ? reasoningModel : long && !shared ? longModel : answerModel, usage);
           if (sent === 0) await emit({ type: 'text', delta: fixed.empty });
           break;

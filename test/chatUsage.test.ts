@@ -165,6 +165,7 @@ describe('usage arithmetic', () => {
       model: GEMMA,
       tokensIn: 1_000,
       tokensOut: 200,
+      neurons: null,
       router: { model: CLEF, called: true, tokensIn: 400, estimated: true },
     };
     expect(usageDelta(usage, 42)).toEqual({
@@ -184,6 +185,10 @@ describe('usage arithmetic', () => {
     // A model that reports no usage still served the turn, at no cost.
     const silent = usageDelta({ ...usage, tokensIn: null, tokensOut: null }, 42);
     expect(silent).toMatchObject({ tokensIn: 0, tokensOut: 0, estimatedMicroUsd: 15, model: GEMMA, modelMicroUsd: 0 });
+    // The neurons a model reported are the bill and replace the token estimate; the router keeps its rate.
+    expect(usageDelta({ ...usage, neurons: 40 }, 42)).toMatchObject({ estimatedMicroUsd: 455, modelMicroUsd: 440, tokensIn: 1_000, tokensOut: 200 });
+    // Clef's reported input tokens price the router like the estimate did.
+    expect(usageDelta({ ...usage, router: { ...usage.router, tokensIn: 500, estimated: false } }, 42)).toMatchObject({ estimatedMicroUsd: 179 });
   });
 
   it('reads months, resets and the cap in UTC', () => {
@@ -224,6 +229,12 @@ describe('usage arithmetic', () => {
     // Twenty turns at 500 each: the account's own average.
     expect(capEstimate(60_000, row(20, 10_000), t)).toMatchObject({ remainingUsd: 0.05, turnsLeft: 100, turnsPerDay: 9 });
     expect(capEstimate(60_000, row(200, 90_000), t)).toMatchObject({ remainingUsd: 0, turnsLeft: 0, turnsPerDay: 0 });
+    // A document parsed on the plane records to a model row with no turns: its 4,000 count against the cap, not in the cost of a turn.
+    const withWork: ChatMonthUsage = {
+      ...row(20, 10_000),
+      models: [{ model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', turns: 0, tokensIn: 3_000, tokensOut: 500, estimatedMicroUsd: 4_000 }],
+    };
+    expect(capEstimate(60_000, withWork, t)).toMatchObject({ remainingUsd: 0.05, turnsLeft: 166, turnsPerDay: 15 });
   });
 });
 
@@ -353,8 +364,18 @@ describe('runChat onTurn', () => {
       model: GEMMA,
       tokensIn: 120,
       tokensOut: 2,
+      neurons: null,
       router: { model: CLEF, called: true, tokensIn: Math.ceil('Latest user message: hello there'.length / 4), estimated: true },
     });
+
+    // Clef's reported input tokens and the model's neurons travel to the meter when they come.
+    const billed: ChatTurnUsage[] = [];
+    const reporting = fakeInference({
+      'chat-router': { ...clef('none', 0.8), usage: { input_tokens: 512 } },
+      'chat-answer': () => sse(['Hi'], { prompt_tokens: 120, completion_tokens: 2, neurons: 10.6 }),
+    });
+    await collect(runChat({ inference: reporting, messages: user('hello there'), onTurn: (u) => billed.push(u) }));
+    expect(billed[0]).toMatchObject({ tokensIn: 120, tokensOut: 2, neurons: 10.6, router: { tokensIn: 512, estimated: false } });
   });
 
   it('reports the action model and its usage on an action, and no model on a refusal', async () => {
