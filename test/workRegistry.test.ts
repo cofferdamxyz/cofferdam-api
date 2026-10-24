@@ -4,7 +4,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  adjudicationQuestions,
   D1RegistryStore,
   DEFAULT_TAU,
   labelIdOf,
@@ -18,6 +17,7 @@ import {
   type RegistryLabel,
   type TokenKind,
 } from '../src/services/work/registry.js';
+import { adjudicationQuestions } from '../src/services/work/clef.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 import { axis, embedAnswer, fakeInference, jsonModeResult, memoryIndex, near, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
 

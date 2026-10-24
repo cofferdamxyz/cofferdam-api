@@ -1,0 +1,40 @@
+{
+  "about": "Synthetic, de-identified blocks of Vault documents that are not CVs, for the document-type classification (decision 0021 (d)): what the phone sends as a `body` block when its heading lexicon cannot place the text. Invented; placeholders stand for names, places and numbers. `type` is the gold label.",
+  "documents": [
+    {
+      "id": "certificate-osha",
+      "type": "certificate",
+      "blocks": [{ "kind": "body", "lang": "en", "text": "Certificate of Completion\nThis certifies that [PERSON_1] has completed the OSHA 30-Hour Construction Safety and Health course.\nIssued by [ORG_1], 03/2024. Trainer: [PERSON_2]." }]
+    },
+    {
+      "id": "certificate-nr35",
+      "type": "certificate",
+      "blocks": [{ "kind": "body", "lang": "pt", "text": "Certificado de Conclusão\nCertificamos que [PERSON_1] concluiu o treinamento NR-35 Trabalho em Altura, com carga horária de 8 horas.\n[PLACE_1], março de 2025. [ORG_1]" }]
+    },
+    {
+      "id": "licence-electrician",
+      "type": "licence",
+      "blocks": [{ "kind": "body", "lang": "en", "text": "[ORG_1]\nJourneyman Electrician License\nLicensee: [PERSON_1]\nLicense number: [ID_1]\nExpires: 2027" }]
+    },
+    {
+      "id": "licence-tecnico",
+      "type": "licence",
+      "blocks": [{ "kind": "body", "lang": "es", "text": "Licencia de técnico electricista [ID_1]\nExpedida por [ORG_1] a favor de [PERSON_1]\nVigente hasta 2027" }]
+    },
+    {
+      "id": "contract",
+      "type": "other",
+      "blocks": [{ "kind": "body", "lang": "es", "text": "Contrato de prestación de servicios entre [ORG_1] y [PERSON_1] para la traducción de manuales técnicos. Vigencia de seis meses a partir de la firma. Las partes acuerdan un pago mensual." }]
+    },
+    {
+      "id": "invoice",
+      "type": "other",
+      "blocks": [{ "kind": "body", "lang": "en", "text": "Invoice [ID_1]\nBill to: [ORG_1]\nDrain cleaning and water heater replacement, 1 visit\nTotal due: $480.00, net 30" }]
+    },
+    {
+      "id": "passport",
+      "type": "passport",
+      "blocks": [{ "kind": "body", "lang": "en", "text": "PASSPORT\nType P\nCountry code [ID_1]\nSurname [PERSON_1]\nNationality UNITED STATES OF AMERICA" }]
+    }
+  ]
+}

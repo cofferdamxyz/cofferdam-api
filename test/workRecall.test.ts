@@ -250,11 +250,15 @@ describe('recall', () => {
 describe('one hirer query', () => {
   const intentAnswer = (over: Record<string, unknown> = {}) =>
     jsonModeResult({ task: 'kitchen sink is leaking under the cabinet', when: 'today after 2pm', budget: 120, credential: null, language: null, recurrence: null, ...over });
-  /** Clef: on-site, and yes to every candidate whose label mentions the words given. */
-  const clefSays = (yes: RegExp, scope = 'onsite') => (input: Record<string, unknown>) => {
+  /** Clef: the safety checks it is given, the scope, and yes to every candidate whose label mentions the words given. */
+  const clefSays = (yes: RegExp, scope = 'onsite', safety: { harmful?: number; injection?: number } = {}) => (input: Record<string, unknown>) => {
     const questions = input.questions as Record<string, { instructions: string }>;
-    const answers: Record<string, unknown> = { scope: { type: 'choice', choice: scope, probabilities: { [scope]: 0.93 } } };
-    for (const [id, q] of Object.entries(questions)) if (id.startsWith('need_')) answers[id] = { type: 'noul', noul: yes.test(q.instructions) ? 0.9 : 0.05 };
+    const answers: Record<string, unknown> = {};
+    for (const [id, q] of Object.entries(questions)) {
+      if (id === 'scope') answers[id] = { type: 'choice', choice: scope, probabilities: { [scope]: 0.93 } };
+      else if (id === 'harmful' || id === 'injection') answers[id] = { type: 'noul', noul: safety[id] ?? 0.02 };
+      else if (id.startsWith('need_')) answers[id] = { type: 'noul', noul: yes.test(q.instructions) ? 0.9 : 0.05 };
+    }
     return { answers, usage: { input_tokens: 300 } };
   };
   const SINK = 'My kitchen sink is leaking under the cabinet, need someone today after 2pm. I’ll pay $120.';
@@ -270,7 +274,9 @@ describe('one hirer query', () => {
     expect(planned.plan.intent.anyOf.sort()).toEqual(['pos:plumber', 'skill:leak-repair']);
     const clefCall = calls.find((c) => c.op === 'work-classify')!.input as { questions: Record<string, unknown>; state: string };
     expect(clefCall.state).toContain('sink is leaking');
-    expect(Object.keys(clefCall.questions)).toContain('scope');
+    expect(Object.keys(clefCall.questions)).toEqual(['harmful', 'injection', 'scope']);
+    const needsCall = calls.filter((c) => c.op === 'work-classify')[1]!.input as { questions: Record<string, unknown> };
+    expect(Object.keys(needsCall.questions).every((k) => k.startsWith('need_'))).toBe(true);
     expect(calls.map((c) => c.op)).not.toContain('work-pivot');
   });
 
@@ -294,8 +300,25 @@ describe('one hirer query', () => {
     expect(calls.map((c) => c.op)).not.toContain('work-pivot');
   });
 
+  it('refuses a harmful request or an injection before anything is extracted, and stops when Clef is silent', async () => {
+    for (const [safety, reason] of [[{ harmful: 0.91 }, 'harmful'], [{ injection: 0.88 }, 'injection']] as const) {
+      const calls: FakeCall[] = [];
+      const w = await world({ 'work-intent': intentAnswer(), 'work-classify': clefSays(/plumber/, 'onsite', safety) }, calls);
+      expect(await planHire(w.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] })).toMatchObject({ ok: false, error: 'refused', reason });
+      expect(calls.map((c) => c.op)).toEqual(['work-classify']);
+      const questions = Object.keys((calls[0]!.input as { questions: object }).questions);
+      expect(questions).toEqual(['harmful', 'injection', 'scope']);
+    }
+    const calls: FakeCall[] = [];
+    const silent = await world({ 'work-intent': intentAnswer(), 'work-classify': new Error('down') }, calls);
+    expect(await planHire(silent.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] })).toMatchObject({ ok: false, error: 'classification_failed' });
+    expect(calls.map((c) => c.op)).toEqual(['work-classify']);
+    const halfAnswered = await world({ 'work-intent': intentAnswer(), 'work-classify': { answers: { harmful: { noul: 0.01 } } } });
+    expect(await planHire(halfAnswered.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] })).toMatchObject({ ok: false, error: 'classification_failed' });
+  });
+
   it('refuses a budget under $50, asks for what is missing, and reads remote work', async () => {
-    const low = await world({ 'work-intent': intentAnswer({ budget: 30 }) });
+    const low = await world({ 'work-intent': intentAnswer({ budget: 30 }), 'work-classify': clefSays(/plumber/) });
     expect(await planHire(low.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] })).toMatchObject({ ok: false, error: 'below_minimum' });
     const open = await world({ 'work-intent': intentAnswer({ budget: null, when: null }), 'work-classify': clefSays(/plumber/) });
     const planned = await planHire(open.hire, { sentence: 'My kitchen sink is leaking under the cabinet.', lang: 'en', regions: ['us-tx'] });

@@ -30,7 +30,7 @@
 
 import type { Inference } from '../inference/index.js';
 import { fold, scanText, type BlockLang } from './blocks.js';
-import { clefInput, readChoice, readNoul, type ClefQuestion } from './clef.js';
+import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { fieldsRequest, NO_USAGE, readFieldsAnswer, usageOf, type FieldSet, type WorkCall } from './fields.js';
 
@@ -384,33 +384,6 @@ export interface RegistryDeps {
   log?: (fields: Record<string, unknown>) => void;
 }
 
-const KIND_NOUN: Record<TokenKind, string> = { pos: 'occupation', skill: 'skill', cert: 'certificate or licence' };
-
-/** Clef's questions for the band: which candidate names the same thing, and whether the raw string is a narrower specialization of it. */
-export function adjudicationQuestions(kind: TokenKind, candidates: Candidate[]): Record<string, ClefQuestion> {
-  const criteria: Record<string, string> = {};
-  candidates.forEach((c, i) => {
-    criteria[`c${i}`] = c.matched === c.labelEn ? c.labelEn : `${c.labelEn} (matched "${c.matched}")`;
-  });
-  criteria.none = `None of these: a different ${KIND_NOUN[kind]}`;
-  const noun = KIND_NOUN[kind];
-  return {
-    match: {
-      type: 'choice',
-      instructions: `Which entry names the same ${noun} as the text, or the broader ${noun} it is a specialization of? Choose none when every entry is a different ${noun}.`,
-      criteria,
-    },
-    specialization: {
-      type: 'noul',
-      instructions: `Is the text a narrower specialization of the entry that matches it (as "marine electrician" is of "electrician"), rather than the same ${noun}?`,
-    },
-  };
-}
-
-export function adjudicationState(input: SnapInput): string {
-  return `A ${KIND_NOUN[input.kind]} as a worker or a hirer wrote it, in ${input.lang}:\n${input.raw}`;
-}
-
 /** The JSON-mode request for a new token's English pivot. */
 export const PIVOT_FIELDS = {
   english: {
@@ -538,7 +511,7 @@ export async function snap(deps: RegistryDeps, input: SnapInput): Promise<SnapRe
     clefModel = await deps.inference.model('work-adjudicate');
     const t0 = now();
     try {
-      const answer = await deps.inference.run('work-adjudicate', clefInput(clefModel, adjudicationState({ ...input, raw }), adjudicationQuestions(input.kind, candidates)));
+      const answer = await deps.inference.run('work-adjudicate', clefInput(clefModel, adjudicationState(input.kind, raw, input.lang), adjudicationQuestions(input.kind, candidates)));
       calls.push({ op: 'work-adjudicate', model: clefModel, ok: true, ms: now() - t0, usage: { ...usageOf(answer), neurons: null } });
       const keys = [...candidates.map((_, i) => `c${i}`), 'none'];
       const pick = readChoice(answer, 'match', keys, ADJUDICATION_FLOOR);

@@ -26,12 +26,10 @@ import type { BlockLang } from '../src/services/work/blocks.js';
 import { hirerQuery, type HireDeps } from '../src/services/work/hire.js';
 import { D1ListingStore, publishListing, type ListingDraft, type PublishDeps } from '../src/services/work/listings.js';
 import { callCostMicroUsd } from '../src/services/work/meter.js';
-import { D1RegistryStore, embedTexts, labelIdOf, labelNorm, type RegistryLabel, type TokenKind } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
-import { sqliteD1 } from './fixtures/work/d1.js';
 import { memoryIndex } from './fixtures/work/fakes.js';
 import { FIXTURE_CVS, HIRER_PROMPTS, type FixtureCv } from './fixtures/work/index.js';
-import seed from './fixtures/work/registry-seed.json';
+import { seededRegistry } from './work-eval/seed.js';
 
 const LIVE = process.env.WORK_EVAL === '1';
 
@@ -86,25 +84,7 @@ describe.skipIf(!LIVE)('one hirer query (live, Workers AI)', () => {
     const inference = createInference({}, { ai: createRestAi({ accountId, token }) })!;
 
     // The synthetic registry seed, embedded once.
-    const db = sqliteD1();
-    const registryStore = new D1RegistryStore(db.d1);
-    const registryIndex = memoryIndex();
-    const seedTokens = seed.tokens as { token: string; kind: TokenKind; labels: Partial<Record<string, string[]>> }[];
-    for (const t of seedTokens) {
-      const labels: RegistryLabel[] = [];
-      const texts: string[] = [];
-      for (const [lang, list] of Object.entries(t.labels)) {
-        for (const label of list ?? []) {
-          labels.push({ labelId: await labelIdOf(t.token, lang, labelNorm(label)), token: t.token, lang, label, labelNorm: labelNorm(label), kind: 'preferred', embedded: true });
-          texts.push(label);
-        }
-      }
-      const e = await embedTexts(inference, texts);
-      if (!e.ok) throw new Error('seed embedding failed');
-      await registryStore.insertToken({ token: t.token, kind: t.kind, source: 'seed', labelEn: t.labels.en?.[0] ?? t.token, escoUri: null, iscoCode: null, status: 'active', mergedInto: null }, labels, 0);
-      await registryIndex.upsert(labels.map((l, i) => ({ id: l.labelId, values: e.vectors[i]!, metadata: { token: t.token, kind: t.kind, lang: l.lang, label: l.label, source: 'seed' } })));
-    }
-    const registry = { inference, store: registryStore, index: registryIndex };
+    const { db, registry } = await seededRegistry(inference);
     const jobsIndex = memoryIndex();
     const listings = new D1ListingStore(db.d1);
     const publish: PublishDeps = { inference, registry, listings, index: jobsIndex };

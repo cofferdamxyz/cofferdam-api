@@ -11,6 +11,7 @@ import {
   scanText,
   type BlockRefusal,
 } from '../src/services/work/blocks.js';
+import documents from './fixtures/work/documents.json';
 import { FIXTURE_CVS, HIRER_PROMPTS, REFUSED_BLOCKS, fixtureBlocks } from './fixtures/work/index.js';
 
 const block = (text: string, kind = 'experience', lang = 'en') => checkBlock({ kind, lang, text });
@@ -140,6 +141,19 @@ describe('the Work fixtures', () => {
   it('refuse every negative fixture for its stated reason', () => {
     expect(REFUSED_BLOCKS.length).toBeGreaterThanOrEqual(15);
     for (const f of REFUSED_BLOCKS) expect(checkBlock(f.block), f.id).toEqual({ ok: false, reason: f.reason });
+  });
+
+  it('hold the other Vault documents as body blocks the plane accepts, one gold type each', () => {
+    const types = new Set<string>();
+    for (const d of documents.documents) {
+      types.add(d.type);
+      for (const b of d.blocks) {
+        expect(b.kind, d.id).toBe('body');
+        const r = checkBlock(b);
+        expect(r.ok, `${d.id}: ${r.ok ? '' : r.reason}`).toBe(true);
+      }
+    }
+    expect([...types].sort()).toEqual(['certificate', 'licence', 'other', 'passport']);
   });
 
   it('hold the hirer prompt set in three languages, spans exact and text de-identified', () => {
