@@ -16,7 +16,9 @@
  * region, the scope, the tier, the Bloom filter and the model, nothing else.
  * The namespace is `<region>:onsite` for on-site work and `<country>:remote`
  * for remote work. A listing is keyed by the account's Work pseudonym and a
- * profile id, so one account can hold several (Work Profiles).
+ * profile id, so one account can hold several, up to `MAX_WORK_PROFILES`
+ * (Work Profiles, decision 0060); the pseudonym is the route's, an HMAC of
+ * the account (`pseudonym.ts`).
  */
 
 import type { Inference } from '../inference/index.js';
@@ -77,10 +79,21 @@ export interface ListingRecord {
   updatedAt: number;
 }
 
+/** Work Profiles an account holds at launch, so listings per pseudonym (decision 0060 (1)). */
+export const MAX_WORK_PROFILES = 3;
+
 export interface ListingStore {
-  put(record: ListingRecord): Promise<void>;
+  /**
+   * Write the record. With a `limit`, a new listing goes in only while its
+   * pseudonym holds fewer than that many, in the same statement, so two
+   * requests at once cannot both pass; a listing already there is always
+   * updated. False when the limit refused it.
+   */
+  put(record: ListingRecord, limit?: number): Promise<boolean>;
   /** The records named, one read. */
   get(listingIds: string[]): Promise<Map<string, ListingRecord>>;
+  /** The profile ids the pseudonym holds a listing for. */
+  profilesOf(pseudonym: string): Promise<string[]>;
   delete(listingId: string): Promise<void>;
 }
 
@@ -101,17 +114,23 @@ interface ListingRow {
 export class D1ListingStore implements ListingStore {
   constructor(private readonly db: D1Database) {}
 
-  async put(r: ListingRecord): Promise<void> {
-    await this.db
+  async put(r: ListingRecord, limit?: number): Promise<boolean> {
+    // A negative ?12 is no limit. The SELECT's WHERE also keeps SQLite from
+    // reading ON CONFLICT as a join constraint.
+    const { meta } = await this.db
       .prepare(
         `INSERT INTO listings (listing_id, pseudonym, profile_id, region, scope, namespace, tier, tokens, embed_model, published_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+         WHERE ?12 < 0
+            OR EXISTS (SELECT 1 FROM listings WHERE listing_id = ?1)
+            OR (SELECT COUNT(*) FROM listings WHERE pseudonym = ?2) < ?12
          ON CONFLICT (listing_id) DO UPDATE SET
            region = excluded.region, scope = excluded.scope, namespace = excluded.namespace, tier = excluded.tier,
            tokens = excluded.tokens, embed_model = excluded.embed_model, updated_at = excluded.updated_at`,
       )
-      .bind(r.listingId, r.pseudonym, r.profileId, r.region, r.scope, r.namespace, r.tier, JSON.stringify(r.tokens), r.embedModel, r.publishedAt, r.updatedAt)
+      .bind(r.listingId, r.pseudonym, r.profileId, r.region, r.scope, r.namespace, r.tier, JSON.stringify(r.tokens), r.embedModel, r.publishedAt, r.updatedAt, limit ?? -1)
       .run();
+    return meta.changes > 0;
   }
 
   async get(listingIds: string[]): Promise<Map<string, ListingRecord>> {
@@ -147,6 +166,14 @@ export class D1ListingStore implements ListingStore {
       }
     }
     return out;
+  }
+
+  async profilesOf(pseudonym: string): Promise<string[]> {
+    const { results } = await this.db
+      .prepare('SELECT profile_id FROM listings WHERE pseudonym = ? ORDER BY profile_id')
+      .bind(pseudonym)
+      .all<{ profile_id: string }>();
+    return results.map((r) => r.profile_id);
   }
 
   async delete(listingId: string): Promise<void> {
@@ -216,12 +243,15 @@ export interface PublishDeps {
 export type PublishOutcome =
   | { ok: true; listingId: string; namespace: string; tokens: string[]; calls: WorkCall[] }
   | { ok: false; error: 'draft_refused'; reason: DraftRefusal; calls: WorkCall[] }
+  | { ok: false; error: 'profile_limit'; limit: number; calls: WorkCall[] }
   | { ok: false; error: 'embedding_failed'; calls: WorkCall[] };
 
 /**
  * Publish (or republish) a listing; the claims snap with minting allowed,
- * certificates never mint. A store or index failure throws a
- * `WorkCallsError` carrying the calls already made.
+ * certificates never mint. A pseudonym holds at most `MAX_WORK_PROFILES`
+ * listings: a new profile beyond them is refused before anything is snapped,
+ * and again by the record's write when two arrive at once. A store or index
+ * failure throws a `WorkCallsError` carrying the calls already made.
  */
 export async function publishListing(deps: PublishDeps, draft: ListingDraft): Promise<PublishOutcome> {
   const refused = checkDraft(draft);
@@ -231,6 +261,8 @@ export async function publishListing(deps: PublishDeps, draft: ListingDraft): Pr
 
 async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCall[]): Promise<PublishOutcome> {
   const now = deps.now ?? Date.now;
+  const held = await deps.listings.profilesOf(draft.pseudonym);
+  if (!held.includes(draft.profileId) && held.length >= MAX_WORK_PROFILES) return { ok: false, error: 'profile_limit', limit: MAX_WORK_PROFILES, calls };
   const tokens = new Set<string>();
   const english: string[] = [];
   const claims: [TokenKind, string[]][] = [
@@ -259,6 +291,26 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
   const namespace = namespaceOf(draft.region, draft.scope, deps.namespacePrefix);
   const at = now();
   const before = (await deps.listings.get([listingId])).get(listingId);
+  // The record first, under the limit; then the vector. A refused or failed
+  // write leaves no vector without its record, and a failed index write
+  // leaves a record recall cannot reach until the phone retries.
+  const stored = await deps.listings.put(
+    {
+      listingId,
+      pseudonym: draft.pseudonym,
+      profileId: draft.profileId,
+      region: draft.region,
+      scope: draft.scope,
+      namespace,
+      tier: draft.tier,
+      tokens: list,
+      embedModel: embedding.call.model,
+      publishedAt: before?.publishedAt ?? at,
+      updatedAt: at,
+    },
+    MAX_WORK_PROFILES,
+  );
+  if (!stored) return { ok: false, error: 'profile_limit', limit: MAX_WORK_PROFILES, calls };
   if (before && before.namespace !== namespace) await deps.index.deleteByIds([listingId]);
   await deps.index.upsert([
     {
@@ -268,19 +320,6 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
       metadata: { v: LISTING_METADATA_VERSION, region: draft.region, scope: draft.scope, tier: draft.tier, bloom: bloomOf(list), model: embedding.call.model },
     },
   ]);
-  await deps.listings.put({
-    listingId,
-    pseudonym: draft.pseudonym,
-    profileId: draft.profileId,
-    region: draft.region,
-    scope: draft.scope,
-    namespace,
-    tier: draft.tier,
-    tokens: list,
-    embedModel: embedding.call.model,
-    publishedAt: before?.publishedAt ?? at,
-    updatedAt: at,
-  });
   return { ok: true, listingId, namespace, tokens: list, calls };
 }
 

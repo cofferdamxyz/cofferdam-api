@@ -162,9 +162,21 @@ export interface Env {
   JOBS_LISTINGS?: Vectorize;
   /** Countries whose remote namespaces a remote intent queries, comma-separated ISO codes; unset, `us,br,mx`. */
   WORK_REMOTE_COUNTRIES?: string;
-  /** `/v1/work/*`: a global brake, and per account after the gate passes. */
+  /**
+   * The key of the account's Work pseudonym (`services/work/pseudonym.ts`):
+   * HMAC-SHA-256 of the account, which the listing records are keyed by, so
+   * none names the account. A secret, at least 32 characters (`openssl rand
+   * -base64 32`), set with `wrangler secret put WORK_PSEUDONYM_KEY`. Unset or
+   * shorter, `/v1/work/listing` answers 503 `pseudonym_key_unprovisioned`.
+   * Rotating it changes every pseudonym, and no listing can be re-keyed in
+   * place (no record holds its account), so a rotation takes every listing
+   * (record and vector) down first and the phones publish again; no tool
+   * does that yet. Never swap it quietly.
+   */
+  WORK_PSEUDONYM_KEY?: string;
+  /** `/v1/work/*` and `/v1/jobs/*`: a global brake per route family, and per account after the gate passes. */
   WORK_RL?: RateLimit;
-  /** `/v1/work/*`: a generous per-IP ceiling before the gate. */
+  /** `/v1/work/*` and `/v1/jobs/*`: a generous per-IP ceiling before the gate. */
   WORK_IP_RL?: RateLimit;
 
   /**

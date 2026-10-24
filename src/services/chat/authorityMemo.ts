@@ -8,10 +8,14 @@
  * cost about 2 s per turn on the public node (deployed plane, 2026-10-17). A
  * chat turn only spends Workers AI, so the chat remembers a passed check for
  * five minutes per account, scheme and key: a device revoked on chain keeps
- * chatting for at most that long. The Work parser's cloud executor
- * (`routes/work.ts`, about eight calls per CV) also only spends Workers AI and
- * shares it (2026-10-24). Nothing else uses it: the bind-bundle pickup,
- * `verify-attestation` and anything that moves funds keep reading Base live.
+ * chatting for at most that long. Its users are the chat, `/v1/work` (the
+ * Work parser's cloud executor, about eight calls per CV, and the listing
+ * toggle) and `/v1/jobs` (the hirer query), which share it through
+ * `routes/workGate.ts` (2026-10-24): they spend Workers AI and read or write
+ * only the Work plane's own D1 and Vectorize, never funds, so a revoked device
+ * can also change its listings for at most five minutes. Nothing else uses
+ * it: the bind-bundle pickup, `verify-attestation` and anything that moves
+ * funds keep reading Base live.
  *
  * Two levels: this isolate's map, then the data centre's Cache API (shared by
  * the isolates there; a no-op on workers.dev). Keys are hashed, and the cache

@@ -20,7 +20,8 @@
  *  4. One D1 read for the gated top: each required certificate is confirmed
  *     against the exact token list, never the filter (E10: a false positive
  *     must never award licensed work, so a missing certificate drops the
- *     candidate in either mode); a listing without a record is dropped; and
+ *     candidate in either mode); a listing without a record is dropped, as is
+ *     every listing of the pseudonym the caller excludes (a hirer's own); and
  *     one listing per pseudonym is kept, the best-scoring (Work Profiles).
  *
  * No generative call runs here (E4): one embedding of the query, index
@@ -80,6 +81,8 @@ export interface RecallDeps {
   listings: ListingStore;
   remoteCountries?: string[];
   namespacePrefix?: string;
+  /** A pseudonym none of whose listings may be a finalist: the hirer's own, since one account is both sides. */
+  excludePseudonym?: string;
   now?: () => number;
   log?: ExecutorOptions['log'];
 }
@@ -150,7 +153,7 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
   const finalists: Finalist[] = [];
   for (const g of top) {
     const r = records.get(g.match.id);
-    if (!r) continue;
+    if (!r || r.pseudonym === deps.excludePseudonym) continue;
     const held = new Set(r.tokens);
     if (!certificates.every((c) => held.has(c))) continue;
     if (seen.has(r.pseudonym)) continue;

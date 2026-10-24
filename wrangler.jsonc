@@ -152,11 +152,14 @@
     { "name": "SELF_PICKUP_IP_RL", "namespace_id": "1107", "simple": { "limit": 120, "period": 60 } },
     { "name": "CEREMONY_IP_RL", "namespace_id": "1108", "simple": { "limit": 120, "period": 60 } },
     { "name": "AA_RELAY_IP_RL", "namespace_id": "1109", "simple": { "limit": 120, "period": 60 } },
-    // /v1/work, the Work parser's cloud executor (workspace decision 0021): a
-    // CV is one classification and about seven block extractions, so 30 a
-    // minute per account; the global key is the route's brake, as for chat.
+    // /v1/work, the Work parser's cloud executor (workspace decision 0021) and
+    // the listing toggle: a CV is one classification and about seven block
+    // extractions, so 30 a minute per account; the global key is the route's
+    // brake, as for chat. /v1/jobs (the hirer query) counts on its own
+    // jobs:global and jobs:<account> keys here, and taking a listing down on
+    // work-off:global and work-off:<account>, so no other traffic blocks it.
     { "name": "WORK_RL", "namespace_id": "1110", "simple": { "limit": 30, "period": 60 } },
-    // /v1/work before the gate: as generous as chat's.
+    // /v1/work and /v1/jobs before the gate (work-ip:, jobs-ip: and work-off-ip: keys): as generous as chat's.
     { "name": "WORK_IP_RL", "namespace_id": "1111", "simple": { "limit": 120, "period": 60 } }
   ]
 
@@ -208,6 +211,11 @@
   // A metadata index must exist before the first insert, or those vectors
   // cannot be filtered. Then the one-time ESCO import (test/esco.import.test.ts).
   // jobs-listings-v1 is namespaced by coarse region and scope (decision 0019).
+  // The listing routes also need the secret WORK_PSEUDONYM_KEY (wrangler
+  // secret put WORK_PSEUDONYM_KEY; at least 32 characters): the HMAC key of
+  // the account's Work pseudonym. Rotating it changes every pseudonym, and no
+  // listing can be re-keyed in place, so a rotation takes every listing down
+  // first and the phones publish again.
   // ─────────────────────────────────────────────────────────────────
   // "d1_databases": [
   //   { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "<from wrangler d1 create>", "migrations_dir": "migrations/work" }
