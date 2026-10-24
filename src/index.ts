@@ -33,6 +33,7 @@ import { aaRoutes } from './routes/aa.js';
 import { selfRoutes } from './routes/self.js';
 import { sepoliaRoutes } from './routes/sepolia.js';
 import { sessionRoutes } from './routes/session.js';
+import { workRoutes } from './routes/work.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -86,6 +87,8 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/session/verify-attestation' },
       { method: 'POST', path: '/v1/aa/user-operation' },
       { method: 'POST', path: '/v1/ceremony/first-high' },
+      { method: 'POST', path: '/v1/work/classify' },
+      { method: 'POST', path: '/v1/work/extract' },
     ],
     docs: 'https://github.com/cofferdamxyz/cofferdam-api/blob/main/README.md',
   });
@@ -103,6 +106,7 @@ app.route('/v1/session', sessionRoutes);
 app.route('/v1/aa', aaRoutes);
 app.route('/v1/ceremony', ceremonyRoutes);
 app.route('/v1/locale', localeRoutes);
+app.route('/v1/work', workRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ ok: false, error: 'not_found' }, 404));

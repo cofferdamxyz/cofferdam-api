@@ -8,7 +8,9 @@
  * cost about 2 s per turn on the public node (deployed plane, 2026-10-17). A
  * chat turn only spends Workers AI, so the chat remembers a passed check for
  * five minutes per account, scheme and key: a device revoked on chain keeps
- * chatting for at most that long. Only chat uses it; the bind-bundle pickup,
+ * chatting for at most that long. The Work parser's cloud executor
+ * (`routes/work.ts`, about eight calls per CV) also only spends Workers AI and
+ * shares it (2026-10-24). Nothing else uses it: the bind-bundle pickup,
  * `verify-attestation` and anything that moves funds keep reading Base live.
  *
  * Two levels: this isolate's map, then the data centre's Cache API (shared by

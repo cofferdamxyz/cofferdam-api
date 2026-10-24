@@ -21,9 +21,27 @@
  */
 
 /** What a call is for. Tags allow letters, digits and `: - . / @`, so op ids use dashes. */
-export type InferenceOp = 'chat-router' | 'chat-action' | 'chat-answer' | 'chat-long' | 'chat-reasoning';
+export type InferenceOp =
+  | 'chat-router'
+  | 'chat-action'
+  | 'chat-answer'
+  | 'chat-long'
+  | 'chat-reasoning'
+  | 'work-classify'
+  | 'work-extract'
+  | 'work-extract-fallback'
+  | 'work-intent';
 
-export type InferenceModelVar = 'CHAT_ROUTER_MODEL' | 'CHAT_ACTION_MODEL' | 'CHAT_ANSWER_MODEL' | 'CHAT_LONG_MODEL' | 'CHAT_REASONING_MODEL';
+export type InferenceModelVar =
+  | 'CHAT_ROUTER_MODEL'
+  | 'CHAT_ACTION_MODEL'
+  | 'CHAT_ANSWER_MODEL'
+  | 'CHAT_LONG_MODEL'
+  | 'CHAT_REASONING_MODEL'
+  | 'WORK_CLASSIFY_MODEL'
+  | 'WORK_EXTRACT_MODEL'
+  | 'WORK_EXTRACT_FALLBACK_MODEL'
+  | 'WORK_INTENT_MODEL';
 
 export interface OpSpec {
   /** The model when neither KV nor the environment pins one. */
@@ -52,6 +70,18 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   // each model stalled once in 28 with nothing by this window, so the turn
   // retries once (`chat/run.ts`, `REASONING_FIRST_TRY_MS`).
   'chat-reasoning': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'CHAT_REASONING_MODEL', timeoutMs: 45_000 },
+  // Cofferdam Work, the cloud executor (workspace decisions 0020 and 0021,
+  // `services/work/`). The document type, read by Clef from de-identified
+  // blocks (decision 0021 (d)); clef-flash answered in 1.2 s from the Mac.
+  'work-classify': { model: '@cf/cloudflare/clef-flash', envVar: 'WORK_CLASSIFY_MODEL', timeoutMs: 6_000 },
+  // One block's fields. JSON mode on llama-3.3-70b took 5.0 s on an
+  // experience entry from the Mac, Clairic 1.9 s, gpt-oss-120b 3.9 s
+  // (2026-10-24). The adapter follows the pinned model's family.
+  'work-extract': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_EXTRACT_MODEL', timeoutMs: 20_000 },
+  // When the primary fails or answers out of shape (decision 0020); it reasons before answering, so it waits longer.
+  'work-extract-fallback': { model: '@cf/openai/gpt-oss-120b', envVar: 'WORK_EXTRACT_FALLBACK_MODEL', timeoutMs: 30_000 },
+  // A hirer's sentence into the intent's fields (S5): once per vacancy, its own pin and meter.
+  'work-intent': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_INTENT_MODEL', timeoutMs: 15_000 },
 };
 
 /**
@@ -74,6 +104,12 @@ export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   '@cf/zai-org/glm-5.3-flash': { input: 0.15, output: 0.5 },
   '@cf/zai-org/glm-4.7-flash': { input: 0.06, output: 0.4 },
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
+  // Cofferdam Work (read 2026-10-24 on the Workers AI pricing page). Clairic
+  // and Clef bill input only; Clairic counts its field schema as input
+  // (about 1,000 tokens of a block's 1,350 on 2026-10-24).
+  '@cf/cloudflare/clairic': { input: 0.1, output: 0 },
+  '@cf/cloudflare/clef': { input: 0.24, output: 0 },
+  '@cf/openai/gpt-oss-120b': { input: 0.35, output: 0.75 },
 };
 
 const unpriced = new Set<string>();

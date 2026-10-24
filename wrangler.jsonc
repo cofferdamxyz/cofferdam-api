@@ -151,7 +151,13 @@
     // Per-IP ceilings before the gate on pickup, ceremony and relay, as generous as chat's.
     { "name": "SELF_PICKUP_IP_RL", "namespace_id": "1107", "simple": { "limit": 120, "period": 60 } },
     { "name": "CEREMONY_IP_RL", "namespace_id": "1108", "simple": { "limit": 120, "period": 60 } },
-    { "name": "AA_RELAY_IP_RL", "namespace_id": "1109", "simple": { "limit": 120, "period": 60 } }
+    { "name": "AA_RELAY_IP_RL", "namespace_id": "1109", "simple": { "limit": 120, "period": 60 } },
+    // /v1/work, the Work parser's cloud executor (workspace decision 0021): a
+    // CV is one classification and about seven block extractions, so 30 a
+    // minute per account; the global key is the route's brake, as for chat.
+    { "name": "WORK_RL", "namespace_id": "1110", "simple": { "limit": 30, "period": 60 } },
+    // /v1/work before the gate: as generous as chat's.
+    { "name": "WORK_IP_RL", "namespace_id": "1111", "simple": { "limit": 120, "period": 60 } }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources

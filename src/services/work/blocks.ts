@@ -21,8 +21,17 @@
  * the one type the extraction op accepts.
  */
 
-/** Block kinds that may leave the phone on the cloud path. */
-export const CLOUD_BLOCK_KINDS = ['summary', 'experience', 'education', 'skills', 'certificates', 'languages'] as const;
+/** The CV sections the cloud executor extracts, one block each (an experience or education block is one entry). */
+export const CV_BLOCK_KINDS = ['summary', 'experience', 'education', 'skills', 'certificates', 'languages'] as const;
+export type CvBlockKind = (typeof CV_BLOCK_KINDS)[number];
+
+/**
+ * Block kinds that may leave the phone on the cloud path: the CV sections,
+ * and `body`, a de-identified block the phone's heading lexicon could not
+ * place (a certificate, a licence), which only the document classification
+ * reads; no extraction schema takes it.
+ */
+export const CLOUD_BLOCK_KINDS = [...CV_BLOCK_KINDS, 'body'] as const;
 export type CloudBlockKind = (typeof CLOUD_BLOCK_KINDS)[number];
 
 /** Kinds that never leave the phone; the plane refuses them by name. */
@@ -35,12 +44,14 @@ export type BlockLang = (typeof BLOCK_LANGS)[number];
 /**
  * What the phone writes in place of an identifying string, numbered per
  * document: `[ORG_1]` is the first organisation, `[PLACE_2]` the second place.
- * The map back to the real strings exists only on the phone and in the
- * client-encrypted Vault.
+ * The parser writes the first five; the chat's on-device privacy gate
+ * (`cofferdam-app` `src/lib/privacyGate.ts`, decision 0024), which a hirer's
+ * typed sentence also passes, writes `ID` and the rest. The map back to the
+ * real strings exists only on the phone and in the client-encrypted Vault.
  */
-export const PLACEHOLDER_CLASSES = ['ORG', 'PLACE', 'PERSON', 'VESSEL', 'ID'] as const;
+export const PLACEHOLDER_CLASSES = ['ORG', 'PLACE', 'PERSON', 'VESSEL', 'ID', 'EMAIL', 'PHONE', 'LINK', 'CARD', 'IBAN', 'ACCOUNT', 'DOC'] as const;
 export type PlaceholderClass = (typeof PLACEHOLDER_CLASSES)[number];
-const PLACEHOLDER_SOURCE = String.raw`\[(ORG|PLACE|PERSON|VESSEL|ID)_([1-9]\d?)\]`;
+const PLACEHOLDER_SOURCE = String.raw`\[(${PLACEHOLDER_CLASSES.join('|')})_([1-9]\d?)\]`;
 
 /** A whole string that is exactly one placeholder of the given classes. */
 export function isPlaceholder(value: string, classes: readonly PlaceholderClass[] = PLACEHOLDER_CLASSES): boolean {
@@ -156,8 +167,8 @@ function hasLongNumber(text: string): boolean {
   return false;
 }
 
-/** Lower case with accents folded ("nº" reads "no"), for the label checks. */
-function fold(text: string): string {
+/** Lower case with accents folded ("nº" reads "no", "Março" reads "marco"), for checks and lexicons. */
+export function fold(text: string): string {
   return text.normalize('NFKD').replace(/\p{M}+/gu, '').toLowerCase();
 }
 

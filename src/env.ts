@@ -115,6 +115,25 @@ export interface Env {
    */
   AI_MONTHLY_BUDGET_USD?: string;
 
+  // ── Cofferdam Work (workspace docs/product/engine.md) ───────────
+  /**
+   * Model pins for the Work op classes in `services/inference` when `AI_PINS`
+   * has none; unset, the seam's defaults: `clef-flash` for the document type,
+   * `llama-3.3-70b-instruct-fp8-fast` in JSON mode for a block's fields
+   * (decision 0020), `gpt-oss-120b` when that fails. A Clairic pin
+   * (`@cf/cloudflare/clairic`) switches the extraction request to its typed
+   * fields.
+   */
+  WORK_CLASSIFY_MODEL?: string;
+  WORK_EXTRACT_MODEL?: string;
+  WORK_EXTRACT_FALLBACK_MODEL?: string;
+  /** The hirer's sentence into the intent's fields (S5); unset, llama-3.3-70b in JSON mode. */
+  WORK_INTENT_MODEL?: string;
+  /** `/v1/work/*`: a global brake, and per account after the gate passes. */
+  WORK_RL?: RateLimit;
+  /** `/v1/work/*`: a generous per-IP ceiling before the gate. */
+  WORK_IP_RL?: RateLimit;
+
   /**
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
    * `handleOps` for the app's sponsored ops (`/v1/aa/user-operation`, refunded
