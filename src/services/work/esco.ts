@@ -241,6 +241,9 @@ export async function planEscoImport(files: EscoFiles, opts: { hidden?: boolean 
 
 const sql = (v: string | number | null) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${v.replace(/'/g, "''")}'`);
 
+/** A value as an SQLite literal, for the SQL files the imports write (`national.ts` too). */
+export const sqlValue = sql;
+
 /** Rows per INSERT, well under D1's statement size. */
 const SQL_ROWS = 100;
 

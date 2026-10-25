@@ -191,6 +191,18 @@ export function adjudicationState(kind: TokenKind, raw: string, lang: string): s
   return `A ${KIND_NOUN[kind]} as a worker or a hirer wrote it, in ${lang}:\n${raw}`;
 }
 
+/**
+ * A national layer's job title (decision 0066) whose best crosswalk candidate
+ * the embedding is not sure of, one candidate or several. The question is the
+ * band's (`adjudicationQuestions`); the state adds the national occupation the
+ * title is filed under. The import reads the answer its own way (`onet.ts`):
+ * none's probability says whether the title is one of the candidates, and
+ * the choice, from its own floor, which.
+ */
+export function nationalTitleState(title: string, occupation: string, classification: string): string {
+  return `A job title as ${classification} lists it, under the occupation "${occupation}":\n${title}`;
+}
+
 // ── A hirer's request (S5, E6) ───────────────────────────────────────────
 
 /** Where the work is done; the hirer confirms it on the card. */

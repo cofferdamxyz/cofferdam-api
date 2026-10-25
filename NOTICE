@@ -12,3 +12,20 @@ Sibling repositories:
   cofferdam-attester  https://github.com/cofferdamxyz/cofferdam-attester
   cofferdam-sdk       https://github.com/cofferdamxyz/cofferdam-sdk
   base-contracts      https://github.com/cofferdamxyz/base-contracts
+
+Third-party data
+
+The Work plane's token registry is loaded with data this repository does
+not contain:
+
+- The US layer includes information from the O*NET 31.0 Database by the
+  U.S. Department of Labor, Employment and Training Administration
+  (USDOL/ETA). Used under the CC BY 4.0 license
+  (https://creativecommons.org/licenses/by/4.0/). Cofferdam Inc. has
+  modified all or some of this information: job titles were split into
+  their long and short forms, bare acronyms were left out, and each title
+  was placed on an ESCO occupation through the ESCO-O*NET crosswalk
+  (version 1, September 2022, published by the ESCO Secretariat with
+  USDOL/ETA); test/onet.import.test.ts writes the list of every change.
+  USDOL/ETA has not approved, endorsed, or tested these modifications.
+  O*NET(R) is a trademark of USDOL/ETA.

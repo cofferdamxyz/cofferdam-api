@@ -122,7 +122,7 @@ export interface SnapRecord {
 }
 
 export interface RegistryStore {
-  /** Tokens of the kind that hold this exact label, merges followed. */
+  /** Tokens of the kind that hold this exact label, merges followed; where a curated label holds it, the tokens that hold it only as an observed alias are left out. */
   tokensByLabel(norm: string, kind: TokenKind): Promise<RegistryToken[]>;
   /** The tokens named, merges followed, keyed by the name asked for. */
   tokens(names: string[]): Promise<Map<string, RegistryToken>>;
@@ -193,14 +193,17 @@ export class D1RegistryStore implements RegistryStore {
   }
 
   async tokensByLabel(norm: string, kind: TokenKind): Promise<RegistryToken[]> {
+    // `observed` is 1 for a token that holds the label only as an alias a snap observed.
     const { results } = await this.db
       .prepare(
-        `SELECT DISTINCT t.token FROM registry_labels l JOIN registry_tokens t ON t.token = l.token
-         WHERE l.label_norm = ? AND t.kind = ?`,
+        `SELECT t.token, MIN(l.kind = 'observed') AS observed FROM registry_labels l JOIN registry_tokens t ON t.token = l.token
+         WHERE l.label_norm = ? AND t.kind = ? GROUP BY t.token`,
       )
       .bind(norm, kind)
-      .all<{ token: string }>();
-    const resolved = await this.tokens(results.map((r) => r.token));
+      .all<{ token: string; observed: number }>();
+    // A curated label (ESCO's, the seed's, a national layer's) outranks an observed alias (decision 0066 (4)).
+    const curated = results.filter((r) => !r.observed);
+    const resolved = await this.tokens((curated.length ? curated : results).map((r) => r.token));
     const seen = new Map<string, RegistryToken>();
     for (const t of resolved.values()) seen.set(t.token, t);
     return [...seen.values()];
