@@ -244,8 +244,32 @@ const sql = (v: string | number | null) => (v == null ? 'NULL' : typeof v === 'n
 /** Rows per INSERT, well under D1's statement size. */
 const SQL_ROWS = 100;
 
+/**
+ * INSERT statements per file of `registrySqlFiles`: the 2026-10-24 ESCO load
+ * went in as files of 100 (10,000 rows each), one `wrangler d1 execute` per
+ * file.
+ */
+export const SQL_STATEMENTS_PER_FILE = 100;
+
 /** A plan as SQL for `wrangler d1 execute cofferdam-work --remote --file=…` (ESCO's, or the certificate seed's); a re-run inserts nothing twice. */
 export function registrySql(plan: Pick<EscoPlan, 'tokens' | 'labels'>, at: number): string {
+  return registryStatements(plan, at).join('\n') + '\n';
+}
+
+/**
+ * The same statements cut into files of at most `per`, only between
+ * statements and in order: every token row comes before any label row, so
+ * files loaded in order meet the labels' foreign key. Each file loads on its
+ * own, atomically, and can go again.
+ */
+export function registrySqlFiles(plan: Pick<EscoPlan, 'tokens' | 'labels'>, at: number, per = SQL_STATEMENTS_PER_FILE): string[] {
+  const statements = registryStatements(plan, at);
+  const files: string[] = [];
+  for (let i = 0; i < statements.length; i += per) files.push(statements.slice(i, i + per).join('\n') + '\n');
+  return files;
+}
+
+function registryStatements(plan: Pick<EscoPlan, 'tokens' | 'labels'>, at: number): string[] {
   const out: string[] = [];
   for (let i = 0; i < plan.tokens.length; i += SQL_ROWS) {
     const rows = plan.tokens
@@ -261,7 +285,7 @@ export function registrySql(plan: Pick<EscoPlan, 'tokens' | 'labels'>, at: numbe
       .map((l) => `(${[l.labelId, l.embedded ? 1 : 0, l.token, l.lang, l.label, l.labelNorm, l.kind, at].map(sql).join(', ')})`);
     out.push(`INSERT INTO registry_labels (label_id, embedded, token, lang, label, label_norm, kind, created_at) VALUES\n${rows.join(',\n')}\nON CONFLICT DO NOTHING;`);
   }
-  return out.join('\n') + '\n';
+  return out;
 }
 
 /** Vector metadata keeps 64 indexed bytes per string and 10 KiB in all; a label is cut to this. */

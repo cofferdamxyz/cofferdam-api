@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { EscoFormatError, iscoOf, parseCsv, planEscoImport, readEscoFile, registrySql, vectorLine } from '../src/services/work/esco.js';
+import { EscoFormatError, iscoOf, parseCsv, planEscoImport, readEscoFile, registrySql, registrySqlFiles, vectorLine } from '../src/services/work/esco.js';
 import { D1RegistryStore } from '../src/services/work/registry.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 
@@ -119,6 +119,20 @@ describe('planEscoImport', () => {
     const store = new D1RegistryStore(d1);
     expect((await store.tokensByLabel('maquinista naval', 'pos')).map((t) => t.token)).toEqual(['pos:ship-engineer']);
     expect(sqlite.prepare("SELECT label FROM registry_labels WHERE label_norm = 'plumber s leak fix'").get()).toEqual({ label: "plumber's leak fix" });
+  });
+
+  it('cuts the SQL into files between statements, the tokens first, that load one by one to the same rows', async () => {
+    const plan = await planEscoImport({ occupations: { en: OCC_EN, pt: OCC_PT }, skills: { en: SKILL_EN, es: SKILL_ES } });
+    const files = registrySqlFiles(plan, 1_000, 1);
+    expect(files.length).toBeGreaterThan(1);
+    expect(files.every((f) => f.startsWith('INSERT INTO ') && f.split('ON CONFLICT DO NOTHING;').length === 2)).toBe(true);
+    expect(files[0]).toMatch(/^INSERT INTO registry_tokens /);
+    expect(files.join('')).toBe(registrySql(plan, 1_000));
+    // D1 enforces the labels' foreign key, as this database does: out of order, a label file fails.
+    expect(() => sqliteD1().sqlite.exec(files[files.length - 1]!)).toThrow(/FOREIGN KEY/);
+    const { sqlite } = sqliteD1();
+    for (const f of files) sqlite.exec(f);
+    expect(sqlite.prepare('SELECT count(*) AS n FROM registry_labels').get()).toEqual({ n: plan.labels.length });
   });
 
   it('writes one NDJSON line per label vector, with the code beside the token', async () => {

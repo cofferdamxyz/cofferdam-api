@@ -8,10 +8,14 @@
  * download per language), plans the registry rows (`services/work/esco.ts`),
  * embeds every label with bge-m3 over the Workers AI REST API, and writes:
  *
- *   <ESCO_OUT>/registry.sql            → wrangler d1 execute cofferdam-work --remote --file=registry.sql
- *   <ESCO_OUT>/vectors-001.ndjson, …   → wrangler vectorize insert token-registry-v1 --file=vectors-001.ndjson (each)
+ *   <ESCO_OUT>/registry-001.sql, …     → wrangler d1 execute cofferdam-work --remote --yes --file=registry-001.sql (each, in order)
+ *   <ESCO_OUT>/vectors-001.ndjson, …   → wrangler vectorize upsert token-registry-v1 --file=vectors-001.ndjson (each, after the SQL)
  *
- *   cd cofferdam-api && ESCO_IMPORT=1 ESCO_DIR=~/Downloads/esco direnv exec .. yarn vitest run test/esco.import.test.ts
+ *   cd cofferdam-api && ESCO_IMPORT=1 ESCO_DIR=~/Development/esco direnv exec .. yarn vitest run test/esco.import.test.ts
+ *
+ * One file at a time, never the SQL and the vectors together (a busy uplink
+ * makes wrangler fail with "fetch failed"); a file that fails can go again,
+ * since the SQL inserts nothing twice and an upsert overwrites by id.
  *
  * ESCO_DIR holds occupations_<lang>.csv and skills_<lang>.csv for the
  * languages in ESCO_LANGS (default en,pt,es; English is required).
@@ -22,19 +26,19 @@
  * `token-registry-v1` with its `kind` metadata index (wrangler.jsonc).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { createInference } from '../src/services/inference/index.js';
-import { ESCO_LANGS, planEscoImport, registrySql, vectorLine, type EscoFiles, type EscoLang } from '../src/services/work/esco.js';
+import { ESCO_LANGS, planEscoImport, registrySqlFiles, vectorLine, type EscoFiles, type EscoLang } from '../src/services/work/esco.js';
 import { embedTexts } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 
 const RUN = process.env.ESCO_IMPORT === '1';
-/** Labels per bge-m3 call, and vectors per NDJSON file (each file stays far below Vectorize's 100 MB upload). */
+/** Labels per bge-m3 call, and vectors per NDJSON file (about 49 MB, far below Vectorize's 100 MB upload; about three minutes a file on 2026-10-24). */
 const BATCH = 100;
 const PER_FILE = 5_000;
 const PARALLEL = 4;
@@ -64,7 +68,10 @@ describe.skipIf(!RUN)('ESCO import (opt-in, from the Mac)', () => {
     const files: EscoFiles = { occupations: read('occupations'), ...(process.env.ESCO_SKILLS === '0' ? {} : { skills: read('skills') }) };
     const plan = await planEscoImport(files, { hidden: process.env.ESCO_HIDDEN !== '0' });
     console.log(`plan: ${JSON.stringify(plan.counts)}`);
-    writeFileSync(join(out, 'registry.sql'), registrySql(plan, Date.now()));
+    // A previous run's numbered files would load beside this run's.
+    for (const f of readdirSync(out)) if (/^(registry-\d{3}\.sql|vectors-\d{3}\.ndjson)$/.test(f)) rmSync(join(out, f));
+    const sqlFiles = registrySqlFiles(plan, Date.now());
+    sqlFiles.forEach((text, i) => writeFileSync(join(out, `registry-${String(i + 1).padStart(3, '0')}.sql`), text));
 
     const inference = createInference({}, { ai: createRestAi({ accountId, token }) })!;
     const tokens = new Map(plan.tokens.map((t) => [t.token, t]));
@@ -100,10 +107,11 @@ describe.skipIf(!RUN)('ESCO import (opt-in, from the Mac)', () => {
     }
     console.log(
       [
-        `wrote ${out}/registry.sql (${plan.tokens.length} tokens, ${plan.labels.length} labels) and ${names.length} vector files`,
-        'load them, after the resources exist (wrangler.jsonc, Cofferdam Work):',
-        `  wrangler d1 execute cofferdam-work --remote --file=${out}/registry.sql`,
-        `  for f in ${out}/vectors-*.ndjson; do wrangler vectorize insert token-registry-v1 --file="$f"; done`,
+        `wrote ${sqlFiles.length} SQL files (${plan.tokens.length} tokens, ${plan.labels.length} labels) and ${names.length} vector files to ${out}`,
+        'load them one file at a time, the SQL first, after the resources exist (runbook: docs/runbooks/cloudflare-deploys.md, Cofferdam Work resources):',
+        `  for f in ${out}/registry-[0-9][0-9][0-9].sql; do wrangler d1 execute cofferdam-work --remote --yes --file="$f" || break; done`,
+        `  for f in ${out}/vectors-[0-9][0-9][0-9].ndjson; do wrangler vectorize upsert token-registry-v1 --file="$f" || break; done`,
+        'a file that fails can go again: the SQL inserts nothing twice, and an upsert overwrites by id',
       ].join('\n'),
     );
     expect(lines.filter(Boolean)).toHaveLength(plan.labels.length);
