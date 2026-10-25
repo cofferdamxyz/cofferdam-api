@@ -18,7 +18,8 @@
  *
  *   cd cofferdam-api && WORK_EVAL=1 direnv exec .. yarn vitest run test/workRegistry.eval.test.ts
  *
- * WORK_TAU_AUTO and WORK_TAU_LOW try other bands.
+ * WORK_TAU_AUTO and WORK_TAU_LOW try other bands, and WORK_EMBED_MODEL another
+ * embedding model; either one adds itself to the report's file name.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -82,7 +83,8 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
     const token = process.env.CLOUDFLARE_API_TOKEN;
     if (!accountId || !token) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
     const tau = parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW);
-    const inference = createInference({}, { ai: createRestAi({ accountId, token }) })!;
+    // WORK_EMBED_MODEL tries another embedding model (2026-10-25: @cf/google/embeddinggemma-300m against bge-m3).
+    const inference = createInference({ WORK_EMBED_MODEL: process.env.WORK_EMBED_MODEL }, { ai: createRestAi({ accountId, token }) })!;
 
     // The occupation and skill seed, and the certificate seed, as rows and labels.
     const tokens: RegistryToken[] = [];
@@ -104,8 +106,13 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
     // Every label, embedded once.
     const vectors: number[][] = [];
     for (let i = 0; i < labels.length; i += 50) {
-      const e = await embedTexts(inference, labels.slice(i, i + 50).map((l) => l.label));
-      if (!e.ok) throw new Error('seed embedding failed');
+      // A model's first calls can outlast the op's 10 s while it starts (EmbeddingGemma, 2026-10-25): try four times.
+      let reason = '';
+      let e = await embedTexts(inference, labels.slice(i, i + 50).map((l) => l.label), { log: (entry) => (reason = JSON.stringify(entry)) });
+      for (let attempt = 1; !e.ok && attempt < 4; attempt++) {
+        e = await embedTexts(inference, labels.slice(i, i + 50).map((l) => l.label), { log: (entry) => (reason = JSON.stringify(entry)) });
+      }
+      if (!e.ok) throw new Error(`seed embedding failed at label ${i}: ${reason} after ${e.call.ms} ms`);
       vectors.push(...e.vectors);
     }
 
@@ -194,7 +201,9 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
       ),
       '',
     ].join('\n');
-    writeFileSync(join(__dirname, 'work-eval', `registry-${date}.md`), md);
+    const embedSuffix = process.env.WORK_EMBED_MODEL ? `-${process.env.WORK_EMBED_MODEL.split('/').pop()}` : '';
+    const tauSuffix = process.env.WORK_TAU_AUTO || process.env.WORK_TAU_LOW ? `-tau-${tau.auto}-${tau.low}` : '';
+    writeFileSync(join(__dirname, 'work-eval', `registry-${date}${embedSuffix}${tauSuffix}.md`), md);
     expect(rows).toHaveLength(seed.expected.length);
   }, 1_800_000);
 });

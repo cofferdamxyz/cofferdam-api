@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   D1RegistryStore,
   DEFAULT_TAU,
+  EMBED_DIMS_BY_MODEL,
+  embedTexts,
   labelIdOf,
   labelNorm,
   parseTau,
@@ -262,5 +264,20 @@ describe('snap: retrieve, then choose', () => {
     const q = adjudicationQuestions('skill', [{ token: 'skill:leak-repair', labelEn: 'leak repair', matched: 'reparación de fugas', matchedLang: 'es', score: 0.8 }]);
     expect(q.match).toMatchObject({ type: 'choice', criteria: { c0: 'leak repair (matched "reparación de fugas")', none: 'None of these: a different skill' } });
     expect(q.specialization).toMatchObject({ type: 'noul' });
+  });
+});
+
+describe('embedTexts', () => {
+  const answer = (dims: number) => () => ({ shape: [1, dims], data: [new Array<number>(dims).fill(0.01)] });
+
+  it("accepts the pinned model's vector size and fails closed on any other", async () => {
+    const gemma = fakeInference({ 'work-embed': answer(768) }, [], { 'work-embed': '@cf/google/embeddinggemma-300m' });
+    expect((await embedTexts(gemma, ['plumber'])).ok).toBe(true);
+    expect((await embedTexts(fakeInference({ 'work-embed': answer(1024) }), ['plumber'])).ok).toBe(true);
+    // bge-m3's indexes hold 1024 dimensions: a 768-dimension answer under that pin is a bad shape.
+    expect((await embedTexts(fakeInference({ 'work-embed': answer(768) }), ['plumber'])).ok).toBe(false);
+    const unknown = fakeInference({ 'work-embed': answer(1024) }, [], { 'work-embed': '@cf/some/other-model' });
+    expect((await embedTexts(unknown, ['plumber'])).ok).toBe(false);
+    expect(EMBED_DIMS_BY_MODEL['@cf/baai/bge-m3']).toBe(1024);
   });
 });

@@ -300,8 +300,17 @@ export function vectorizeIndex(binding: Vectorize): VectorIndex {
 
 // ── Embeddings ──────────────────────────────────────────────────────────────
 
-/** `bge-m3` dimensions; `token-registry-v1` and `jobs-listings-v1` are created with them. */
-export const EMBED_DIMS = 1024;
+/**
+ * The vector size of each model `work-embed` may be pinned to; any other model
+ * fails closed. `token-registry-v1` and `jobs-listings-v1` hold bge-m3's 1024
+ * dimensions, so pinning another model in production needs new indexes of its
+ * size and a re-embed of every label and listing (2026-10-25: EmbeddingGemma's
+ * 768 is listed so the registry eval can compare it).
+ */
+export const EMBED_DIMS_BY_MODEL: Readonly<Record<string, number>> = {
+  '@cf/baai/bge-m3': 1024,
+  '@cf/google/embeddinggemma-300m': 768,
+};
 
 export type Embedding = { ok: true; vectors: number[][]; call: WorkCall } | { ok: false; call: WorkCall };
 
@@ -320,10 +329,12 @@ export async function embedTexts(inference: Inference, texts: string[], opts: Ex
   }
   const usage = usageOrEstimate(result, request);
   const data = (result as { data?: unknown } | null)?.data;
+  const dims = EMBED_DIMS_BY_MODEL[model];
   const ok =
+    dims !== undefined &&
     Array.isArray(data) &&
     data.length === texts.length &&
-    data.every((v) => Array.isArray(v) && v.length === EMBED_DIMS && v.every((x) => typeof x === 'number' && Number.isFinite(x)));
+    data.every((v) => Array.isArray(v) && v.length === dims && v.every((x) => typeof x === 'number' && Number.isFinite(x)));
   const call: WorkCall = { op: 'work-embed', model, ok, ms: now() - t0, usage };
   if (!ok) {
     opts.log?.({ event: 'work_embed_failed', model, reason: 'bad_shape' });
