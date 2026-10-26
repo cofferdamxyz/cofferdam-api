@@ -6,11 +6,17 @@
  * Token registry): any title, skill or certificate, in any language, to one
  * token, through retrieve-then-choose.
  *
- *  1. An exact known label (ESCO's, the seed's, or one observed before) snaps
- *     without a model.
+ *  1. An exact known label (ESCO's, the seed's, a national layer's, or one
+ *     observed before) snaps without a model, read in the string's own
+ *     language and in English only (`labelLangs`): another language may use
+ *     the word for something else, as ESCO's Spanish gives "instructor" to
+ *     the air force officer and "coach" to the life coach.
  *  2. Otherwise `bge-m3` (`work-embed`) embeds the raw string and
- *     `token-registry-v1` returns the nearest labels of the same kind. At or
- *     above τ_auto the best token is taken; in the band down to τ_low,
+ *     `token-registry-v1` returns the nearest labels of the same kind, in
+ *     every language. The best token is taken when one of its labels in
+ *     those two languages is at or above τ_auto; in the band down to τ_low,
+ *     or when only another language's label reaches τ_auto (bge-m3 puts a
+ *     word and its case variant near 0.95, and the same word at 1),
  *     `clef-flash` (`work-adjudicate`) chooses one candidate or none and says
  *     whether the title is a specialization of it; below the band, or when
  *     Clef chooses none at or above its floor, an occupation or a skill is
@@ -29,17 +35,20 @@
  *     review and an `isco:` code.
  *
  * A certificate takes its own path through the curated seed
- * (`certificates.ts`): its level and modules are read off the string, a
- * claim must name the credential, a hirer's phrase means the licence of the
- * job's region, and Clef sees at most three candidates; it never mints.
+ * (`certificates.ts`), whose labels it reads in every language, since the
+ * seed gives each label one credential: its level and modules are read off
+ * the string, a claim must name the credential, a hirer's phrase means the
+ * licence of the job's region, and Clef sees at most three candidates; it
+ * never mints.
  *
  * No model ever writes an ESCO or ISCO code: those come only from the ESCO
  * export (`esco.ts`). Clef answers which of the candidates it was shown, by
  * key. Every decision past the exact-label shortcut is recorded
  * (`registry_decisions`), and every snap adds the raw string as an observed
- * alias, so the same string snaps by label next time. Raw strings come from published listings and intents,
- * never from a CV, and no account, document or listing id is stored with
- * them.
+ * alias in the string's language, so the same string snaps by label next
+ * time: in that language, and in every language when it is English. Raw
+ * strings come from published listings and intents, never from a CV, and no
+ * account, document or listing id is stored with them.
  */
 
 import type { Inference } from '../inference/index.js';
@@ -101,6 +110,18 @@ export function tokenOf(kind: TokenKind, label: string): string {
   return `${kind}:${tokenSlug(label)}`;
 }
 
+/**
+ * The languages whose labels may decide a string in `lang` without a model
+ * (founder, 2026-10-26): the exact-label shortcut reads only these, and a
+ * best candidate at τ_auto is taken only through a label in one of them. The
+ * string's own, so a word another language gives another occupation never
+ * catches it, and English, so a Portuguese or Spanish CV's English title
+ * still snaps. Certificates read every language (`certificates.ts`).
+ */
+export function labelLangs(lang: string): string[] {
+  return lang === 'en' ? ['en'] : [lang, 'en'];
+}
+
 /** A label's id, which is its vector's id: stable for (token, language, label), 44 characters. */
 export async function labelIdOf(token: string, lang: string, norm: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${token}\u0000${lang}\u0000${norm}`)));
@@ -127,8 +148,13 @@ export interface SnapRecord {
 }
 
 export interface RegistryStore {
-  /** Tokens of the kind that hold this exact label (in `lang` only, when one is given), merges followed; where a curated label holds it, the tokens that hold it only as an observed alias are left out. */
-  tokensByLabel(norm: string, kind: TokenKind, lang?: string): Promise<RegistryToken[]>;
+  /**
+   * Tokens of the kind that hold this exact label (in one of `langs` only,
+   * when they are given), merges followed; where a curated label in those
+   * languages holds it, the tokens that hold it there only as an observed
+   * alias are left out.
+   */
+  tokensByLabel(norm: string, kind: TokenKind, langs?: readonly string[]): Promise<RegistryToken[]>;
   /** The tokens named, merges followed, keyed by the name asked for. */
   tokens(names: string[]): Promise<Map<string, RegistryToken>>;
   /** Insert a token with its labels; false, and nothing written, when the token exists. */
@@ -197,14 +223,15 @@ export class D1RegistryStore implements RegistryStore {
     return out;
   }
 
-  async tokensByLabel(norm: string, kind: TokenKind, lang?: string): Promise<RegistryToken[]> {
-    // `observed` is 1 for a token that holds the label only as an alias a snap observed.
+  async tokensByLabel(norm: string, kind: TokenKind, langs?: readonly string[]): Promise<RegistryToken[]> {
+    if (langs && !langs.length) return [];
+    // `observed` is 1 for a token that holds the label, in the languages read, only as an alias a snap observed.
     const { results } = await this.db
       .prepare(
         `SELECT t.token, MIN(l.kind = 'observed') AS observed FROM registry_labels l JOIN registry_tokens t ON t.token = l.token
-         WHERE l.label_norm = ? AND t.kind = ?${lang ? ' AND l.lang = ?' : ''} GROUP BY t.token`,
+         WHERE l.label_norm = ? AND t.kind = ?${langs ? ` AND l.lang IN (${langs.map(() => '?').join(', ')})` : ''} GROUP BY t.token`,
       )
-      .bind(norm, kind, ...(lang ? [lang] : []))
+      .bind(norm, kind, ...(langs ?? []))
       .all<{ token: string; observed: number }>();
     // A curated label (ESCO's, the seed's, a national layer's) outranks an observed alias (decision 0066 (4)).
     const curated = results.filter((r) => !r.observed);
@@ -406,10 +433,15 @@ export interface SnapInput {
 export interface Candidate {
   token: string;
   labelEn: string;
-  /** The label that matched, as written, and its language. */
+  /** The label that matched, as written, and its language (`en` when its vector names none). */
   matched: string;
   matchedLang: string;
   score: number;
+  /**
+   * With the languages `candidatesFor` was given: the best score through one
+   * of the nearest labels in them, null when none of those is.
+   */
+  scoped?: number | null;
   /** A certificate's issuer, jurisdiction, levels and modules, as Clef reads the candidate. */
   detail?: string;
 }
@@ -493,21 +525,35 @@ async function pivot(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): P
   }
 }
 
-/** The nearest tokens of the kind, best score per token, active or pending only, best first. */
-export async function candidatesFor(deps: Pick<RegistryDeps, 'store' | 'index'>, kind: TokenKind, vector: number[]): Promise<Candidate[]> {
+/**
+ * The nearest tokens of the kind, best score per token, active or pending
+ * only, best first. With `langs`, each also carries `scoped`, its best score
+ * through a label in one of them, and of two labels of a token at one score
+ * the one in `langs` is the match shown: ESCO gives many tokens one text in
+ * two languages, two vectors at one score, listed in no set order. A label
+ * whose vector names no language is in none.
+ */
+export async function candidatesFor(deps: Pick<RegistryDeps, 'store' | 'index'>, kind: TokenKind, vector: number[], langs?: readonly string[]): Promise<Candidate[]> {
   const matches = await deps.index.query(vector, { topK: 20, filter: { kind } });
+  const inLangs = (m: IndexMatch) => langs !== undefined && typeof m.metadata?.lang === 'string' && langs.includes(m.metadata.lang);
   const best = new Map<string, IndexMatch>();
+  const scoped = new Map<string, number>();
   for (const m of matches) {
     const token = m.metadata?.token;
     if (typeof token !== 'string' || !token.startsWith(`${kind}:`)) continue;
     const had = best.get(token);
-    if (!had || m.score > had.score) best.set(token, m);
+    if (!had || m.score > had.score || (m.score === had.score && inLangs(m) && !inLangs(had))) best.set(token, m);
+    if (inLangs(m) && m.score > (scoped.get(token) ?? -Infinity)) scoped.set(token, m.score);
   }
   const live = await deps.store.tokens([...best.keys()]);
   const out = new Map<string, Candidate>();
+  // A merge can bring two names to one live token: it keeps the best of each score.
+  const scopedLive = new Map<string, number>();
   for (const [asked, m] of best) {
     const t = live.get(asked);
     if (!t) continue;
+    const s = scoped.get(asked);
+    if (s !== undefined && s > (scopedLive.get(t.token) ?? -Infinity)) scopedLive.set(t.token, s);
     const had = out.get(t.token);
     if (had && had.score >= m.score) continue;
     out.set(t.token, {
@@ -518,6 +564,7 @@ export async function candidatesFor(deps: Pick<RegistryDeps, 'store' | 'index'>,
       score: m.score,
     });
   }
+  if (langs) for (const c of out.values()) c.scoped = scopedLive.get(c.token) ?? null;
   return [...out.values()].sort((a, b) => b.score - a.score);
 }
 
@@ -562,22 +609,28 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   // A certificate takes the seed's path, and never mints.
   if (input.kind === 'cert') return snapCertificate(deps, input, { raw, norm, calls, tau, now, result, record, observe });
 
-  // 1. An exact known label.
-  const labelled = await deps.store.tokensByLabel(norm, input.kind);
+  // 1. An exact known label, in the string's own language or English.
+  const langs = labelLangs(input.lang);
+  const labelled = await deps.store.tokensByLabel(norm, input.kind, langs);
   if (labelled.length === 1) {
     const t = labelled[0]!;
     return result({ decision: 'label', token: t.token, labelEn: t.labelEn, specialization: false, score: 1, probability: null, candidates: [] });
   }
 
-  // 2. The nearest labels.
+  // 2. The nearest labels, in every language.
   const embedding = await embedTexts(deps.inference, [raw], { now, log: deps.log });
   calls.push(embedding.call);
   if (!embedding.ok) return result({ decision: 'unmatched', ...none });
   const vector = embedding.vectors[0]!;
-  const candidates = (await candidatesFor(deps, input.kind, vector)).slice(0, ADJUDICATION_CANDIDATES);
+  const candidates = (await candidatesFor(deps, input.kind, vector, langs)).slice(0, ADJUDICATION_CANDIDATES);
   const top = candidates[0];
 
-  if (top && top.score >= tau.auto) {
+  // Without a model only through a label the shortcut would read: bge-m3 puts
+  // a word near 0.95 to its case variant and at 1 to itself, so an English
+  // "Instructor" can reach ESCO's Spanish "instructor" (the air force officer)
+  // at τ_auto. The best token is taken when one of its labels in those
+  // languages is at τ_auto; when only another language's is, Clef decides, as in the band.
+  if (top && top.scoped != null && top.scoped >= tau.auto) {
     await observe(top.token);
     return record({ decision: 'auto', token: top.token, labelEn: top.labelEn, specialization: false, score: top.score, probability: null, candidates }, embedding.call.model);
   }
@@ -629,7 +682,7 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   // word for something else (ESCO's Spanish gives "instructor" to its air
   // force officer). A label several tokens hold ("electrician", which ESCO
   // also gives three other occupations) leaves the choice to the slug.
-  const named = await deps.store.tokensByLabel(englishNorm, input.kind, 'en');
+  const named = await deps.store.tokensByLabel(englishNorm, input.kind, ['en']);
   const token = tokenOf(input.kind, english);
   const existing = named.length === 1 ? named[0] : (await deps.store.tokens([token])).get(token);
   if (existing) {

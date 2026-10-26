@@ -6,12 +6,16 @@
  * the Mac (opt-in: ONET_EVAL=1), after `test/onet.import.test.ts` has written
  * its files. The test set is O*NET's own titles, held out: one title in ten,
  * by a fixed hash of its norm, leaves the layer, and a sample of those titles
- * is snapped twice the way the registry's first steps snap:
- * - before, against ESCO's occupation labels (every language, every kind);
+ * is snapped twice the way the registry's first steps snap an English string
+ * (`registry.ts`, `labelLangs`):
+ * - before, against ESCO's occupation labels;
  * - after, against those and the rest of the layer.
  *
- * A snap is an exact label held by one token, else the 20 nearest labels by
- * cosine, best per token. It is right when its token is one of the ESCO
+ * A snap is an exact English label held by one token, else the 20 nearest
+ * labels by cosine, in every language and of every kind, best per token,
+ * taken at τ_auto only when one of the token's English labels among them
+ * reaches it (since 2026-10-26; the reports of 2026-10-25 read every
+ * language for both). It is right when its token is one of the ESCO
  * occupations the crosswalk gives the title's O*NET occupation. The report
  * splits the snaps by where the registry would take them: an exact label, τ_auto
  * (taken), the band (Clef chooses among the best five) or below it.
@@ -68,28 +72,31 @@ function shuffled<T>(items: readonly T[], seed = 66): T[] {
   return a;
 }
 
-/** Unit vectors in one Float32Array, row by row, with the token of each row. */
+/** Unit vectors in one Float32Array, row by row, with the token and the language of each row. */
 interface Pool {
   dims: number;
   rows: Float32Array;
   tokens: string[];
+  langs: string[];
 }
 
-function pool(dims: number, parts: { vectors: Float32Array; tokens: string[] }[]): Pool {
+function pool(dims: number, parts: { vectors: Float32Array; tokens: string[]; langs: string[] }[]): Pool {
   const n = parts.reduce((s, p) => s + p.tokens.length, 0);
   const rows = new Float32Array(n * dims);
   const tokens: string[] = [];
+  const langs: string[] = [];
   let at = 0;
   for (const p of parts) {
     rows.set(p.vectors, at * dims);
     tokens.push(...p.tokens);
+    langs.push(...p.langs);
     at += p.tokens.length;
   }
-  return { dims, rows, tokens };
+  return { dims, rows, tokens, langs };
 }
 
-/** The nearest `TOP_LABELS` rows, best per token, best first. */
-function nearest(p: Pool, q: Float32Array): { token: string; score: number }[] {
+/** The nearest `TOP_LABELS` rows, best per token, best first, with each token's best English row among them (`candidatesFor`'s `scoped`). */
+function nearest(p: Pool, q: Float32Array): { token: string; score: number; english: number | null }[] {
   const top: { i: number; s: number }[] = [];
   const { dims, rows } = p;
   const n = p.tokens.length;
@@ -106,11 +113,13 @@ function nearest(p: Pool, q: Float32Array): { token: string; score: number }[] {
     }
   }
   const best = new Map<string, number>();
+  const english = new Map<string, number>();
   for (const { i, s } of top) {
     const t = p.tokens[i]!;
     if (!best.has(t) || s > best.get(t)!) best.set(t, s);
+    if (p.langs[i] === 'en' && (!english.has(t) || s > english.get(t)!)) english.set(t, s);
   }
-  return [...best].map(([token, score]) => ({ token, score })).sort((a, b) => b.score - a.score);
+  return [...best].map(([token, score]) => ({ token, score, english: english.get(token) ?? null })).sort((a, b) => b.score - a.score);
 }
 
 const unit = (v: readonly number[]) => {
@@ -134,7 +143,8 @@ function snapIn(p: Pool, exact: Map<string, Set<string>>, norm: string, q: Float
   const c = nearest(p, q);
   const top = c[0];
   if (!top) return { route: 'below', token: null, shown: [], score: null };
-  const route: Route = top.score >= DEFAULT_TAU.auto ? 'auto' : top.score >= DEFAULT_TAU.low ? 'band' : 'below';
+  // Another language's label at τ_auto goes to Clef, as the registry sends it.
+  const route: Route = top.english != null && top.english >= DEFAULT_TAU.auto ? 'auto' : top.score >= DEFAULT_TAU.low ? 'band' : 'below';
   return { route, token: top.token, shown: c.slice(0, CLEF_SHOWN).map((x) => x.token), score: top.score };
 }
 
@@ -177,13 +187,13 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
     const sample = shuffled([...held.keys()]).slice(0, sampleSize);
 
     // The layer's labels and vectors, the held-out tenth left out.
-    const layer: { norm: string; token: string; values: number[] }[] = [];
+    const layer: { norm: string; token: string; lang: string; values: number[] }[] = [];
     for (const f of readdirSync(out).filter((f) => /^national-vectors-\d{3}\.ndjson$/.test(f)).sort()) {
       for (const line of readFileSync(join(out, f), 'utf8').split('\n')) {
         if (!line) continue;
-        const v = JSON.parse(line) as { values: number[]; metadata: { token: string; label: string } };
+        const v = JSON.parse(line) as { values: number[]; metadata: { token: string; label: string; lang?: string } };
         const norm = labelNorm(v.metadata.label);
-        if (!heldOut(norm)) layer.push({ norm, token: v.metadata.token, values: v.values });
+        if (!heldOut(norm)) layer.push({ norm, token: v.metadata.token, lang: v.metadata.lang ?? 'en', values: v.values });
       }
     }
     if (!layer.length) throw new Error(`no national-vectors-*.ndjson in ${out}: run test/onet.import.test.ts first`);
@@ -242,12 +252,17 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
     const layerRows = new Float32Array(layer.length * dims);
     layer.forEach((l, i) => layerRows.set(unit(l.values), i * dims));
 
-    const before = pool(dims, [{ vectors: escoRows, tokens: escoLabels.map((l) => l.token) }]);
-    const after = pool(dims, [before.tokens.length ? { vectors: escoRows, tokens: before.tokens } : { vectors: new Float32Array(), tokens: [] }, { vectors: layerRows, tokens: layer.map((l) => l.token) }]);
+    const escoLangs = escoLabels.map((l) => l.lang);
+    const before = pool(dims, [{ vectors: escoRows, tokens: escoLabels.map((l) => l.token), langs: escoLangs }]);
+    const after = pool(dims, [
+      before.tokens.length ? { vectors: escoRows, tokens: before.tokens, langs: escoLangs } : { vectors: new Float32Array(), tokens: [], langs: [] },
+      { vectors: layerRows, tokens: layer.map((l) => l.token), langs: layer.map((l) => l.lang) },
+    ]);
+    // An English string's exact label is an English one (`labelLangs('en')`).
     const exactBefore = new Map<string, Set<string>>();
-    for (const l of escoLabels) (exactBefore.get(l.labelNorm) ?? exactBefore.set(l.labelNorm, new Set()).get(l.labelNorm)!).add(l.token);
+    for (const l of escoLabels) if (l.lang === 'en') (exactBefore.get(l.labelNorm) ?? exactBefore.set(l.labelNorm, new Set()).get(l.labelNorm)!).add(l.token);
     const exactAfter = new Map([...exactBefore].map(([k, v]) => [k, new Set(v)]));
-    for (const l of layer) (exactAfter.get(l.norm) ?? exactAfter.set(l.norm, new Set()).get(l.norm)!).add(l.token);
+    for (const l of layer) if (l.lang === 'en') (exactAfter.get(l.norm) ?? exactAfter.set(l.norm, new Set()).get(l.norm)!).add(l.token);
 
     const queries = await embedMany(sample.map((n) => held.get(n)!.title));
     const rows: { norm: string; inEsco: boolean; before: Snap; after: Snap; gold: Set<string> }[] = [];
@@ -276,12 +291,12 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
     const report = [
       `# The US layer before and after, ${date}`,
       '',
-      `O*NET ${RELEASE} titles held out of the layer (one norm in ten by a fixed hash: ${held.size}), ${rows.length} of them sampled, each snapped against ESCO v1.2.1's occupation labels in English, Portuguese and Spanish (${escoLabels.length}) and then against those and the layer's other labels (${layer.length}), with ${embedModel} over the Workers AI REST API from the Mac. A snap is an exact label held by one token, else the 20 nearest labels, best per token; it is right when its token is one of the ESCO occupations the ESCO–O*NET crosswalk gives an O*NET occupation that lists the title. τ_auto ${DEFAULT_TAU.auto}, τ_low ${DEFAULT_TAU.low}; Clef, the pivot and the mint are not run, so "among ${CLEF_SHOWN}" is the most Clef could get right in the band.`,
+      `O*NET ${RELEASE} titles held out of the layer (one norm in ten by a fixed hash: ${held.size}), ${rows.length} of them sampled, each snapped against ESCO v1.2.1's occupation labels in English, Portuguese and Spanish (${escoLabels.length}) and then against those and the layer's other labels (${layer.length}), with ${embedModel} over the Workers AI REST API from the Mac. A snap is an exact English label held by one token, else the 20 nearest labels in every language, best per token, taken at τ_auto only through an English one (the registry's rule since 2026-10-26); it is right when its token is one of the ESCO occupations the ESCO–O*NET crosswalk gives an O*NET occupation that lists the title. τ_auto ${DEFAULT_TAU.auto}, τ_low ${DEFAULT_TAU.low}; Clef, the pivot and the mint are not run, so "among ${CLEF_SHOWN}" is the most Clef could get right in the band.`,
       '',
       '| Titles | Registry | Right | Exact label | τ_auto | Band | Below the band |',
       '|---|---|---|---|---|---|---|',
       ...table(rows, `all (${rows.length})`),
-      ...table(notInEsco, `not an ESCO label (${notInEsco.length})`),
+      ...table(notInEsco, `not an English ESCO label (${notInEsco.length})`),
       '',
       `The layer changed ${changed.length} of ${rows.length} snaps: ${fixed} from wrong to right, ${broken} from right to wrong.`,
       '',

@@ -248,8 +248,13 @@ export function onetCandidates(rows: readonly CrosswalkRow[], tokens: readonly R
 /**
  * What the plan needs of the registry's labels: each occupation's English
  * labels (preferred and alternative), to rank candidates; and every
- * occupation label in any language and of any kind, by norm, since the
- * exact-label shortcut compares norms in every language.
+ * occupation label in any language and of any kind, by norm: a title the
+ * registry already holds, in any language, stays where it is. Since
+ * 2026-10-26 the exact-label shortcut reads a string's own language and
+ * English, so a title held only in Portuguese or Spanish no longer snaps an
+ * English string by label. In English on another token it would leave that
+ * language's own label ambiguous (`elsewhere`); on its holder (`known`:
+ * "detective", "tenor") it would not, and a later run may place it there.
  */
 export function layerLabelSets(tokens: readonly RegistryToken[], labels: readonly RegistryLabel[]) {
   const occupations = new Map(tokens.filter((t) => t.kind === 'pos').map((t) => [t.token, t]));

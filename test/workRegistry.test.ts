@@ -9,6 +9,7 @@ import {
   EMBED_DIMS_BY_MODEL,
   embedTexts,
   labelIdOf,
+  labelLangs,
   labelNorm,
   parseTau,
   snap,
@@ -309,13 +310,186 @@ describe('snap: retrieve, then choose', () => {
       calls,
       [officer],
     );
-    // A raw string's own shortcut still reads every language.
+    // The store reads every language unless it is told which.
     expect((await store.tokensByLabel('instructor', 'pos')).map((t) => t.token)).toEqual(['pos:air-force-officer']);
-    expect(await store.tokensByLabel('instructor', 'pos', 'en')).toEqual([]);
+    expect(await store.tokensByLabel('instructor', 'pos', ['en'])).toEqual([]);
     expect(await snap(deps, { kind: 'pos', raw: 'Instrutor', lang: 'pt' })).toMatchObject({ decision: 'minted', token: 'pos:instructor', labelEn: 'instructor' });
     expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot', 'work-embed']);
     // The string was observed on the new token, not on the air force officer.
     expect(await snap(deps, { kind: 'pos', raw: 'instrutor', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'pos:instructor' });
+  });
+
+  describe('the languages a label decides without a model: the string’s own and English', () => {
+    // As in ESCO v1.2.1: "instructor" is only a Spanish label, of the air force
+    // officer; "truck driver" an English alternative label of the cargo vehicle driver.
+    const officer: SeedToken = {
+      token: 'pos:air-force-officer',
+      kind: 'pos',
+      labelEn: 'air force officer',
+      labels: [['en', 'air force officer', axis(5)], ['es', 'instructor', axis(14), 'alternative']],
+    };
+    const driver: SeedToken = {
+      token: 'pos:cargo-vehicle-driver',
+      kind: 'pos',
+      labelEn: 'cargo vehicle driver',
+      labels: [['en', 'cargo vehicle driver', axis(6)], ['en', 'truck driver', axis(15), 'alternative']],
+    };
+
+    it('reads an exact label in the string’s own language and in English, never in a third', async () => {
+      expect(labelLangs('en')).toEqual(['en']);
+      expect(labelLangs('pt')).toEqual(['pt', 'en']);
+      const calls: FakeCall[] = [];
+      const { deps, store } = await registry({}, calls, [officer, driver]);
+      // A Spanish label decides a Spanish string, and an English one every string: a Portuguese or Spanish CV's English title.
+      expect(await snap(deps, { kind: 'pos', raw: 'Instructor', lang: 'es' })).toMatchObject({ decision: 'label', token: 'pos:air-force-officer' });
+      for (const lang of ['en', 'pt', 'es'] as const) expect(await snap(deps, { kind: 'pos', raw: 'Truck Driver', lang }), lang).toMatchObject({ decision: 'label', token: 'pos:cargo-vehicle-driver' });
+      expect(await snap(deps, { kind: 'pos', raw: 'Eletricista', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'pos:electrician' });
+      expect(calls).toEqual([]);
+      // Neither an English nor a Portuguese string reads the Spanish one.
+      expect(await store.tokensByLabel('instructor', 'pos', labelLangs('en'))).toEqual([]);
+      expect(await store.tokensByLabel('instructor', 'pos', labelLangs('pt'))).toEqual([]);
+      expect(await store.tokensByLabel('instructor', 'pos', [])).toEqual([]);
+    });
+
+    it('sends a best match through another language’s label to Clef even at τ_auto, so Clef’s none reaches the pivot, and a hirer’s words still never mint', async () => {
+      for (const lang of ['en', 'pt'] as const) {
+        const calls: FakeCall[] = [];
+        const { deps, store, db, decisions } = await registry(
+          { 'work-embed': embedAnswer({ Instructor: near(14, 16, 0.97), instructor: axis(17) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'instructor' }) },
+          calls,
+          [officer],
+        );
+        const out = await snap(deps, { kind: 'pos', raw: 'Instructor', lang });
+        expect(out, lang).toMatchObject({ decision: 'minted', token: 'pos:instructor', labelEn: 'instructor' });
+        expect(out.score, lang).toBeCloseTo(0.97, 5);
+        // Its best label in the languages read is the English "air force officer", far from the string.
+        expect(out.candidates[0], lang).toMatchObject({ token: 'pos:air-force-officer', matched: 'instructor', matchedLang: 'es', scoped: 0 });
+        expect(calls.map((c) => c.op), lang).toEqual(lang === 'en' ? ['work-embed', 'work-adjudicate', 'work-pivot'] : ['work-embed', 'work-adjudicate', 'work-pivot', 'work-embed']);
+        const asked = calls.find((c) => c.op === 'work-adjudicate')!.input as { state: string; questions: { match: { criteria: Record<string, string> } } };
+        expect(asked.state, lang).toContain(`in ${lang}:`);
+        expect(asked.questions.match.criteria.c0, lang).toBe('air force officer (matched "instructor")');
+        expect(decisions(), lang).toEqual([{ decision: 'minted', token: 'pos:instructor', specialization: 0, probability: null, raw: 'Instructor' }]);
+        // Nothing was observed on the air force officer, and the next English string snaps to the new token by label.
+        expect(db.sqlite.prepare("SELECT label FROM registry_labels WHERE token = 'pos:air-force-officer' AND kind = 'observed'").all(), lang).toEqual([]);
+        expect((await store.tokensByLabel('instructor', 'pos', labelLangs('en'))).map((t) => t.token), lang).toEqual(['pos:instructor']);
+      }
+
+      // Clef below its floor: the pivot names no existing token, so nothing mints.
+      const undecided = await registry(
+        { 'work-embed': embedAnswer({ Instructor: near(14, 16, 0.97) }), 'work-adjudicate': clef('none', 0.4), 'work-pivot': jsonModeResult({ english: 'instructor' }) },
+        [],
+        [officer],
+      );
+      expect(await snap(undecided.deps, { kind: 'pos', raw: 'Instructor', lang: 'en' })).toMatchObject({ decision: 'unmatched', token: null });
+      expect((await undecided.store.tokens(['pos:instructor'])).size).toBe(0);
+
+      // A hirer's words: Clef's none is no token, before any pivot.
+      const calls: FakeCall[] = [];
+      const hirer = await registry({ 'work-embed': embedAnswer({ Instructor: near(14, 16, 0.97) }), 'work-adjudicate': clef('none', 0.9) }, calls, [officer]);
+      expect(await snap(hirer.deps, { kind: 'pos', raw: 'Instructor', lang: 'en', mint: false })).toMatchObject({ decision: 'unmatched', token: null });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate']);
+    });
+
+    it('lets Clef take another language’s label: a Spanish word on a Portuguese CV', async () => {
+      // SEED gives the plumber the Spanish "plomero"; ESCO's Portuguese has no such word.
+      const calls: FakeCall[] = [];
+      const { deps } = await registry({ 'work-embed': embedAnswer({ Plomero: near(1, 9, 0.92) }), 'work-adjudicate': clef('c0', 0.9) }, calls);
+      const out = await snap(deps, { kind: 'pos', raw: 'Plomero', lang: 'pt' });
+      expect(out).toMatchObject({ decision: 'chosen', token: 'pos:plumber', probability: 0.9 });
+      expect(out.candidates[0]).toMatchObject({ token: 'pos:plumber', matched: 'plomero', matchedLang: 'es' });
+      expect(out.candidates[0]!.score).toBeGreaterThanOrEqual(DEFAULT_TAU.auto);
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate']);
+      // Its alias is Portuguese now; a Spanish string had its own label all along.
+      calls.length = 0;
+      expect(await snap(deps, { kind: 'pos', raw: 'plomero', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'pos:plumber' });
+      expect(await snap(deps, { kind: 'pos', raw: 'Plomero', lang: 'es' })).toMatchObject({ decision: 'label', token: 'pos:plumber' });
+      expect(calls).toEqual([]);
+    });
+
+    it('reads one text a token holds in two languages as the string’s own, whichever vector the index lists first', async () => {
+      // ESCO gives 36 occupations and 215 skills a label whose text is the same in English and in Portuguese or Spanish ("chef", "Haskell"): two vectors at one score.
+      for (const first of ['es', 'en'] as const) {
+        const second = first === 'es' ? 'en' : 'es';
+        const twins: SeedToken = { token: 'pos:chef', kind: 'pos', labelEn: 'chef', labels: [[first, 'chef', axis(18)], [second, 'chef', axis(18)]] };
+        const calls: FakeCall[] = [];
+        const { deps } = await registry({ 'work-embed': embedAnswer({ 'Chef de Partie': near(18, 19, 0.96) }) }, calls, [twins]);
+        const out = await snap(deps, { kind: 'pos', raw: 'Chef de Partie', lang: 'en' });
+        expect(out, first).toMatchObject({ decision: 'auto', token: 'pos:chef' });
+        expect(out.candidates[0], first).toMatchObject({ matched: 'chef', matchedLang: 'en' });
+        expect(out.candidates[0]!.scoped, first).toBeCloseTo(0.96, 5);
+        expect(calls.map((c) => c.op), first).toEqual(['work-embed']);
+      }
+    });
+
+    it('takes nothing without a model through a label whose vector names no language', async () => {
+      const calls: FakeCall[] = [];
+      const { deps, index } = await registry({ 'work-embed': embedAnswer({ 'Pipe Welder': near(19, 20, 0.97) }), 'work-adjudicate': clef('c0', 0.9) }, calls);
+      await index.upsert([{ id: 'lno-language', values: axis(19), metadata: { token: 'pos:welder', kind: 'pos', label: 'pipe welder', source: 'seed' } }]);
+      const out = await snap(deps, { kind: 'pos', raw: 'Pipe Welder', lang: 'en' });
+      expect(out).toMatchObject({ decision: 'chosen', token: 'pos:welder' });
+      // The welder's English label, "welder", is far from the string; the match without a language counts in none.
+      expect(out.candidates[0]).toMatchObject({ token: 'pos:welder', matched: 'pipe welder', scoped: 0 });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate']);
+    });
+
+    it('takes a best match at τ_auto without a model through an English label or one in the string’s own language', async () => {
+      const calls: FakeCall[] = [];
+      const { deps } = await registry({ 'work-embed': embedAnswer({ 'Eletricista Industrial': near(0, 10, 0.97), 'Plomero Oficial': near(1, 9, 0.99), Plumbers: near(1, 9, 0.96) }) }, calls);
+      const pt = await snap(deps, { kind: 'pos', raw: 'Eletricista Industrial', lang: 'pt' });
+      expect(pt).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
+      expect(pt.candidates[0]).toMatchObject({ matched: 'electrician', matchedLang: 'en' });
+      const es = await snap(deps, { kind: 'pos', raw: 'Plomero Oficial', lang: 'es' });
+      expect(es).toMatchObject({ decision: 'auto', token: 'pos:plumber' });
+      expect(es.candidates[0]).toMatchObject({ matched: 'plomero', matchedLang: 'es' });
+      // The plumber's Spanish label is nearer, but its English one is at τ_auto too, so no model is needed to name it.
+      const en = await snap(deps, { kind: 'pos', raw: 'Plumbers', lang: 'en' });
+      expect(en).toMatchObject({ decision: 'auto', token: 'pos:plumber' });
+      expect(en.candidates[0]).toMatchObject({ matched: 'plomero', matchedLang: 'es' });
+      expect(en.candidates[0]!.scoped).toBeCloseTo(0.96, 5);
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-embed', 'work-embed']);
+    });
+
+    it('keeps an observed alias in its string’s language: one observed in English reaches every language, one in Portuguese only Portuguese', async () => {
+      const calls: FakeCall[] = [];
+      const { deps } = await registry({ 'work-embed': embedAnswer({ 'Journeyman Electrician': near(0, 10, 0.97), 'Eletricista Industrial': near(0, 11, 0.97) }) }, calls);
+      expect(await snap(deps, { kind: 'pos', raw: 'Journeyman Electrician', lang: 'en' })).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
+      expect(await snap(deps, { kind: 'pos', raw: 'Eletricista Industrial', lang: 'pt' })).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
+      calls.length = 0;
+      for (const lang of ['en', 'pt', 'es'] as const) expect(await snap(deps, { kind: 'pos', raw: 'journeyman electrician', lang }), lang).toMatchObject({ decision: 'label', token: 'pos:electrician' });
+      expect(await snap(deps, { kind: 'pos', raw: 'eletricista industrial', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'pos:electrician' });
+      expect(calls).toEqual([]);
+      // A Spanish string does not read the Portuguese alias: it goes through the embedding again.
+      expect(await snap(deps, { kind: 'pos', raw: 'Eletricista Industrial', lang: 'es' })).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed']);
+    });
+
+    it('ranks a curated label over an observed alias among the languages it reads', async () => {
+      const coaches: SeedToken[] = [
+        { token: 'pos:life-coach', kind: 'pos', labelEn: 'life coach', labels: [['en', 'life coach', axis(5)], ['es', 'coach', axis(14), 'alternative']] },
+        { token: 'pos:sports-coach', kind: 'pos', labelEn: 'sports coach', labels: [['en', 'sports coach', axis(6)]] },
+      ];
+      const calls: FakeCall[] = [];
+      const { deps, store } = await registry({}, calls, coaches);
+      // An English snap observed "Coach" on the sports coach.
+      await store.addLabels([{ labelId: await labelIdOf('pos:sports-coach', 'en', 'coach'), token: 'pos:sports-coach', lang: 'en', label: 'Coach', labelNorm: 'coach', kind: 'observed', embedded: false }], 1);
+      const holders = async (langs?: string[]) => (await store.tokensByLabel('coach', 'pos', langs)).map((t) => t.token);
+      expect(await holders()).toEqual(['pos:life-coach']);
+      expect(await holders(labelLangs('es'))).toEqual(['pos:life-coach']);
+      expect(await holders(labelLangs('en'))).toEqual(['pos:sports-coach']);
+      expect(await snap(deps, { kind: 'pos', raw: 'Coach', lang: 'en' })).toMatchObject({ decision: 'label', token: 'pos:sports-coach' });
+      expect(await snap(deps, { kind: 'pos', raw: 'Coach', lang: 'es' })).toMatchObject({ decision: 'label', token: 'pos:life-coach' });
+      expect(calls).toEqual([]);
+    });
+
+    it('reads a certificate’s labels in every language, since the seed gives each label one credential', async () => {
+      const calls: FakeCall[] = [];
+      const { deps, store } = await registry({}, calls);
+      // A Portuguese claim kept as an alias of BOSIET, its words in an order no seed label has, so only the D1 label can read it.
+      const alias = 'Segurança offshore BOSIET básico';
+      await store.addLabels([{ labelId: await labelIdOf('cert:bosiet', 'pt', labelNorm(alias)), token: 'cert:bosiet', lang: 'pt', label: alias, labelNorm: labelNorm(alias), kind: 'observed', embedded: false }], 1);
+      expect(await snap(deps, { kind: 'cert', raw: 'Segurança Offshore BOSIET Básico', lang: 'en' })).toMatchObject({ decision: 'label', token: 'cert:bosiet' });
+      expect(calls).toEqual([]);
+    });
   });
 
   it('never mints a certificate', async () => {
