@@ -19,9 +19,14 @@
  *     unmatched; one that answers below its floor is undecided, and the
  *     string may still reach an existing token through the pivot, but never
  *     mints.
- *  3. A mint asks the JSON-mode model (`work-pivot`) for the international-
- *     English name, the token's pivot, and the new token is `pending`: it
- *     snaps from then on, and waits for review and an `isco:` code.
+ *  3. Before a mint, the JSON-mode model (`work-pivot`) gives the string's
+ *     international-English name, the token's pivot. The name goes through
+ *     the exact-label shortcut first, over English labels only: a label of
+ *     exactly one token (ESCO's alternative labels and a national layer's
+ *     titles among them) snaps to that token, and a name several tokens
+ *     hold, or none, snaps only to the token whose slug it is. Only then is
+ *     a new token minted, `pending`: it snaps from then on, and waits for
+ *     review and an `isco:` code.
  *
  * A certificate takes its own path through the curated seed
  * (`certificates.ts`): its level and modules are read off the string, a
@@ -122,8 +127,8 @@ export interface SnapRecord {
 }
 
 export interface RegistryStore {
-  /** Tokens of the kind that hold this exact label, merges followed; where a curated label holds it, the tokens that hold it only as an observed alias are left out. */
-  tokensByLabel(norm: string, kind: TokenKind): Promise<RegistryToken[]>;
+  /** Tokens of the kind that hold this exact label (in `lang` only, when one is given), merges followed; where a curated label holds it, the tokens that hold it only as an observed alias are left out. */
+  tokensByLabel(norm: string, kind: TokenKind, lang?: string): Promise<RegistryToken[]>;
   /** The tokens named, merges followed, keyed by the name asked for. */
   tokens(names: string[]): Promise<Map<string, RegistryToken>>;
   /** Insert a token with its labels; false, and nothing written, when the token exists. */
@@ -192,14 +197,14 @@ export class D1RegistryStore implements RegistryStore {
     return out;
   }
 
-  async tokensByLabel(norm: string, kind: TokenKind): Promise<RegistryToken[]> {
+  async tokensByLabel(norm: string, kind: TokenKind, lang?: string): Promise<RegistryToken[]> {
     // `observed` is 1 for a token that holds the label only as an alias a snap observed.
     const { results } = await this.db
       .prepare(
         `SELECT t.token, MIN(l.kind = 'observed') AS observed FROM registry_labels l JOIN registry_tokens t ON t.token = l.token
-         WHERE l.label_norm = ? AND t.kind = ? GROUP BY t.token`,
+         WHERE l.label_norm = ? AND t.kind = ?${lang ? ' AND l.lang = ?' : ''} GROUP BY t.token`,
       )
-      .bind(norm, kind)
+      .bind(norm, kind, ...(lang ? [lang] : []))
       .all<{ token: string; observed: number }>();
     // A curated label (ESCO's, the seed's, a national layer's) outranks an observed alias (decision 0066 (4)).
     const curated = results.filter((r) => !r.observed);
@@ -617,17 +622,25 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   if (input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const english = await pivot(deps, { ...input, raw }, calls);
   if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
+  const englishNorm = labelNorm(english);
+  // The name is a label far more often than a slug: "truck driver" is no
+  // token's slug, but one of ESCO's alternative labels for its cargo vehicle
+  // driver. Only English labels count, since another language may use the
+  // word for something else (ESCO's Spanish gives "instructor" to its air
+  // force officer). A label several tokens hold ("electrician", which ESCO
+  // also gives three other occupations) leaves the choice to the slug.
+  const named = await deps.store.tokensByLabel(englishNorm, input.kind, 'en');
   const token = tokenOf(input.kind, english);
-  const existing = (await deps.store.tokens([token])).get(token);
+  const existing = named.length === 1 ? named[0] : (await deps.store.tokens([token])).get(token);
   if (existing) {
     await observe(existing.token);
     return record({ decision: 'pivot', token: existing.token, labelEn: existing.labelEn, specialization: false, score, probability: null, candidates }, clefModel);
   }
   if (undecided != null) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const labels: RegistryLabel[] = [
-    { labelId: await labelIdOf(token, 'en', labelNorm(english)), token, lang: 'en', label: english, labelNorm: labelNorm(english), kind: 'preferred', embedded: false },
+    { labelId: await labelIdOf(token, 'en', englishNorm), token, lang: 'en', label: english, labelNorm: englishNorm, kind: 'preferred', embedded: false },
   ];
-  if (input.lang !== 'en' || labelNorm(english) !== norm) {
+  if (input.lang !== 'en' || englishNorm !== norm) {
     labels.push({ labelId: await labelIdOf(token, input.lang, norm), token, lang: input.lang, label: raw, labelNorm: norm, kind: 'observed', embedded: false });
   }
   const minted: RegistryToken = { token, kind: input.kind, source: 'emergent', labelEn: english, escoUri: null, iscoCode: null, status: 'pending', mergedInto: null };

@@ -15,6 +15,7 @@ import {
   tokenOf,
   tokenSlug,
   validPivot,
+  type LabelKind,
   type RegistryDeps,
   type RegistryLabel,
   type TokenKind,
@@ -30,7 +31,8 @@ interface SeedToken {
   token: string;
   kind: TokenKind;
   labelEn: string;
-  labels: [lang: string, label: string, vector: number[]][];
+  /** A label is preferred unless it names its kind. */
+  labels: [lang: string, label: string, vector: number[], kind?: LabelKind][];
 }
 
 const SEED: SeedToken[] = [
@@ -41,14 +43,14 @@ const SEED: SeedToken[] = [
   { token: 'cert:bosiet', kind: 'cert', labelEn: 'BOSIET', labels: [['en', 'BOSIET', axis(4)]] },
 ];
 
-async function registry(responses: FakeResponses = {}, calls: FakeCall[] = []) {
+async function registry(responses: FakeResponses = {}, calls: FakeCall[] = [], extra: SeedToken[] = []) {
   const db = sqliteD1();
   const store = new D1RegistryStore(db.d1);
   const index = memoryIndex();
-  for (const t of SEED) {
+  for (const t of [...SEED, ...extra]) {
     const labels: RegistryLabel[] = [];
-    for (const [lang, label] of t.labels) {
-      labels.push({ labelId: await labelIdOf(t.token, lang, labelNorm(label)), token: t.token, lang, label, labelNorm: labelNorm(label), kind: 'preferred', embedded: true });
+    for (const [lang, label, , kind = 'preferred'] of t.labels) {
+      labels.push({ labelId: await labelIdOf(t.token, lang, labelNorm(label)), token: t.token, lang, label, labelNorm: labelNorm(label), kind, embedded: true });
     }
     expect(await store.insertToken({ token: t.token, kind: t.kind, source: 'seed', labelEn: t.labelEn, escoUri: null, iscoCode: null, status: 'active', mergedInto: null }, labels, 0)).toBe(true);
     await index.upsert(labels.map((l, i) => ({ id: l.labelId, values: t.labels[i]![2], metadata: { token: t.token, kind: t.kind, lang: l.lang, label: l.label, source: 'seed' } })));
@@ -224,6 +226,96 @@ describe('snap: retrieve, then choose', () => {
   it('snaps to an existing token when the pivot names one', async () => {
     const { deps } = await registry({ 'work-embed': embedAnswer({ 'Encanador': near(1, 11, 0.5) }), 'work-pivot': jsonModeResult({ english: 'plumber' }) });
     expect(await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt' })).toMatchObject({ decision: 'pivot', token: 'pos:plumber' });
+  });
+
+  it('lets the pivot snap to the one token that holds its English name as a label, where no slug names it, and mints nothing', async () => {
+    // As in ESCO: "truck driver" is an alternative label of the cargo vehicle driver, and no token is pos:truck-driver.
+    const driver: SeedToken = {
+      token: 'pos:cargo-vehicle-driver',
+      kind: 'pos',
+      labelEn: 'cargo vehicle driver',
+      labels: [['en', 'cargo vehicle driver', axis(5)], ['en', 'truck driver', near(5, 14, 0.97), 'alternative']],
+    };
+    const cases = [
+      { why: 'below the band', cos: 0.3, answer: null },
+      { why: 'Clef’s own none at its floor', cos: 0.7, answer: clef('none', 0.9) },
+      { why: 'an answer below the floor', cos: 0.7, answer: clef('none', 0.4) },
+    ];
+    for (const { why, cos, answer } of cases) {
+      const calls: FakeCall[] = [];
+      const { deps, store, decisions } = await registry(
+        { 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, cos) }), 'work-adjudicate': answer, 'work-pivot': jsonModeResult({ english: 'truck driver' }) },
+        calls,
+        [driver],
+      );
+      expect(await snap(deps, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt' }), why).toMatchObject({ decision: 'pivot', token: 'pos:cargo-vehicle-driver', labelEn: 'cargo vehicle driver' });
+      expect(calls.map((c) => c.op), why).toEqual(answer ? ['work-embed', 'work-adjudicate', 'work-pivot'] : ['work-embed', 'work-pivot']);
+      expect((await store.tokens(['pos:truck-driver'])).size, why).toBe(0);
+      expect(decisions(), why).toEqual([{ decision: 'pivot', token: 'pos:cargo-vehicle-driver', specialization: 0, probability: null, raw: 'Caminhoneiro' }]);
+      // The string is observed on the token, so it snaps by label next time.
+      expect(await snap(deps, { kind: 'pos', raw: 'caminhoneiro', lang: 'pt' }), why).toMatchObject({ decision: 'label', token: 'pos:cargo-vehicle-driver' });
+    }
+    // A hirer's words still never reach the pivot.
+    const calls: FakeCall[] = [];
+    const hirer = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, 0.3) }), 'work-pivot': jsonModeResult({ english: 'truck driver' }) }, calls, [driver]);
+    expect(await snap(hirer.deps, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt', mint: false })).toMatchObject({ decision: 'unmatched', token: null });
+    expect(calls.map((c) => c.op)).toEqual(['work-embed']);
+  });
+
+  it('leaves an English name several tokens hold to the slug, as before: the token of that slug, else a mint, and nothing on an undecided answer', async () => {
+    // As in ESCO: "porter" is an alternative label of the hotel porter and the hospital porter, and no token is pos:porter.
+    const porters: SeedToken[] = [
+      { token: 'pos:hotel-porter', kind: 'pos', labelEn: 'hotel porter', labels: [['en', 'hotel porter', axis(6)], ['en', 'porter', near(6, 14, 0.9), 'alternative']] },
+      { token: 'pos:hospital-porter', kind: 'pos', labelEn: 'hospital porter', labels: [['en', 'hospital porter', axis(7)], ['en', 'porter', near(7, 14, 0.9), 'alternative']] },
+    ];
+    const calls: FakeCall[] = [];
+    const two = await registry({ 'work-embed': embedAnswer({ Bagageiro: near(6, 15, 0.3), porter: axis(16) }), 'work-pivot': jsonModeResult({ english: 'porter' }) }, calls, porters);
+    expect((await two.store.tokensByLabel('porter', 'pos')).map((t) => t.token).sort()).toEqual(['pos:hospital-porter', 'pos:hotel-porter']);
+    expect(await snap(two.deps, { kind: 'pos', raw: 'Bagageiro', lang: 'pt' })).toMatchObject({ decision: 'minted', token: 'pos:porter', labelEn: 'porter' });
+    expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot', 'work-embed']);
+    expect((await two.store.tokens(['pos:porter'])).get('pos:porter')).toMatchObject({ source: 'emergent', status: 'pending' });
+
+    const undecided = await registry(
+      { 'work-embed': embedAnswer({ Bagageiro: near(6, 15, 0.7) }), 'work-adjudicate': clef('none', 0.4), 'work-pivot': jsonModeResult({ english: 'porter' }) },
+      [],
+      porters,
+    );
+    expect(await snap(undecided.deps, { kind: 'pos', raw: 'Bagageiro', lang: 'pt' })).toMatchObject({ decision: 'unmatched', token: null });
+    expect((await undecided.store.tokens(['pos:porter'])).size).toBe(0);
+
+    // ESCO also gives "electrician" to other occupations, the domestic electrician among them; the slug names the one the pivot snaps to.
+    const domestic: SeedToken = {
+      token: 'pos:domestic-electrician',
+      kind: 'pos',
+      labelEn: 'domestic electrician',
+      labels: [['en', 'domestic electrician', axis(8)], ['en', 'electrician', near(8, 14, 0.9), 'alternative']],
+    };
+    const slugged = await registry({ 'work-embed': embedAnswer({ 'Eletricista predial': near(8, 15, 0.3) }), 'work-pivot': jsonModeResult({ english: 'electrician' }) }, [], [domestic]);
+    expect((await slugged.store.tokensByLabel('electrician', 'pos')).map((t) => t.token).sort()).toEqual(['pos:domestic-electrician', 'pos:electrician']);
+    expect(await snap(slugged.deps, { kind: 'pos', raw: 'Eletricista predial', lang: 'pt' })).toMatchObject({ decision: 'pivot', token: 'pos:electrician' });
+  });
+
+  it('reads the pivot against English labels only, so a word another language gives another occupation never catches it', async () => {
+    // As in ESCO: "instructor" is a Spanish alternative label of the air force officer, and no English one.
+    const officer: SeedToken = {
+      token: 'pos:air-force-officer',
+      kind: 'pos',
+      labelEn: 'air force officer',
+      labels: [['en', 'air force officer', axis(5)], ['es', 'instructor', near(5, 14, 0.9), 'alternative']],
+    };
+    const calls: FakeCall[] = [];
+    const { deps, store } = await registry(
+      { 'work-embed': embedAnswer({ Instrutor: near(5, 15, 0.3), instructor: axis(16) }), 'work-pivot': jsonModeResult({ english: 'instructor' }) },
+      calls,
+      [officer],
+    );
+    // A raw string's own shortcut still reads every language.
+    expect((await store.tokensByLabel('instructor', 'pos')).map((t) => t.token)).toEqual(['pos:air-force-officer']);
+    expect(await store.tokensByLabel('instructor', 'pos', 'en')).toEqual([]);
+    expect(await snap(deps, { kind: 'pos', raw: 'Instrutor', lang: 'pt' })).toMatchObject({ decision: 'minted', token: 'pos:instructor', labelEn: 'instructor' });
+    expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot', 'work-embed']);
+    // The string was observed on the new token, not on the air force officer.
+    expect(await snap(deps, { kind: 'pos', raw: 'instrutor', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'pos:instructor' });
   });
 
   it('never mints a certificate', async () => {
