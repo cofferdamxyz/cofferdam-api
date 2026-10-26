@@ -23,7 +23,7 @@ import { bloomOf } from '../src/services/work/bloom.js';
 import { registrySql, vectorLine } from '../src/services/work/esco.js';
 import { D1ListingStore, listingIdOf } from '../src/services/work/listings.js';
 import { recall } from '../src/services/work/recall.js';
-import { D1RegistryStore, labelNorm, SLUG_MAX, snap, type RegistryDeps } from '../src/services/work/registry.js';
+import { D1RegistryStore, labelNorm, SLUG_MAX, snap, type RegistryDeps, type SnapInput } from '../src/services/work/registry.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 import { axis, embedAnswer, fakeInference, memoryIndex, near, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
 
@@ -475,6 +475,38 @@ describe('snapping a certificate', () => {
     expect(Object.keys(request.questions)).toEqual(['match']);
     expect(JSON.stringify(request)).not.toMatch(/esco|isco|cert:/i);
     expect(observed()).toEqual([{ token: 'cert:electrician-license:us-tx', label: 'Texas Master Electrician' }]);
+  });
+
+  it('reads no market: a claim asks Clef what it asked before, and a licence’s state comes from the string or a hirer’s region only', async () => {
+    const asked = async (input: SnapInput) => {
+      const calls: FakeCall[] = [];
+      const { deps } = await certRegistry({ 'work-embed': embedAnswer({ 'Texas Master Electrician': toward('cert:electrician-license:us-tx', 0.88) }), 'work-adjudicate': certClef('c0', 0.86) }, calls);
+      const out = await snap(deps, input);
+      return { out, request: calls.find((c) => c.op === 'work-adjudicate')!.input as unknown as ClefRequest };
+    };
+    const plain = await asked({ kind: 'cert', raw: 'Texas Master Electrician', lang: 'en' });
+    for (const market of ['us-tx', 'mx-nle']) {
+      const marketed = await asked({ kind: 'cert', raw: 'Texas Master Electrician', lang: 'en', market });
+      expect(marketed.request, market).toEqual(plain.request);
+      expect(marketed.out, market).toEqual(plain.out);
+    }
+    expect(plain.request.state).toBe('A certificate or licence as a worker or a hirer wrote it, in en:\nTexas Master Electrician');
+    expect(plain.request.questions.match.criteria.c0).not.toMatch(/English|Spanish|Portuguese/);
+
+    const calls: FakeCall[] = [];
+    const { deps } = await certRegistry(
+      { 'work-embed': embedAnswer({ 'licensed electrician': toward('cert:electrician-license:us-tx', 0.9), 'licensed master electrician': toward('cert:electrician-license:us-tx', 0.9) }), 'work-adjudicate': certClef('c0', 0.95) },
+      calls,
+    );
+    // A worker's market never names a state for their claim, nor a hirer's for their requirement: only the job's region does.
+    expect(await snap(deps, { kind: 'cert', raw: 'licensed electrician', lang: 'en', market: 'us-tx' })).toMatchObject({ decision: 'unmatched', token: null });
+    expect(await snap(deps, { kind: 'cert', raw: 'licensed master electrician', lang: 'en', mint: false, market: 'us-tx' })).toMatchObject({ decision: 'unmatched', token: null });
+    expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-embed']);
+    expect(await snap(deps, { kind: 'cert', raw: 'licensed master electrician', lang: 'en', mint: false, region: 'us-tx', market: 'mx-nle' })).toMatchObject({
+      decision: 'label',
+      token: 'cert:electrician-license:us-tx',
+      facets: { level: 'master' },
+    });
   });
 
   it('shows Clef only candidates in the band', async () => {

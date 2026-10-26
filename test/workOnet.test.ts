@@ -517,6 +517,14 @@ describe('clefChooser', () => {
     expect(await clefChooser(fakeInference({ 'work-adjudicate': clefChoice('match', 'c1', { c0: 0.2, c1: 0.7, none: 0.1 }) }), { floor: 0.8 })(ask, shown)).toMatchObject({ token: null, p: 0.7 });
   });
 
+  it('asks the questions it was calibrated on: a matched label without its language, as the registry band adds it', async () => {
+    const calls: FakeCall[] = [];
+    await clefChooser(fakeInference({ 'work-adjudicate': clefChoice('match', 'c1', { c0: 0.2, c1: 0.7, none: 0.1 }) }, calls))(ask, shown);
+    const asked = calls[0]!.input as { state: string; questions: { match: { criteria: Record<string, string> } } };
+    expect(asked.state).toBe('A job title as the US O*NET database lists it, under the occupation "O":\nT');
+    expect(asked.questions.match.criteria).toEqual({ c0: 'a', c1: 'b (matched "bee")', none: 'None of these: a different occupation' });
+  });
+
   it("says a failed call, an empty answer or one without none's probability failed, and chooses nothing", async () => {
     expect(await clefChooser(fakeInference({ 'work-adjudicate': new Error('down') }))(ask, shown)).toEqual({ token: null, p: null, failed: true });
     expect(await clefChooser(fakeInference({ 'work-adjudicate': { answers: {} } }))(ask, shown)).toEqual({ token: null, p: null, failed: true });

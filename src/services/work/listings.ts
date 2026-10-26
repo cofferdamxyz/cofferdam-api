@@ -26,7 +26,7 @@ import { BLOCK_LANGS, scanText, type BlockLang } from './blocks.js';
 import { bloomOf } from './bloom.js';
 import type { ExecutorOptions } from './executor.js';
 import { withCalls, type WorkCall } from './fields.js';
-import { embedTexts, snap, type RegistryDeps, type TokenKind, type VectorIndex } from './registry.js';
+import { embedTexts, snap, type RegistryDeps, type SnapInput, type TokenKind, type VectorIndex } from './registry.js';
 
 export const SCOPES = ['onsite', 'remote'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -220,6 +220,16 @@ export function checkDraft(d: ListingDraft): DraftRefusal | null {
   return null;
 }
 
+/**
+ * What a claim snaps with: an occupation or a skill in the listing's market
+ * (`SnapInput.market`), so the registry's model steps read "Encanador" from
+ * `br-sp` as Brazilian Portuguese; a certificate without it, since a claim
+ * names its own jurisdiction or matches no licence.
+ */
+export function claimSnapInput(kind: TokenKind, raw: string, draft: Pick<ListingDraft, 'lang' | 'region'>): SnapInput {
+  return kind === 'cert' ? { kind, raw, lang: draft.lang } : { kind, raw, lang: draft.lang, market: draft.region };
+}
+
 /** What the listing's vector embeds: the claims as written, then the registry's English names for them. */
 export function listingText(d: ListingDraft, english: string[]): string {
   const parts = [d.titles.join('; '), d.skills.join('; '), d.certificates.join('; ')].filter(Boolean);
@@ -272,7 +282,7 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
   ];
   for (const [kind, raws] of claims) {
     for (const raw of raws) {
-      const s = await snap(deps.registry, { kind, raw, lang: draft.lang });
+      const s = await snap(deps.registry, claimSnapInput(kind, raw, draft));
       calls.push(...s.calls);
       if (s.token) {
         // A certificate adds its level, the levels below it and its modules beside it (`cert:nccco-rigger/level-2`).

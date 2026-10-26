@@ -8,6 +8,7 @@ import type { BlockLang } from '../src/services/work/blocks.js';
 import { hirerQuery, planHire, type HireDeps, type HirerRequest } from '../src/services/work/hire.js';
 import {
   checkDraft,
+  claimSnapInput,
   D1ListingStore,
   listingIdOf,
   namespaceOf,
@@ -174,6 +175,22 @@ describe('publishListing', () => {
     expect((await listings.get([moved.listingId])).size).toBe(0);
   });
 
+  it('snaps a worker’s titles and skills in the listing’s market, and certificates without it', async () => {
+    const where = { lang: 'pt', region: 'br-sp' } as const;
+    expect(claimSnapInput('pos', 'Encanador', where)).toEqual({ kind: 'pos', raw: 'Encanador', lang: 'pt', market: 'br-sp' });
+    expect(claimSnapInput('skill', 'Desentupimento', where)).toEqual({ kind: 'skill', raw: 'Desentupimento', lang: 'pt', market: 'br-sp' });
+    expect(claimSnapInput('cert', 'NR-10 Básico', where)).toEqual({ kind: 'cert', raw: 'NR-10 Básico', lang: 'pt' });
+    const calls: FakeCall[] = [];
+    const clef = { answers: { match: { type: 'choice', choice: 'c0', probabilities: { c0: 0.9 } }, specialization: { type: 'noul', noul: 0.1 } } };
+    const { publish } = await world({ 'work-adjudicate': clef }, calls);
+    // Two trades in one title: the keyword embedder puts it in the band between the plumber and the electrician.
+    const out = await publishListing(publish, draft({ region: 'br-sp', lang: 'pt', titles: ['Eletricista encanador'], skills: [], languages: ['pt'] }));
+    expect(out.ok).toBe(true);
+    expect(calls.filter((c) => c.op === 'work-adjudicate').map((c) => (c.input as { state: string }).state)).toEqual([
+      'An occupation written in Brazilian Portuguese by a worker in Brazil (br-sp):\nEletricista encanador',
+    ]);
+  });
+
   it('publishes nothing when the embedding fails, and refuses a bad draft before any call', async () => {
     const calls: FakeCall[] = [];
     const { publish, jobsIndex } = await world({}, calls);
@@ -309,6 +326,8 @@ describe('one hirer query', () => {
     // A credential the registry cannot name is still a requirement: a person checks it.
     expect(noCert.ok && noCert.plan.intent.mode).toBe('curated');
     expect(calls.map((c) => c.op)).not.toContain('work-pivot');
+    // A hirer's words carry no worker's locale: the job's region reaches only the licence it names.
+    expect(JSON.stringify(calls.map((c) => c.input))).not.toMatch(/written in|by a worker in/);
   });
 
   it('checks the sentence, its language and its regions before any hosted call', async () => {

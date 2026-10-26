@@ -14,6 +14,7 @@
  */
 
 import type { DeidentifiedBlock } from './blocks.js';
+import { labelLocale, writtenIn, type StringLocale } from './locale.js';
 import type { Candidate, TokenKind } from './registry.js';
 
 export interface ClefChoiceQuestion {
@@ -135,17 +136,32 @@ export function documentState(blocks: readonly DeidentifiedBlock[]): string {
 
 const KIND_NOUN: Record<TokenKind, string> = { pos: 'occupation', skill: 'skill', cert: 'certificate or licence' };
 
+export interface BandQuestionOptions {
+  /**
+   * Each candidate's matched label carries its locale (`locale.ts`): its
+   * language, and a national layer's region (`life coach (matched "coach",
+   * Spanish)`, `cargo vehicle driver (matched "truck driver", American
+   * English)`). The registry snap's band sets it. The US layer's import
+   * matches English labels only, so it leaves it unset and keeps the
+   * questions it was calibrated on (2026-10-25).
+   */
+  labelLocales?: boolean;
+}
+
 /**
  * Clef's questions in the τ band: which candidate, by key, names the same
  * thing as the raw string or the broader thing it specializes, or none; and
  * whether it is a narrower specialization of it. The candidates are the
- * registry's, with their English names and the label that matched.
+ * registry's, with their English names and the label that matched. The
+ * question is the same in every language: a label's locale is context, and
+ * no wording prefers the string's own language.
  */
-export function adjudicationQuestions(kind: TokenKind, candidates: readonly Candidate[]): Record<string, ClefQuestion> {
+export function adjudicationQuestions(kind: TokenKind, candidates: readonly Candidate[], opts: BandQuestionOptions = {}): Record<string, ClefQuestion> {
   if (kind === 'cert') return certificateQuestions(candidates);
   const criteria: Record<string, string> = {};
   candidates.forEach((c, i) => {
-    criteria[`c${i}`] = c.matched === c.labelEn ? c.labelEn : `${c.labelEn} (matched "${c.matched}")`;
+    const locale = opts.labelLocales ? labelLocale(c.matchedLang, c.matchedRegion) : null;
+    criteria[`c${i}`] = c.matched === c.labelEn ? c.labelEn : `${c.labelEn} (matched "${c.matched}"${locale ? `, ${locale}` : ''})`;
   });
   const noun = KIND_NOUN[kind];
   criteria.none = `None of these: a different ${noun}`;
@@ -187,8 +203,20 @@ export function certificateQuestions(candidates: readonly Candidate[]): Record<s
   };
 }
 
-export function adjudicationState(kind: TokenKind, raw: string, lang: string): string {
-  return `A ${KIND_NOUN[kind]} as a worker or a hirer wrote it, in ${lang}:\n${raw}`;
+/**
+ * The band's state for an occupation or a skill: its kind, its locale
+ * (`locale.ts`) and the string, as in "An occupation written in Brazilian
+ * Portuguese by a worker in Brazil (br-sp):" and then "Encanador". The pivot
+ * reads the same text (`registry.ts`).
+ */
+export function adjudicationState(kind: 'pos' | 'skill', raw: string, locale: StringLocale): string {
+  const noun = KIND_NOUN[kind];
+  return `${/^[aeiou]/.test(noun) ? 'An' : 'A'} ${noun} ${writtenIn(locale)}:\n${raw}`;
+}
+
+/** The certificate band's state: the string and its language's code. It reads no market: a claim names its own jurisdiction, and a hirer's comes from the job's region. */
+export function certificateState(raw: string, lang: string): string {
+  return `A ${KIND_NOUN.cert} as a worker or a hirer wrote it, in ${lang}:\n${raw}`;
 }
 
 /**

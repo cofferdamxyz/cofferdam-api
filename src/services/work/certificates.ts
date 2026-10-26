@@ -49,7 +49,7 @@
  */
 
 import seedJson from './certificates.json';
-import { adjudicationQuestions, adjudicationState, clefInput, readChoice } from './clef.js';
+import { adjudicationQuestions, certificateState, clefInput, readChoice } from './clef.js';
 import { failureCode } from './executor.js';
 import { estimatedUsage, usageOrEstimate, type WorkCall } from './fields.js';
 import {
@@ -709,7 +709,7 @@ export async function snapCertificate(deps: RegistryDeps, input: SnapInput, ctx:
 
   // 4. Clef in the band.
   const model = await deps.inference.model('work-adjudicate');
-  const request = clefInput(model, adjudicationState('cert', raw, input.lang), adjudicationQuestions('cert', candidates));
+  const request = clefInput(model, certificateState(raw, input.lang), adjudicationQuestions('cert', candidates));
   const t0 = now();
   let answer: unknown;
   try {

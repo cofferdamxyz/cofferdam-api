@@ -4,6 +4,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  adjudicationState,
+  certificateState,
   documentQuestions,
   documentState,
   needQuestions,
@@ -13,6 +15,7 @@ import {
   UNSAFE_FLOOR,
 } from '../src/services/work/clef.js';
 import { checkBlock, type DeidentifiedBlock } from '../src/services/work/blocks.js';
+import { labelLocale, languageName, writtenIn } from '../src/services/work/locale.js';
 
 const answers = (a: Record<string, unknown>) => ({ answers: a });
 
@@ -47,6 +50,38 @@ describe('the Clef catalogue', () => {
       need_1: { type: 'noul', instructions: 'Does this job need someone who can do leak repair?' },
     });
     expect(JSON.stringify(q)).not.toMatch(/pos:|skill:/);
+  });
+
+  it('names a registry string’s locale: its language, and a worker’s variant and market, the region’s code where the country is not listed', () => {
+    expect(writtenIn({ lang: 'pt', market: 'br-sp' })).toBe('written in Brazilian Portuguese by a worker in Brazil (br-sp)');
+    expect(writtenIn({ lang: 'es', market: 'mx' })).toBe('written in Mexican Spanish by a worker in Mexico (mx)');
+    expect(writtenIn({ lang: 'en', market: 'us-tx' })).toBe('written in American English by a worker in the United States (us-tx)');
+    expect(writtenIn({ lang: 'pt', market: 'pt-11' })).toBe('written in European Portuguese by a worker in Portugal (pt-11)');
+    // A language the country does not speak is the language alone, said beside the market.
+    expect(writtenIn({ lang: 'en', market: 'br-sp' })).toBe('written in English by a worker in Brazil (br-sp)');
+    expect(writtenIn({ lang: 'es', market: 'us-tx' })).toBe('written in Spanish by a worker in the United States (us-tx)');
+    expect(writtenIn({ lang: 'es', market: 'co' })).toBe('written in Spanish by a worker in Colombia (co)');
+    expect(writtenIn({ lang: 'pt', market: 'de-by' })).toBe('written in Portuguese by a worker in de-by');
+    // Without a market, or with one that is not a region, the language alone.
+    expect(writtenIn({ lang: 'pt' })).toBe('written in Portuguese by a worker or a hirer');
+    expect(writtenIn({ lang: 'pt', market: 'São Paulo' })).toBe('written in Portuguese by a worker or a hirer');
+    expect(languageName('es', 'mx-nle')).toBe('Mexican Spanish');
+    expect(languageName('es')).toBe('Spanish');
+    expect(adjudicationState('pos', 'Encanador', { lang: 'pt', market: 'br-sp' })).toBe('An occupation written in Brazilian Portuguese by a worker in Brazil (br-sp):\nEncanador');
+    expect(adjudicationState('skill', 'Soldagem TIG', { lang: 'pt' })).toBe('A skill written in Portuguese by a worker or a hirer:\nSoldagem TIG');
+    // The certificate band's state is as it was: it reads no market.
+    expect(certificateState('NR-10 Básico', 'pt')).toBe('A certificate or licence as a worker or a hirer wrote it, in pt:\nNR-10 Básico');
+  });
+
+  it('names a matched label’s language, and a national layer’s region', () => {
+    expect(labelLocale('es')).toBe('Spanish');
+    expect(labelLocale('pt', null)).toBe('Portuguese');
+    expect(labelLocale('en', 'us')).toBe('American English');
+    expect(labelLocale('pt', 'br')).toBe('Brazilian Portuguese');
+    expect(labelLocale('es', 'mx')).toBe('Mexican Spanish');
+    expect(labelLocale('es', 'co')).toBe('Spanish, Colombia');
+    expect(labelLocale('en', 'not a region')).toBe('English');
+    expect(labelLocale(null, 'us')).toBeNull();
   });
 
   it('labels each block with its kind in the document state', () => {

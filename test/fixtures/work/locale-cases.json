@@ -1,0 +1,28 @@
+{
+  "about": "Synthetic strings, each with the market of the worker who wrote it, snapped against ESCO's occupations by test/workRegistry.eval.test.ts (ESCO_DIR, from the Mac). They test the registry's model steps where ESCO's Portuguese is Portugal's and its Spanish is Spain's: Brazil's and Mexico's words for a trade (the 2026-10-24 live run's Encanador, Plomero and Terceiro Oficial de Máquinas among them), English words ESCO's Spanish or Portuguese give another occupation (false friends), and three of those words in the language that holds them, which the exact-label shortcut decides before any model. A snap is right on a token in `right`, or, with `none`, on no token or a new one; a token in `wrong` is the false friend's. Tokens are named as the ESCO import names them, by the English preferred label.",
+  "cases": [
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Encanador", "right": ["pos:plumber"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-rj", "raw": "Bombeiro hidráulico", "right": ["pos:plumber"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-rj", "raw": "Terceiro Oficial de Máquinas", "right": ["pos:marine-engineer", "pos:ship-duty-engineer", "pos:ship-assistant-engineer"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Garçom", "right": ["pos:waiter-waitress"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-pr", "raw": "Caminhoneiro", "right": ["pos:cargo-vehicle-driver"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Operador de empilhadeira", "right": ["pos:forklift-operator"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-mg", "raw": "Frentista", "right": ["pos:fuel-station-specialised-seller"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Motorista de ônibus", "right": ["pos:bus-driver"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Auxiliar de cozinha", "right": ["pos:kitchen-assistant", "pos:kitchen-porter"] },
+    { "group": "regional", "kind": "pos", "lang": "pt", "market": "br-rj", "raw": "Soldador de Tubulação", "right": ["pos:pipe-welder", "pos:welder"] },
+    { "group": "regional", "kind": "pos", "lang": "es", "market": "mx-nle", "raw": "Plomero", "right": ["pos:plumber"] },
+    { "group": "regional", "kind": "pos", "lang": "es", "market": "mx-ver", "raw": "Tercer Ingeniero", "right": ["pos:marine-engineer", "pos:ship-duty-engineer", "pos:ship-assistant-engineer"] },
+    { "group": "regional", "kind": "pos", "lang": "es", "market": "mx-cmx", "raw": "Mesero", "right": ["pos:waiter-waitress"] },
+    { "group": "regional", "kind": "pos", "lang": "es", "market": "mx-nle", "raw": "Camionero", "right": ["pos:cargo-vehicle-driver"] },
+    { "group": "regional", "kind": "pos", "lang": "es", "market": "mx-nle", "raw": "Montacarguista", "right": ["pos:forklift-operator"] },
+    { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-tx", "raw": "Instructor", "right": [], "none": true, "wrong": ["pos:air-force-officer"] },
+    { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-tx", "raw": "Coach", "right": ["pos:sports-coach"], "none": true, "wrong": ["pos:life-coach"] },
+    { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-fl", "raw": "Valet", "right": ["pos:parking-valet"], "none": true, "wrong": ["pos:room-attendant"] },
+    { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-ca", "raw": "Compositor", "right": ["pos:typesetter", "pos:digital-artist"], "none": true, "wrong": ["pos:composer"] },
+    { "group": "false friend", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Instrutor", "right": [], "none": true, "wrong": ["pos:air-force-officer"] },
+    { "group": "label", "kind": "pos", "lang": "es", "market": "mx-cmx", "raw": "Instructor", "right": [], "none": true, "wrong": ["pos:air-force-officer"] },
+    { "group": "label", "kind": "pos", "lang": "es", "market": "mx-cmx", "raw": "Valet", "right": ["pos:parking-valet"], "none": true, "wrong": ["pos:room-attendant"] },
+    { "group": "label", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Coach", "right": ["pos:life-coach", "pos:sports-coach"] }
+  ]
+}

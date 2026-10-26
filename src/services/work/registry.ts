@@ -34,12 +34,27 @@
  *     a new token minted, `pending`: it snaps from then on, and waits for
  *     review and an `isco:` code.
  *
+ * The model steps read a string with its locale (`locale.ts`), as context:
+ * Clef's band state names its language, and for a worker's occupation or
+ * skill the variant and the market of their listing (`SnapInput.market`:
+ * "An occupation written in Brazilian Portuguese by a worker in Brazil
+ * (br-sp)"); each candidate shows the language of the label that matched,
+ * and a national layer's region ("life coach (matched "coach", Spanish)");
+ * and the pivot reads the same state, so a Brazilian "Bombeiro hidráulico"
+ * names a plumber, not a firefighter. No step prefers a label of the
+ * string's language or region because of it: ESCO's Portuguese is
+ * Portugal's and its Spanish is Spain's, and its Spanish gives "instructor"
+ * to the air force officer. The market decides nothing without a model, and
+ * is not stored: a decision keeps the string's language only, and so does
+ * the alias a snap observes, which then decides that string by label for
+ * every market of its language.
+ *
  * A certificate takes its own path through the curated seed
  * (`certificates.ts`), whose labels it reads in every language, since the
  * seed gives each label one credential: its level and modules are read off
  * the string, a claim must name the credential, a hirer's phrase means the
  * licence of the job's region, and Clef sees at most three candidates; it
- * never mints.
+ * never mints, and reads no market.
  *
  * No model ever writes an ESCO or ISCO code: those come only from the ESCO
  * export (`esco.ts`). Clef answers which of the candidates it was shown, by
@@ -57,6 +72,7 @@ import { snapCertificate, type CertFacets, type CertificateCatalogue } from './c
 import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, fieldsRequest, readFieldsAnswer, usageOrEstimate, withCalls, type FieldSet, type WorkCall } from './fields.js';
+import type { StringLocale } from './locale.js';
 
 export const TOKEN_KINDS = ['pos', 'skill', 'cert'] as const;
 export type TokenKind = (typeof TOKEN_KINDS)[number];
@@ -428,14 +444,26 @@ export interface SnapInput {
    * own, or matches no licence.
    */
   region?: string;
+  /**
+   * A worker's occupation or skill only: the coarse region of their listing
+   * (`br-sp`, `mx`, `us-tx`), so the model steps read the string in its
+   * regional variant ("Encanador" in Brazilian Portuguese). Context for Clef's
+   * state and the pivot, never a rule: no step prefers a label of that
+   * language or region, it decides nothing without a model, and it is not
+   * stored. Never the job's region, which is `region`; a certificate reads
+   * neither for a worker's claim.
+   */
+  market?: string;
 }
 
 export interface Candidate {
   token: string;
   labelEn: string;
-  /** The label that matched, as written, and its language (`en` when its vector names none). */
+  /** The label that matched, as written, and its language (null when its vector names none). */
   matched: string;
-  matchedLang: string;
+  matchedLang: string | null;
+  /** The matched label's region, a national layer's (`us`); null or absent for ESCO's, the seed's and a mint's labels. */
+  matchedRegion?: string | null;
   score: number;
   /**
    * With the languages `candidatesFor` was given: the best score through one
@@ -490,10 +518,10 @@ export const PIVOT_FIELDS = {
   },
 } satisfies FieldSet;
 
-const PIVOT_SYSTEM: Record<TokenKind, string> = {
-  pos: 'You name occupations. Given a job title in any language, answer only with JSON: the plain international English name of the occupation ("Terceiro Oficial de Máquinas" is "marine engineer", "Plomero Oficial" is "plumber").',
-  skill: 'You name skills. Given a skill in any language, answer only with JSON: its plain international English name ("soldagem TIG" is "tig welding").',
-  cert: '',
+/** The message names the string's language, and for a worker's string the variant and the market (`adjudicationState`), as context. */
+const PIVOT_SYSTEM: Record<'pos' | 'skill', string> = {
+  pos: 'You name occupations. Given a job title in any language, with the language it is written in and, when known, where the worker who wrote it is, answer only with JSON: the plain international English name of the occupation ("Terceiro Oficial de Máquinas" is "marine engineer", "Plomero Oficial" is "plumber").',
+  skill: 'You name skills. Given a skill in any language, with the language it is written in and, when known, where the worker who wrote it is, answer only with JSON: its plain international English name ("soldagem TIG" is "tig welding").',
 };
 
 const PIVOT_OK = /^[a-z][a-z' -]{0,58}[a-z]$/;
@@ -505,13 +533,14 @@ export function validPivot(english: string): string | null {
   return PIVOT_OK.test(v) && words <= 6 ? v : null;
 }
 
-async function pivot(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): Promise<string | null> {
+async function pivot(deps: RegistryDeps, kind: 'pos' | 'skill', raw: string, locale: StringLocale, calls: WorkCall[]): Promise<string | null> {
   const now = deps.now ?? Date.now;
   const model = await deps.inference.model('work-pivot');
   const t0 = now();
   // The pivot is free text by nature, so it never reads a field back as a span:
-  // the request is JSON mode, and its one answer is validated as a pivot.
-  const req = fieldsRequest(model, PIVOT_FIELDS, { name: 'pivot', system: PIVOT_SYSTEM[input.kind], user: input.raw, state: input.raw });
+  // the request is JSON mode, and its one answer is validated as a pivot. Its
+  // message is Clef's band state: the string with its locale.
+  const req = fieldsRequest(model, PIVOT_FIELDS, { name: 'pivot', system: PIVOT_SYSTEM[kind], user: adjudicationState(kind, raw, locale), state: raw });
   try {
     const result = await deps.inference.run('work-pivot', req);
     const read = readFieldsAnswer(model, PIVOT_FIELDS, result);
@@ -531,7 +560,8 @@ async function pivot(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): P
  * through a label in one of them, and of two labels of a token at one score
  * the one in `langs` is the match shown: ESCO gives many tokens one text in
  * two languages, two vectors at one score, listed in no set order. A label
- * whose vector names no language is in none.
+ * whose vector names no language is in none. Each match carries its label's
+ * language and, for a national layer's label, its region, from the vector.
  */
 export async function candidatesFor(deps: Pick<RegistryDeps, 'store' | 'index'>, kind: TokenKind, vector: number[], langs?: readonly string[]): Promise<Candidate[]> {
   const matches = await deps.index.query(vector, { topK: 20, filter: { kind } });
@@ -560,7 +590,8 @@ export async function candidatesFor(deps: Pick<RegistryDeps, 'store' | 'index'>,
       token: t.token,
       labelEn: t.labelEn,
       matched: typeof m.metadata?.label === 'string' ? m.metadata.label : t.labelEn,
-      matchedLang: typeof m.metadata?.lang === 'string' ? m.metadata.lang : 'en',
+      matchedLang: typeof m.metadata?.lang === 'string' ? m.metadata.lang : null,
+      matchedRegion: typeof m.metadata?.region === 'string' ? m.metadata.region : null,
       score: m.score,
     });
   }
@@ -608,6 +639,9 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
 
   // A certificate takes the seed's path, and never mints.
   if (input.kind === 'cert') return snapCertificate(deps, input, { raw, norm, calls, tau, now, result, record, observe });
+  const kind = input.kind;
+  /** What the model steps are told of the string, as context: its language, and a worker's market. */
+  const locale: StringLocale = { lang: input.lang, ...(input.market ? { market: input.market } : {}) };
 
   // 1. An exact known label, in the string's own language or English.
   const langs = labelLangs(input.lang);
@@ -640,7 +674,7 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   let undecided: number | null = null;
   if (top && top.score >= tau.low) {
     clefModel = await deps.inference.model('work-adjudicate');
-    const request = clefInput(clefModel, adjudicationState(input.kind, raw, input.lang), adjudicationQuestions(input.kind, candidates));
+    const request = clefInput(clefModel, adjudicationState(kind, raw, locale), adjudicationQuestions(kind, candidates, { labelLocales: true }));
     const t0 = now();
     let answer: unknown;
     try {
@@ -673,7 +707,7 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   // 3. Nothing matched: anything a hirer wrote stays unmatched; occupations and skills mint.
   const score = top?.score ?? null;
   if (input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
-  const english = await pivot(deps, { ...input, raw }, calls);
+  const english = await pivot(deps, kind, raw, locale, calls);
   if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const englishNorm = labelNorm(english);
   // The name is a label far more often than a slug: "truck driver" is no

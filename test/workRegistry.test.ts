@@ -16,6 +16,7 @@ import {
   tokenOf,
   tokenSlug,
   validPivot,
+  type Candidate,
   type LabelKind,
   type RegistryDeps,
   type RegistryLabel,
@@ -366,8 +367,9 @@ describe('snap: retrieve, then choose', () => {
         expect(out.candidates[0], lang).toMatchObject({ token: 'pos:air-force-officer', matched: 'instructor', matchedLang: 'es', scoped: 0 });
         expect(calls.map((c) => c.op), lang).toEqual(lang === 'en' ? ['work-embed', 'work-adjudicate', 'work-pivot'] : ['work-embed', 'work-adjudicate', 'work-pivot', 'work-embed']);
         const asked = calls.find((c) => c.op === 'work-adjudicate')!.input as { state: string; questions: { match: { criteria: Record<string, string> } } };
-        expect(asked.state, lang).toContain(`in ${lang}:`);
-        expect(asked.questions.match.criteria.c0, lang).toBe('air force officer (matched "instructor")');
+        // Clef is told the string's language and the language of the label that matched: context, never a preference.
+        expect(asked.state, lang).toBe(`An occupation written in ${lang === 'en' ? 'English' : 'Portuguese'} by a worker or a hirer:\nInstructor`);
+        expect(asked.questions.match.criteria.c0, lang).toBe('air force officer (matched "instructor", Spanish)');
         expect(decisions(), lang).toEqual([{ decision: 'minted', token: 'pos:instructor', specialization: 0, probability: null, raw: 'Instructor' }]);
         // Nothing was observed on the air force officer, and the next English string snaps to the new token by label.
         expect(db.sqlite.prepare("SELECT label FROM registry_labels WHERE token = 'pos:air-force-officer' AND kind = 'observed'").all(), lang).toEqual([]);
@@ -530,6 +532,150 @@ describe('snap: retrieve, then choose', () => {
     const q = adjudicationQuestions('skill', [{ token: 'skill:leak-repair', labelEn: 'leak repair', matched: 'reparación de fugas', matchedLang: 'es', score: 0.8 }]);
     expect(q.match).toMatchObject({ type: 'choice', criteria: { c0: 'leak repair (matched "reparación de fugas")', none: 'None of these: a different skill' } });
     expect(q.specialization).toMatchObject({ type: 'noul' });
+  });
+});
+
+describe('the locale the model steps read', () => {
+  // As in ESCO v1.2.1, whose Portuguese is Portugal's: the Brazilian "Encanador" is no label, and bge-m3 reads it
+  // by its letters, near the assayer's Portuguese "Ensaiador" and the carpet fitter's Spanish "enmoquetador".
+  const lookalikes: SeedToken[] = [
+    { token: 'pos:assayer', kind: 'pos', labelEn: 'assayer', labels: [['en', 'assayer', axis(20)], ['pt', 'Ensaiador', axis(21), 'alternative']] },
+    { token: 'pos:carpet-fitter', kind: 'pos', labelEn: 'carpet fitter', labels: [['en', 'carpet fitter', axis(22)], ['es', 'enmoquetador', axis(23), 'alternative']] },
+  ];
+  /** A unit vector at these cosines to these axes, the rest along axis 30. */
+  const toward = (...parts: [axis: number, cos: number][]) => {
+    const v = new Array<number>(1024).fill(0);
+    for (const [a, cos] of parts) v[a] = cos;
+    v[30] = Math.sqrt(Math.max(0, 1 - parts.reduce((s, [, cos]) => s + cos * cos, 0)));
+    return v;
+  };
+  const encanador = toward([21, 0.74], [23, 0.66]);
+  type Asked = { state: string; questions: { match: { instructions: string; criteria: Record<string, string> } } };
+  type PivotAsked = { messages: { role: string; content: string }[] };
+  const criteriaOf = (q: ReturnType<typeof adjudicationQuestions>) => (q.match as { criteria: Record<string, string> }).criteria;
+
+  it('tells Clef and the pivot a worker’s string in its variant and market, and each candidate the language of its label', async () => {
+    const calls: FakeCall[] = [];
+    const { deps } = await registry(
+      { 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'plumber' }) },
+      calls,
+      lookalikes,
+    );
+    expect(await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', market: 'br-sp' })).toMatchObject({ decision: 'pivot', token: 'pos:plumber' });
+    const state = 'An occupation written in Brazilian Portuguese by a worker in Brazil (br-sp):\nEncanador';
+    const asked = calls.find((c) => c.op === 'work-adjudicate')!.input as unknown as Asked;
+    expect(asked.state).toBe(state);
+    expect(asked.questions.match.criteria).toMatchObject({ c0: 'assayer (matched "Ensaiador", Portuguese)', c1: 'carpet fitter (matched "enmoquetador", Spanish)' });
+    // The question is the one every string gets, whatever its language.
+    expect(asked.questions.match.instructions).toBe((adjudicationQuestions('pos', []).match as { instructions: string }).instructions);
+    // The pivot reads the same text, so a Brazilian word is read as Brazilian Portuguese.
+    const pivoted = calls.find((c) => c.op === 'work-pivot')!.input as unknown as PivotAsked;
+    expect(pivoted.messages.find((m) => m.role === 'user')!.content).toBe(state);
+    expect(pivoted.messages[0]!.content).toContain('with the language it is written in and, when known, where the worker who wrote it is');
+    // Context, never a preference: nothing tells a model to favour a language or a region.
+    expect(JSON.stringify([asked, pivoted])).not.toMatch(/prefer|favou?r|priorit/i);
+
+    // Without a market the state names the language alone, and so does the pivot.
+    const plain: FakeCall[] = [];
+    const without = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'plumber' }) }, plain, lookalikes);
+    await snap(without.deps, { kind: 'pos', raw: 'Encanador', lang: 'pt' });
+    expect((plain.find((c) => c.op === 'work-adjudicate')!.input as unknown as Asked).state).toBe('An occupation written in Portuguese by a worker or a hirer:\nEncanador');
+    expect((plain.find((c) => c.op === 'work-pivot')!.input as unknown as PivotAsked).messages[1]!.content).toBe('An occupation written in Portuguese by a worker or a hirer:\nEncanador');
+  });
+
+  it('shows a national layer’s label with its region, a label of no language with none, and the US layer’s import keeps its questions', async () => {
+    const calls: FakeCall[] = [];
+    // An O*NET title the US layer placed on the cargo vehicle driver: its vector names the region (`national.ts`).
+    const driver: SeedToken = { token: 'pos:cargo-vehicle-driver', kind: 'pos', labelEn: 'cargo vehicle driver', labels: [['en', 'cargo vehicle driver', axis(24)]] };
+    const { deps, index } = await registry({ 'work-embed': embedAnswer({ 'Tractor-Trailer Driver': toward([25, 0.9]) }), 'work-adjudicate': clef('c0', 0.9) }, calls, [driver]);
+    await index.upsert([{ id: 'lonet-truck-driver', values: axis(25), metadata: { token: 'pos:cargo-vehicle-driver', kind: 'pos', lang: 'en', label: 'Truck Driver', source: 'esco', region: 'us', layer: 'onet' } }]);
+    const out = await snap(deps, { kind: 'pos', raw: 'Tractor-Trailer Driver', lang: 'en', market: 'us-tx' });
+    expect(out).toMatchObject({ decision: 'chosen', token: 'pos:cargo-vehicle-driver' });
+    expect(out.candidates[0]).toMatchObject({ matched: 'Truck Driver', matchedLang: 'en', matchedRegion: 'us' });
+    const asked = calls.find((c) => c.op === 'work-adjudicate')!.input as unknown as Asked;
+    expect(asked.state).toBe('An occupation written in American English by a worker in the United States (us-tx):\nTractor-Trailer Driver');
+    expect(asked.questions.match.criteria.c0).toBe('cargo vehicle driver (matched "Truck Driver", American English)');
+
+    const shown: Candidate[] = [
+      { token: 'pos:life-coach', labelEn: 'life coach', matched: 'coach', matchedLang: 'es', score: 0.9 },
+      { token: 'pos:welder', labelEn: 'welder', matched: 'pipe welder', matchedLang: null, score: 0.8 },
+      { token: 'pos:plumber', labelEn: 'plumber', matched: 'plumber', matchedLang: 'en', score: 0.7 },
+      { token: 'pos:pipefitter', labelEn: 'pipefitter', matched: 'ayudante de tubero', matchedLang: 'es', matchedRegion: 'co', score: 0.66 },
+      { token: 'pos:fitter', labelEn: 'fitter', matched: 'Monteur', matchedLang: 'de', matchedRegion: 'de-by', score: 0.65 },
+    ];
+    expect(criteriaOf(adjudicationQuestions('pos', shown, { labelLocales: true }))).toEqual({
+      c0: 'life coach (matched "coach", Spanish)',
+      c1: 'welder (matched "pipe welder")',
+      c2: 'plumber',
+      c3: 'pipefitter (matched "ayudante de tubero", Spanish, Colombia)',
+      c4: 'fitter (matched "Monteur", de, de-by)',
+      none: 'None of these: a different occupation',
+    });
+    // The US layer's import (`onet.ts`) asks without them, as it was calibrated on 2026-10-25.
+    expect(criteriaOf(adjudicationQuestions('pos', shown)).c0).toBe('life coach (matched "coach")');
+  });
+
+  it('decides nothing by the market without a model: the exact label and τ_auto read the same languages with one or without', async () => {
+    const officer: SeedToken = { token: 'pos:air-force-officer', kind: 'pos', labelEn: 'air force officer', labels: [['en', 'air force officer', axis(5)], ['es', 'instructor', axis(14), 'alternative']] };
+    for (const market of [undefined, 'mx-cmx', 'us-tx', 'br-sp']) {
+      const calls: FakeCall[] = [];
+      const { deps } = await registry(
+        { 'work-embed': embedAnswer({ 'Plomero Oficial': near(1, 9, 0.99), Instructor: near(14, 16, 0.97) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'instructor' }) },
+        calls,
+        [officer],
+      );
+      const m = market ? { market } : {};
+      // ESCO's Spanish label decides a Spanish string from any market: a curated list, not the locale, is its fix.
+      expect(await snap(deps, { kind: 'pos', raw: 'Instructor', lang: 'es', ...m }), market).toMatchObject({ decision: 'label', token: 'pos:air-force-officer' });
+      expect(await snap(deps, { kind: 'pos', raw: 'Plomero Oficial', lang: 'es', ...m }), market).toMatchObject({ decision: 'auto', token: 'pos:plumber' });
+      expect(calls.map((c) => c.op), market).toEqual(['work-embed']);
+      // Another language's label at τ_auto goes to Clef from every market.
+      expect(await snap(deps, { kind: 'pos', raw: 'Instructor', lang: 'en', ...m }), market).toMatchObject({ decision: 'minted', token: 'pos:instructor' });
+      expect(calls.map((c) => c.op), market).toEqual(['work-embed', 'work-embed', 'work-adjudicate', 'work-pivot']);
+    }
+  });
+
+  it('fails closed with a market as without: no Clef answer, a bad pivot or no embedding is no token, an answer below the floor never mints, nor does a hirer or a certificate', async () => {
+    const m = { market: 'br-sp' };
+    for (const answer of [new Error('down'), { answers: {} }]) {
+      const calls: FakeCall[] = [];
+      const { deps } = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': answer, 'work-pivot': jsonModeResult({ english: 'plumber' }) }, calls, lookalikes);
+      expect(await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', ...m })).toMatchObject({ decision: 'unmatched', token: null });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate']);
+    }
+    for (const [english, expected] of [
+      ['plumber', { decision: 'pivot', token: 'pos:plumber' }],
+      ['pipe layer', { decision: 'unmatched', token: null }],
+    ] as const) {
+      const { deps, store } = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.4), 'work-pivot': jsonModeResult({ english }) }, [], lookalikes);
+      expect(await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', ...m }), english).toMatchObject(expected);
+      expect((await store.tokens(['pos:pipe-layer'])).size, english).toBe(0);
+    }
+    const hirer = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'plumber' }) }, [], lookalikes);
+    expect(await snap(hirer.deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', mint: false, ...m })).toMatchObject({ decision: 'unmatched', token: null });
+    const badPivot = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'pos:plumber!' }) }, [], lookalikes);
+    expect(await snap(badPivot.deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', ...m })).toMatchObject({ decision: 'unmatched', token: null });
+    const down = await registry({ 'work-embed': new Error('down') }, [], lookalikes);
+    expect(await snap(down.deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', ...m })).toMatchObject({ decision: 'unmatched', token: null });
+    const cert = await registry({ 'work-embed': embedAnswer({ 'TWIC card': near(4, 13, 0.7) }), 'work-adjudicate': clef('none', 0.95) });
+    expect(await snap(cert.deps, { kind: 'cert', raw: 'TWIC card', lang: 'en', market: 'us-tx' })).toMatchObject({ decision: 'unmatched', token: null });
+    expect((await cert.store.tokensByLabel('twic card', 'cert')).length).toBe(0);
+  });
+
+  it('keeps the market out of the registry: a decision keeps the string’s language, and an alias or a mint no region', async () => {
+    const { deps, db } = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'plumber' }) }, [], lookalikes);
+    expect(await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', market: 'br-sp' })).toMatchObject({ decision: 'pivot', token: 'pos:plumber' });
+    const decisions = db.sqlite.prepare('SELECT * FROM registry_decisions').all();
+    const observed = db.sqlite.prepare("SELECT * FROM registry_labels WHERE kind = 'observed'").all();
+    expect(decisions).toMatchObject([{ raw: 'Encanador', lang: 'pt', decision: 'pivot', token: 'pos:plumber' }]);
+    expect(observed).toMatchObject([{ token: 'pos:plumber', lang: 'pt', label: 'Encanador', region: null, source: null }]);
+    expect(JSON.stringify([decisions, observed])).not.toMatch(/br-sp|Brazil/);
+
+    const minted = await registry({ 'work-embed': embedAnswer({ Confeiteiro: near(1, 11, 0.62), 'pastry chef': axis(12) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'pastry chef' }) });
+    expect(await snap(minted.deps, { kind: 'pos', raw: 'Confeiteiro', lang: 'pt', market: 'br-sp' })).toMatchObject({ decision: 'minted', token: 'pos:pastry-chef' });
+    const vectors = [...minted.index.vectors.values()].filter((v) => v.metadata.token === 'pos:pastry-chef');
+    expect(vectors).toHaveLength(2);
+    expect(JSON.stringify([vectors.map((v) => v.metadata), minted.db.sqlite.prepare('SELECT * FROM registry_labels WHERE token = ?').all('pos:pastry-chef')])).not.toMatch(/br-sp|Brazil|region":"/);
   });
 });
 
