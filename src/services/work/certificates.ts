@@ -55,6 +55,7 @@ import { estimatedUsage, usageOrEstimate, type WorkCall } from './fields.js';
 import {
   ADJUDICATION_FLOOR,
   candidatesFor,
+  CLIENT_EMBED_MODELS,
   embedTexts,
   labelIdOf,
   labelNorm,
@@ -685,11 +686,19 @@ export async function snapCertificate(deps: RegistryDeps, input: SnapInput, ctx:
     }
   }
 
-  // 3. The nearest labels, for credentials that fit.
-  const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
-  calls.push(embedding.call);
-  if (!embedding.ok) return ctx.result({ decision: 'unmatched', ...none });
-  const near = (await candidatesFor(deps, 'cert', embedding.vectors[0]!))
+  // 3. The nearest labels, for credentials that fit: through the client's query vector when it sent one, and
+  // under a model the plane cannot run, without one, no further than the seed's own match.
+  const embedModel = await deps.inference.model('work-embed');
+  let vector: number[];
+  if (input.vectors?.query) vector = input.vectors.query;
+  else if (CLIENT_EMBED_MODELS.has(embedModel)) return ctx.result({ decision: 'unmatched', ...none });
+  else {
+    const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
+    calls.push(embedding.call);
+    if (!embedding.ok) return ctx.result({ decision: 'unmatched', ...none });
+    vector = embedding.vectors[0]!;
+  }
+  const near = (await candidatesFor(deps, 'cert', vector))
     .flatMap((c) => {
       const entry = catalogue.byToken.get(c.token);
       return entry && fits(entry) ? [{ ...c, detail: describeCertificate(catalogue, entry) }] : [];
@@ -703,7 +712,7 @@ export async function snapCertificate(deps: RegistryDeps, input: SnapInput, ctx:
     if (claim) await ctx.observe(top.token);
     return ctx.record(
       { decision: 'auto', token: top.token, labelEn: top.labelEn, specialization: false, score: top.score, probability: null, candidates, ...facetsOf(entry, readFacets(entry, norm, read).facets) },
-      embedding.call.model,
+      embedModel,
     );
   }
 

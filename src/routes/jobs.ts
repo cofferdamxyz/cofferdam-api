@@ -44,6 +44,7 @@
 import { Hono } from 'hono';
 
 import type { Env } from '../env.js';
+import { readSentenceVector } from '../services/work/clientVectors.js';
 import { WorkCallsError } from '../services/work/fields.js';
 import { checkHirerRequest, hirerQuery, MIN_BUDGET_USD, type HireOutcome, type HirePlan, type HirerRequest } from '../services/work/hire.js';
 import { pseudonymKey, workPseudonym } from '../services/work/pseudonym.js';
@@ -107,19 +108,26 @@ export function createJobsRoutes(deps: JobsRouteDeps = defaultWorkRouteDeps) {
   const gate = createWorkGate(deps, JOBS_KEYS);
 
   routes.post('/intent', async (c) => {
-    const admitted = await gate.admit<HirerRequest>(c, (b) => {
+    const admitted = await gate.admit<{ req: HirerRequest; vector: unknown }>(c, (b) => {
       const req = { sentence: b.sentence, lang: b.lang, regions: b.regions } as HirerRequest;
       const checked = checkHirerRequest(req);
-      if (checked.ok) return req;
+      if (checked.ok) return { req, vector: b.vector };
       workLog({ event: 'jobs_intent_refused', error: checked.error, reason: checked.reason });
       return checked.error === 'text_refused'
         ? c.json({ ok: false, error: 'text_refused', reason: checked.reason }, 422)
         : c.json({ ok: false, error: 'bad_request', reason: checked.reason }, 400);
     });
     if (admitted instanceof Response) return admitted;
-    const { account, input, inference, store } = admitted;
+    const { account, inference, store } = admitted;
     const stores = allStores((deps.stores ?? envWorkStores)(c.env));
     if (typeof stores === 'string') return c.json({ ok: false, error: UNPROVISIONED[stores] }, 503);
+    // The sentence's vector from the client, before any model runs: only the pinned generation's, and required where the plane cannot embed.
+    const sentenceVector = readSentenceVector(admitted.input.vector, await inference.model('work-embed'));
+    if (!sentenceVector.ok) {
+      workLog({ event: 'jobs_intent_refused', error: sentenceVector.refusal.error });
+      return c.json({ ok: false, ...sentenceVector.refusal }, 400);
+    }
+    const input: HirerRequest = { ...admitted.input.req, ...(sentenceVector.value ? { vector: sentenceVector.value } : {}) };
 
     const t0 = deps.now();
     const now = () => deps.now();

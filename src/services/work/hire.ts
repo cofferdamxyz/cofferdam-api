@@ -67,6 +67,13 @@ export interface HirerRequest {
   lang: BlockLang;
   /** The hirer's coarse region first, then any neighbours the radius reaches. */
   regions: string[];
+  /**
+   * The client's query vector for the sentence (EmbeddingGemma 2 on the
+   * phone), already checked against the pinned model. Recall searches with
+   * it, and so does the needs step, in place of the parsed task's own, which
+   * only the plane could embed; the parsed needs still refine by exact label.
+   */
+  vector?: number[];
 }
 
 export interface HirePlan {
@@ -162,12 +169,17 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
 
   // 3. The registry's nearest occupations and skills to the task, and which of them the job needs.
   const task = fields.task ?? sentence;
-  const embedding = await embedTexts(inference, [task], { role: 'query', now, log: deps.log });
-  calls.push(embedding.call);
-  if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
+  let taskVector: number[];
+  if (req.vector) taskVector = req.vector;
+  else {
+    const embedding = await embedTexts(inference, [task], { role: 'query', now, log: deps.log });
+    calls.push(embedding.call);
+    if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
+    taskVector = embedding.vectors[0]!;
+  }
   const near: NeedCandidate[] = [];
   for (const kind of ['pos', 'skill'] as const) {
-    const found = await candidatesFor(deps.registry, kind, embedding.vectors[0]!);
+    const found = await candidatesFor(deps.registry, kind, taskVector);
     for (const c of found.slice(0, NEED_CANDIDATES[kind])) near.push({ token: c.token, label: c.labelEn, kind });
   }
   const answer = near.length ? await ask(needQuestions(near)) : {};
@@ -203,6 +215,7 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
     scope,
     regions: [...new Set(req.regions)],
     queryText: [task, ...needs.map((n) => n.label)].join('; '),
+    ...(req.vector ? { vector: req.vector } : {}),
     allOf,
     anyOf,
     mode: curated ? 'curated' : 'instant',

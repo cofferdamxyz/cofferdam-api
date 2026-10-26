@@ -55,6 +55,8 @@ export interface RecallIntent {
   regions: string[];
   /** What the query embeds: the task as the hirer wrote it, and the English names of what it needs. */
   queryText: string;
+  /** The client's query vector for the hirer's sentence, when it sent one: searched with in place of `queryText`'s. */
+  vector?: number[];
   /** Every one must be held: `cert:` (confirmed exactly) and `lang:` tokens. */
   allOf: string[];
   /** At least one must be held, when any: the occupation and skill tokens the task needs. */
@@ -121,10 +123,14 @@ export async function recall(deps: RecallDeps, intent: RecallIntent): Promise<Re
 }
 
 async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: string[], calls: WorkCall[]): Promise<RecallOutcome> {
-  const embedding = await embedTexts(deps.inference, [intent.queryText], { role: 'query', now: deps.now, log: deps.log });
-  calls.push(embedding.call);
-  if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
-  const vector = embedding.vectors[0]!;
+  let vector: number[];
+  if (intent.vector) vector = intent.vector;
+  else {
+    const embedding = await embedTexts(deps.inference, [intent.queryText], { role: 'query', now: deps.now, log: deps.log });
+    calls.push(embedding.call);
+    if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
+    vector = embedding.vectors[0]!;
+  }
 
   // S6: one query per namespace, in parallel, merged by score.
   const answers = await Promise.all(

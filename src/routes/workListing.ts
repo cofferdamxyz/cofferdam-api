@@ -48,6 +48,7 @@ import type { Address } from 'viem';
 import { getBaseSepoliaClient } from '../chain/client.js';
 import { SEPOLIA_DEPLOYMENTS } from '../chain/deployments.js';
 import type { Env } from '../env.js';
+import { readListingVectors } from '../services/work/clientVectors.js';
 import { WorkCallsError } from '../services/work/fields.js';
 import { checkDraft, publishListing, unpublishListing, type DraftRefusal, type ListingDraft, type PublishOutcome } from '../services/work/listings.js';
 import { pseudonymKey, workPseudonym } from '../services/work/pseudonym.js';
@@ -92,6 +93,13 @@ export function publishedTier(claimed: number, bound: boolean): 0 | 1 {
 
 type DraftBody = Omit<ListingDraft, 'pseudonym'>;
 
+/** The draft and, as sent, the client's vectors for it (`clientVectors.ts`), checked once the pinned model is known. */
+interface ListingBody {
+  draft: DraftBody;
+  vector: unknown;
+  claims: unknown;
+}
+
 /**
  * The draft as the body sends it, checked as `publishListing` will check it.
  * Only the draft's own fields are read, so a body that names a pseudonym
@@ -127,18 +135,25 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
   const storesOf = (env: Env) => (deps.stores ?? envWorkStores)(env);
 
   routes.put('/listing', async (c) => {
-    const admitted = await gate.admit<DraftBody>(c, (b) => {
+    const admitted = await gate.admit<ListingBody>(c, (b) => {
       const draft = readDraft(b);
-      if (typeof draft !== 'string') return draft;
+      if (typeof draft !== 'string') return { draft, vector: b.vector, claims: b.claims };
       workLog({ event: 'work_listing_refused', reason: draft });
       return c.json({ ok: false, error: 'draft_refused', reason: draft }, 422);
     });
     if (admitted instanceof Response) return admitted;
-    const { account, input, inference, store } = admitted;
+    const { account, inference, store } = admitted;
+    const input = admitted.input.draft;
     const stores = allStores(storesOf(c.env));
     if (typeof stores === 'string') return c.json({ ok: false, error: UNPROVISIONED[stores] }, 503);
     const key = pseudonymKey(c.env.WORK_PSEUDONYM_KEY);
     if (!key) return c.json({ ok: false, error: 'pseudonym_key_unprovisioned' }, 503);
+    // The client's vectors, before anything runs: only the pinned generation's model, and required where the plane cannot embed.
+    const client = readListingVectors(admitted.input, input, await inference.model('work-embed'));
+    if (!client.ok) {
+      workLog({ event: 'work_listing_refused', reason: client.refusal.error });
+      return c.json({ ok: false, ...client.refusal }, 400);
+    }
 
     let tier: 0 | 1 = 0;
     if (input.tier > 0) {
@@ -156,7 +171,7 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
     const draft: ListingDraft = { ...input, tier, pseudonym: await workPseudonym(key, account) };
     let outcome: PublishOutcome;
     try {
-      outcome = await publishListing({ inference, registry, listings: stores.listings, index: stores.listingIndex, now, log: workLog }, draft);
+      outcome = await publishListing({ inference, registry, listings: stores.listings, index: stores.listingIndex, now, log: workLog }, draft, client.value);
     } catch (err) {
       if (!(err instanceof WorkCallsError)) throw err;
       gate.meter(c, store, account, err.calls);

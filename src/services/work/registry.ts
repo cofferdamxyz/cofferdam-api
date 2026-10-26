@@ -352,16 +352,57 @@ export function vectorizeIndex(binding: Vectorize): VectorIndex {
 // ── Embeddings ──────────────────────────────────────────────────────────────
 
 /**
+ * EmbeddingGemma 2 on the phone (llama.rn), as a model id the plane pins: the
+ * GGUF artefact itself, since Workers AI does not run it. Its vectors come
+ * from the client and from a Mac script (`scripts/work/embed-registry.mjs`),
+ * never from the plane, and only an index generation of its own holds them
+ * (`token-registry-v3`, `jobs-listings-v3`).
+ */
+export const EMBEDDINGGEMMA_2_GGUF = 'gguf:ggml-org/embeddinggemma-2-GGUF:Q8_0';
+
+/**
  * The vector size of each model `work-embed` may be pinned to; any other model
- * fails closed. `token-registry-v1` and `jobs-listings-v1` hold bge-m3's 1024
- * dimensions, so pinning another model in production needs new indexes of its
- * size and a re-embed of every label and listing (2026-10-25: EmbeddingGemma's
- * 768 is listed so the registry eval can compare it).
+ * fails closed. Each generation of indexes holds one model's vectors: v1
+ * bge-m3's 1024, v2 EmbeddingGemma's 768 (decision 0067, rule 7), v3
+ * EmbeddingGemma 2's 768 from the phone. Pinning another model in production
+ * needs new indexes of its size and every label and listing embedded again.
  */
 export const EMBED_DIMS_BY_MODEL: Readonly<Record<string, number>> = {
   '@cf/baai/bge-m3': 1024,
   '@cf/google/embeddinggemma-300m': 768,
+  [EMBEDDINGGEMMA_2_GGUF]: 768,
 };
+
+/**
+ * The models the plane cannot run: under such a pin `embedTexts` never calls
+ * Workers AI and fails closed, so a text is embedded only where the client
+ * sent its vector (`readClientVector`), and a snap without one meets the
+ * registry by exact label only.
+ */
+export const CLIENT_EMBED_MODELS: ReadonlySet<string> = new Set([EMBEDDINGGEMMA_2_GGUF]);
+
+/** How far a client vector's length may be from 1. */
+export const UNIT_NORM_TOLERANCE = 1e-3;
+
+export type ClientVectorRefusal = 'model' | 'dims' | 'values' | 'norm';
+
+/**
+ * A vector the client embedded for a request's text, as the body sends it
+ * (`{ model, dims, values }`): taken only for the pinned generation's model,
+ * at its size, with finite values of unit length (the phone L2-normalises).
+ */
+export function readClientVector(raw: unknown, model: string): { ok: true; values: number[] } | { ok: false; reason: ClientVectorRefusal } {
+  const v = raw as { model?: unknown; dims?: unknown; values?: unknown } | null;
+  if (!v || typeof v !== 'object' || v.model !== model) return { ok: false, reason: 'model' };
+  const dims = EMBED_DIMS_BY_MODEL[model];
+  if (dims === undefined || v.dims !== dims || !Array.isArray(v.values) || v.values.length !== dims) return { ok: false, reason: 'dims' };
+  const values = v.values as unknown[];
+  if (!values.every((x) => typeof x === 'number' && Number.isFinite(x))) return { ok: false, reason: 'values' };
+  let n = 0;
+  for (const x of values as number[]) n += x * x;
+  if (Math.abs(Math.sqrt(n) - 1) > UNIT_NORM_TOLERANCE) return { ok: false, reason: 'norm' };
+  return { ok: true, values: values as number[] };
+}
 
 export type Embedding = { ok: true; vectors: number[][]; call: WorkCall } | { ok: false; call: WorkCall };
 
@@ -379,6 +420,8 @@ export type EmbedRole = 'query' | 'document';
  */
 export const EMBED_PROMPTS_BY_MODEL: Readonly<Record<string, Readonly<Record<EmbedRole, string>>>> = {
   '@cf/google/embeddinggemma-300m': { query: 'task: search result | query: ', document: 'title: none | text: ' },
+  // The phone and the Mac script prefix the same two (the coordinator's spec, 2026-10-26).
+  [EMBEDDINGGEMMA_2_GGUF]: { query: 'task: search result | query: ', document: 'title: none | text: ' },
 };
 
 export interface EmbedOptions extends ExecutorOptions {
@@ -392,6 +435,11 @@ export async function embedTexts(inference: Inference, texts: string[], opts: Em
   const t0 = now();
   const prompt = EMBED_PROMPTS_BY_MODEL[model]?.[opts.role] ?? '';
   const request = { text: prompt ? texts.map((t) => prompt + t) : texts };
+  if (CLIENT_EMBED_MODELS.has(model)) {
+    // No hosted call: the plane does not run this model, and the call is not metered.
+    opts.log?.({ event: 'work_embed_failed', model, reason: 'no_plane_embedder' });
+    return { ok: false, call: { op: 'work-embed', model, ok: false, ms: 0, usage: { tokensIn: 0, tokensOut: 0, neurons: null } } };
+  }
   let result: unknown;
   try {
     result = await inference.run('work-embed', request, { signal: opts.signal });
@@ -449,6 +497,9 @@ export const DEFAULT_TAU: Tau = { auto: 0.95, low: 0.6 };
 export const DEFAULT_TAU_BY_MODEL: Readonly<Record<string, Tau>> = {
   '@cf/baai/bge-m3': DEFAULT_TAU,
   '@cf/google/embeddinggemma-300m': { auto: 0.81, low: 0.45 },
+  // Provisional, EmbeddingGemma's: version 2 has a scale of its own (unrelated pairs near 0.72), so these are
+  // set again from its own vectors (`test/registry.tau.test.ts`) before v3 serves.
+  [EMBEDDINGGEMMA_2_GGUF]: { auto: 0.81, low: 0.45 },
 };
 
 /** τ as `WORK_TAU_AUTO` and `WORK_TAU_LOW` set it: either, both or neither. */
@@ -510,6 +561,14 @@ export interface SnapInput {
    * neither for a worker's claim.
    */
   market?: string;
+  /**
+   * The string's vectors as the client embedded them (EmbeddingGemma 2 on the
+   * phone), already checked against the pinned model (`readClientVector`):
+   * the query the snap searches with, and the document a mint stores for the
+   * string's own label. Without a query vector the plane embeds the string,
+   * or, under a pin it cannot run, the snap ends at the exact label.
+   */
+  vectors?: { query?: number[]; document?: number[] };
 }
 
 export interface Candidate {
@@ -708,11 +767,18 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
     return result({ decision: 'label', token: t.token, labelEn: t.labelEn, specialization: false, score: 1, probability: null, candidates: [] });
   }
 
-  // 2. The nearest labels, in every language.
-  const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
-  calls.push(embedding.call);
-  if (!embedding.ok) return result({ decision: 'unmatched', ...none });
-  const vector = embedding.vectors[0]!;
+  // 2. The nearest labels, in every language: through the client's query vector when it sent one, else the plane's,
+  // and under a model the plane cannot run, without one, no further than the exact label.
+  const embedModel = await deps.inference.model('work-embed');
+  let vector: number[];
+  if (input.vectors?.query) vector = input.vectors.query;
+  else if (CLIENT_EMBED_MODELS.has(embedModel)) return result({ decision: 'unmatched', ...none });
+  else {
+    const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
+    calls.push(embedding.call);
+    if (!embedding.ok) return result({ decision: 'unmatched', ...none });
+    vector = embedding.vectors[0]!;
+  }
   const candidates = (await candidatesFor(deps, input.kind, vector, langs)).slice(0, ADJUDICATION_CANDIDATES);
   const top = candidates[0];
 
@@ -723,7 +789,7 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   // languages is at τ_auto; when only another language's is, Clef decides, as in the band.
   if (top && top.scoped != null && top.scoped >= tau.auto) {
     await observe(top.token);
-    return record({ decision: 'auto', token: top.token, labelEn: top.labelEn, specialization: false, score: top.score, probability: null, candidates }, embedding.call.model);
+    return record({ decision: 'auto', token: top.token, labelEn: top.labelEn, specialization: false, score: top.score, probability: null, candidates }, embedModel);
   }
 
   let clefModel: string | null = null;
@@ -792,14 +858,23 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
     // Another request minted it a moment ago: it is a pivot match now.
     return record({ decision: 'pivot', token, labelEn: english, specialization: false, score, probability: null, candidates }, clefModel);
   }
-  // The new token's own labels join the index, so the next snap finds it by vector too. They are
-  // documents: a model with role prompts embeds them again as such, and one without reuses the query's vector.
-  const prompted = Boolean(EMBED_PROMPTS_BY_MODEL[embedding.call.model]);
-  const texts = prompted ? labels.map((l) => l.label) : labels.length > 1 ? [english] : [];
-  const docEmbedding = texts.length ? await embedTexts(deps.inference, texts, { role: 'document', now, log: deps.log }) : null;
+  // The new token's own labels join the index, so the next snap finds it by vector too. They are documents:
+  // - a model with role prompts embeds them again as such, and one without reuses the query's vector;
+  // - the string's own label takes the client's document vector when it sent one;
+  // - under a model the plane cannot run, the rest (the English name) waits at embedded = 0 for a backfill.
+  const planeEmbeds = !CLIENT_EMBED_MODELS.has(embedModel);
+  const prompted = Boolean(EMBED_PROMPTS_BY_MODEL[embedModel]);
+  const clientDoc = input.vectors?.document;
+  const own = labels.length === 1 ? 0 : 1;
+  const planned = !planeEmbeds ? [] : prompted ? labels.map((_, i) => i).filter((i) => !(clientDoc && i === own)) : labels.length > 1 ? [0] : [];
+  const docEmbedding = planned.length ? await embedTexts(deps.inference, planned.map((i) => labels[i]!.label), { role: 'document', now, log: deps.log }) : null;
   if (docEmbedding) calls.push(docEmbedding.call);
-  const docVector = (i: number): number[] | undefined =>
-    prompted ? (docEmbedding?.ok ? docEmbedding.vectors[i] : undefined) : i === 0 ? (labels.length > 1 ? (docEmbedding?.ok ? docEmbedding.vectors[0] : undefined) : vector) : vector;
+  const docVector = (i: number): number[] | undefined => {
+    const j = planned.indexOf(i);
+    if (j >= 0) return docEmbedding?.ok ? docEmbedding.vectors[j] : undefined;
+    if (i === own && clientDoc) return clientDoc;
+    return !prompted && planeEmbeds ? vector : undefined;
+  };
   const vectors: IndexVector[] = [];
   const pivotVector = docVector(0);
   if (pivotVector) vectors.push({ id: labels[0]!.labelId, values: pivotVector, metadata: { token, kind: input.kind, lang: 'en', label: english, source: 'emergent' } });

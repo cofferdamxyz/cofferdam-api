@@ -226,8 +226,30 @@ export function checkDraft(d: ListingDraft): DraftRefusal | null {
  * `br-sp` as Brazilian Portuguese; a certificate without it, since a claim
  * names its own jurisdiction or matches no licence.
  */
-export function claimSnapInput(kind: TokenKind, raw: string, draft: Pick<ListingDraft, 'lang' | 'region'>): SnapInput {
-  return kind === 'cert' ? { kind, raw, lang: draft.lang } : { kind, raw, lang: draft.lang, market: draft.region };
+export function claimSnapInput(kind: TokenKind, raw: string, draft: Pick<ListingDraft, 'lang' | 'region'>, vectors?: ClaimVectors): SnapInput {
+  const base: SnapInput = kind === 'cert' ? { kind, raw, lang: draft.lang } : { kind, raw, lang: draft.lang, market: draft.region };
+  return vectors ? { ...base, vectors } : base;
+}
+
+/** A claim's vectors from the phone, both already checked against the pinned model. */
+export interface ClaimVectors {
+  query: number[];
+  document: number[];
+}
+
+/** The key a claim's vectors are found by: its kind and its text as the draft holds it. */
+export const claimKey = (kind: TokenKind, text: string) => `${kind}\u0000${text}`;
+
+/**
+ * What the client embedded for a listing, under a generation whose model the
+ * phone runs: the listing text's document vector, and each claim string's
+ * query and document vectors (`claimKey`). A claim without them snaps as the
+ * plane can snap it: by its own embedding, or under a pin it cannot run, by
+ * exact label only.
+ */
+export interface ClientEmbeddings {
+  listing?: number[];
+  claims?: ReadonlyMap<string, ClaimVectors>;
 }
 
 /** What the listing's vector embeds: the claims as written, then the registry's English names for them. */
@@ -263,13 +285,13 @@ export type PublishOutcome =
  * and again by the record's write when two arrive at once. A store or index
  * failure throws a `WorkCallsError` carrying the calls already made.
  */
-export async function publishListing(deps: PublishDeps, draft: ListingDraft): Promise<PublishOutcome> {
+export async function publishListing(deps: PublishDeps, draft: ListingDraft, client: ClientEmbeddings = {}): Promise<PublishOutcome> {
   const refused = checkDraft(draft);
   if (refused) return { ok: false, error: 'draft_refused', reason: refused, calls: [] };
-  return withCalls((calls) => publishWith(deps, draft, calls));
+  return withCalls((calls) => publishWith(deps, draft, client, calls));
 }
 
-async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCall[]): Promise<PublishOutcome> {
+async function publishWith(deps: PublishDeps, draft: ListingDraft, client: ClientEmbeddings, calls: WorkCall[]): Promise<PublishOutcome> {
   const now = deps.now ?? Date.now;
   const held = await deps.listings.profilesOf(draft.pseudonym);
   if (!held.includes(draft.profileId) && held.length >= MAX_WORK_PROFILES) return { ok: false, error: 'profile_limit', limit: MAX_WORK_PROFILES, calls };
@@ -282,7 +304,7 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
   ];
   for (const [kind, raws] of claims) {
     for (const raw of raws) {
-      const s = await snap(deps.registry, claimSnapInput(kind, raw, draft));
+      const s = await snap(deps.registry, claimSnapInput(kind, raw, draft, client.claims?.get(claimKey(kind, raw))));
       calls.push(...s.calls);
       if (s.token) {
         // A certificate adds its level, the levels below it and its modules beside it (`cert:nccco-rigger/level-2`).
@@ -294,9 +316,20 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
   for (const code of draft.languages) tokens.add(`lang:${code}`);
   const list = [...tokens].sort();
 
-  const embedding = await embedTexts(deps.inference, [listingText(draft, english)], { role: 'document', now, log: deps.log });
-  calls.push(embedding.call);
-  if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
+  // The listing's vector: the client's, for its own listing text, when it sent one; else the plane embeds the claims
+  // and the registry's English names for them.
+  let values: number[];
+  let embedModel: string;
+  if (client.listing) {
+    values = client.listing;
+    embedModel = await deps.inference.model('work-embed');
+  } else {
+    const embedding = await embedTexts(deps.inference, [listingText(draft, english)], { role: 'document', now, log: deps.log });
+    calls.push(embedding.call);
+    if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
+    values = embedding.vectors[0]!;
+    embedModel = embedding.call.model;
+  }
 
   const listingId = await listingIdOf(draft.pseudonym, draft.profileId);
   const namespace = namespaceOf(draft.region, draft.scope, deps.namespacePrefix);
@@ -315,7 +348,7 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
       namespace,
       tier: draft.tier,
       tokens: list,
-      embedModel: embedding.call.model,
+      embedModel,
       publishedAt: before?.publishedAt ?? at,
       updatedAt: at,
     },
@@ -326,9 +359,9 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
   await deps.index.upsert([
     {
       id: listingId,
-      values: embedding.vectors[0]!,
+      values,
       namespace,
-      metadata: { v: LISTING_METADATA_VERSION, region: draft.region, scope: draft.scope, tier: draft.tier, bloom: bloomOf(list), model: embedding.call.model },
+      metadata: { v: LISTING_METADATA_VERSION, region: draft.region, scope: draft.scope, tier: draft.tier, bloom: bloomOf(list), model: embedModel },
     },
   ]);
   return { ok: true, listingId, namespace, tokens: list, calls };

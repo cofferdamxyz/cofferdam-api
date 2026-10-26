@@ -9,6 +9,7 @@
  * query. Synthetic data only.
  */
 
+import type { InferenceOp } from '../../../src/services/inference/index.js';
 import { D1ListingStore } from '../../../src/services/work/listings.js';
 import { D1RegistryStore, labelIdOf, labelNorm, type TokenKind } from '../../../src/services/work/registry.js';
 import type { WorkStores } from '../../../src/services/work/stores.js';
@@ -67,8 +68,8 @@ export const clefSays =
     return { answers, usage: { input_tokens: 300 } };
   };
 
-/** The seeded registry and empty listings, with the inference seam over `responses`. */
-export async function workWorld(responses: FakeResponses = {}, calls: FakeCall[] = []) {
+/** The seeded registry and empty listings, with the inference seam over `responses` (and its pins, `models`). */
+export async function workWorld(responses: FakeResponses = {}, calls: FakeCall[] = [], models: Partial<Record<InferenceOp, string>> = {}) {
   const db = sqliteD1();
   const tokenIndex = memoryIndex();
   const listingIndex = memoryIndex();
@@ -84,7 +85,7 @@ export async function workWorld(responses: FakeResponses = {}, calls: FakeCall[]
     await tokenIndex.upsert([{ id: labelId, values: keywordVector(s.label), metadata: { token: s.token, kind: s.kind, lang: 'en', label: s.label, source: 'seed' } }]);
   }
   const listings = new D1ListingStore(db.d1);
-  const inference = fakeInference({ 'work-embed': keywordEmbed, ...responses }, calls);
+  const inference = fakeInference({ 'work-embed': keywordEmbed, ...responses }, calls, models);
   const stores: WorkStores = { registry, listings, tokenIndex, listingIndex };
   return { db, registry, listings, tokenIndex, listingIndex, inference, stores, calls };
 }
