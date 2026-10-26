@@ -50,6 +50,7 @@ import {
   labelNorm,
   parseTau,
   snap,
+  tauFor,
   type RegistryDeps,
   type RegistryLabel,
   type RegistryToken,
@@ -230,9 +231,9 @@ function reportSuffix(tau: { auto: number; low: number }): string {
 
 describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
   it('snaps every expected string against a fresh synthetic seed and writes the report', async () => {
-    const tau = parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW);
     const recorder = recording(liveInference());
     const inference = recorder.inference;
+    const tau = tauFor(await inference.model('work-embed'), parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW));
 
     // The occupation and skill seed, and the certificate seed, as rows and labels.
     const tokens: RegistryToken[] = [];
@@ -256,9 +257,9 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
     for (let i = 0; i < labels.length; i += 50) {
       // A model's first calls can outlast the op's 10 s while it starts (EmbeddingGemma, 2026-10-25): try four times.
       let reason = '';
-      let e = await embedTexts(inference, labels.slice(i, i + 50).map((l) => l.label), { log: (entry) => (reason = JSON.stringify(entry)) });
+      let e = await embedTexts(inference, labels.slice(i, i + 50).map((l) => l.label), { role: 'document', log: (entry) => (reason = JSON.stringify(entry)) });
       for (let attempt = 1; !e.ok && attempt < 4; attempt++) {
-        e = await embedTexts(inference, labels.slice(i, i + 50).map((l) => l.label), { log: (entry) => (reason = JSON.stringify(entry)) });
+        e = await embedTexts(inference, labels.slice(i, i + 50).map((l) => l.label), { role: 'document', log: (entry) => (reason = JSON.stringify(entry)) });
       }
       if (!e.ok) throw new Error(`seed embedding failed at label ${i}: ${reason} after ${e.call.ms} ms`);
       vectors.push(...e.vectors);
@@ -289,8 +290,8 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
       if (attempts > 1) retried++;
       if (errors.length) failed.push(`${x.raw}: ${errors.join('; ')}`);
       const band = bandAnswer(recorded, out);
-      let rawVec = await embedTexts(inference, [x.raw]);
-      for (let attempt = 1; !rawVec.ok && attempt < ATTEMPTS; attempt++) rawVec = await embedTexts(inference, [x.raw]);
+      let rawVec = await embedTexts(inference, [x.raw], { role: 'query' });
+      for (let attempt = 1; !rawVec.ok && attempt < ATTEMPTS; attempt++) rawVec = await embedTexts(inference, [x.raw], { role: 'query' });
       recorder.take();
       const cosines = rawVec.ok ? labels.map((l, i) => ({ l, c: kindOf.get(l.token) === x.kind ? cosine(rawVec.vectors[0]!, vectors[i]!) : -1 })) : [];
       const top = Math.max(-1, ...cosines.map((c) => c.c));
@@ -383,9 +384,9 @@ interface LocaleCase {
 
 describe.skipIf(!LIVE || !ESCO_DIR)('regional words and false friends on ESCO (live, Workers AI, the founder’s download)', () => {
   it('snaps each market-tagged string against ESCO’s occupations as loaded and writes the report', async () => {
-    const tau = parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW);
     const recorder = recording(liveInference());
     const inference = recorder.inference;
+    const tau = tauFor(await inference.model('work-embed'), parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW));
     const registry = await escoOccupationRegistry(inference, ESCO_DIR, homePath(process.env.ESCO_VECTORS ?? ESCO_DIR));
 
     const rows: {

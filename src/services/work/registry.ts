@@ -365,12 +365,33 @@ export const EMBED_DIMS_BY_MODEL: Readonly<Record<string, number>> = {
 
 export type Embedding = { ok: true; vectors: number[][]; call: WorkCall } | { ok: false; call: WorkCall };
 
-/** Embed texts with `work-embed`; fails closed on a missing or misshapen answer. */
-export async function embedTexts(inference: Inference, texts: string[], opts: ExecutorOptions = {}): Promise<Embedding> {
+/**
+ * What a text is to the index: a `query` searched against stored labels and
+ * listings (a snapped string, a hirer's task), or a `document` stored in it
+ * (a label, a listing).
+ */
+export type EmbedRole = 'query' | 'document';
+
+/**
+ * A model's prompts per role, prefixed to every text it embeds. EmbeddingGemma
+ * was trained with them (its model card's retrieval prompts, as the
+ * 2026-10-25 encoder comparison used them); bge-m3 takes none.
+ */
+export const EMBED_PROMPTS_BY_MODEL: Readonly<Record<string, Readonly<Record<EmbedRole, string>>>> = {
+  '@cf/google/embeddinggemma-300m': { query: 'task: search result | query: ', document: 'title: none | text: ' },
+};
+
+export interface EmbedOptions extends ExecutorOptions {
+  role: EmbedRole;
+}
+
+/** Embed texts with `work-embed`, in their role; fails closed on a missing or misshapen answer. */
+export async function embedTexts(inference: Inference, texts: string[], opts: EmbedOptions): Promise<Embedding> {
   const now = opts.now ?? Date.now;
   const model = await inference.model('work-embed');
   const t0 = now();
-  const request = { text: texts };
+  const prompt = EMBED_PROMPTS_BY_MODEL[model]?.[opts.role] ?? '';
+  const request = { text: prompt ? texts.map((t) => prompt + t) : texts };
   let result: unknown;
   try {
     result = await inference.run('work-embed', request, { signal: opts.signal });
@@ -406,11 +427,42 @@ export interface Tau {
 }
 
 /**
- * Starting values before tuning on the seed set. Decision 0018's example
+ * bge-m3's values, set before tuning on the seed set. Decision 0018's example
  * (`marine-electrician` 0.91 against `electrician`, adjudicated a
  * specialization) sits inside the band, so τ_auto is above it.
  */
 export const DEFAULT_TAU: Tau = { auto: 0.95, low: 0.6 };
+
+/**
+ * τ follows the embedding model, since every model has its own cosine scale:
+ * pinning another `work-embed` brings its values (decision 0067, rule 7).
+ * A model without values here takes `DEFAULT_TAU`.
+ *
+ * EmbeddingGemma's were set against bge-m3's on 2,000 of ESCO's own
+ * alternative and hidden labels, held out (`test/registry.tau.test.ts`,
+ * `test/work-eval/tau-embeddinggemma-300m-2026-10-26.md`): at 0.81 it takes
+ * no more strings without Clef than bge-m3 does at 0.95 (37.5% against 40.4%),
+ * 92.1% of them right against 83.5% (an occupation 86.3% against 62.4%); at
+ * 0.45 it leaves out of the band no more strings whose token was among the
+ * best five (0.1%).
+ */
+export const DEFAULT_TAU_BY_MODEL: Readonly<Record<string, Tau>> = {
+  '@cf/baai/bge-m3': DEFAULT_TAU,
+  '@cf/google/embeddinggemma-300m': { auto: 0.81, low: 0.45 },
+};
+
+/** τ as `WORK_TAU_AUTO` and `WORK_TAU_LOW` set it: either, both or neither. */
+export interface TauSetting {
+  auto?: number;
+  low?: number;
+}
+
+/** The model's τ, with what the environment sets in place of its values; a pair with low not below auto keeps the model's. */
+export function tauFor(model: string, setting: TauSetting = {}): Tau {
+  const base = DEFAULT_TAU_BY_MODEL[model] ?? DEFAULT_TAU;
+  const t = { auto: setting.auto ?? base.auto, low: setting.low ?? base.low };
+  return t.low < t.auto ? t : base;
+}
 
 /** Clef's pick counts at or above this; below, the candidates are refused. */
 export const ADJUDICATION_FLOOR = 0.5;
@@ -421,14 +473,18 @@ export const ADJUDICATION_CANDIDATES = 5;
 /** The longest raw string the registry takes. */
 export const RAW_MAX_CHARS = 120;
 
-/** τ from `WORK_TAU_AUTO` and `WORK_TAU_LOW`, each in (0, 1], low below auto; anything else keeps the default. */
-export function parseTau(auto: string | undefined, low: string | undefined): Tau {
-  const n = (raw: string | undefined, fallback: number) => {
+/** `WORK_TAU_AUTO` and `WORK_TAU_LOW`, each kept only in (0, 1]; `tauFor` joins them to the model's values. */
+export function parseTau(auto: string | undefined, low: string | undefined): TauSetting {
+  const n = (raw: string | undefined) => {
     const v = Number(raw);
-    return raw && Number.isFinite(v) && v > 0 && v <= 1 ? v : fallback;
+    return raw && Number.isFinite(v) && v > 0 && v <= 1 ? v : undefined;
   };
-  const t = { auto: n(auto, DEFAULT_TAU.auto), low: n(low, DEFAULT_TAU.low) };
-  return t.low < t.auto ? t : DEFAULT_TAU;
+  const out: TauSetting = {};
+  const a = n(auto);
+  const l = n(low);
+  if (a !== undefined) out.auto = a;
+  if (l !== undefined) out.low = l;
+  return out;
 }
 
 export interface SnapInput {
@@ -501,7 +557,8 @@ export interface RegistryDeps {
   inference: Inference;
   store: RegistryStore;
   index: VectorIndex;
-  tau?: Tau;
+  /** What the environment sets of τ; the rest is the embedding model's (`tauFor`). */
+  tau?: TauSetting;
   now?: () => number;
   /** A new decision id (default: a random UUID). */
   newId?: () => string;
@@ -610,7 +667,7 @@ export async function snap(deps: RegistryDeps, input: SnapInput): Promise<SnapRe
 
 async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): Promise<SnapResult> {
   const now = deps.now ?? Date.now;
-  const tau = deps.tau ?? DEFAULT_TAU;
+  const tau = tauFor(await deps.inference.model('work-embed'), deps.tau);
   const raw = input.raw.normalize('NFC').replace(/\s+/g, ' ').trim();
   const result = (r: SnapOutcome): SnapResult => ({ facets: null, tokens: r.token ? [r.token] : [], ...r, calls });
   const none = { token: null, labelEn: null, specialization: false, score: null, probability: null, candidates: [] };
@@ -652,7 +709,7 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   }
 
   // 2. The nearest labels, in every language.
-  const embedding = await embedTexts(deps.inference, [raw], { now, log: deps.log });
+  const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
   calls.push(embedding.call);
   if (!embedding.ok) return result({ decision: 'unmatched', ...none });
   const vector = embedding.vectors[0]!;
@@ -735,13 +792,19 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
     // Another request minted it a moment ago: it is a pivot match now.
     return record({ decision: 'pivot', token, labelEn: english, specialization: false, score, probability: null, candidates }, clefModel);
   }
-  // The new token's own labels join the index, so the next snap finds it by vector too.
-  const pivotEmbedding = labels.length > 1 ? await embedTexts(deps.inference, [english], { now, log: deps.log }) : null;
-  if (pivotEmbedding) calls.push(pivotEmbedding.call);
+  // The new token's own labels join the index, so the next snap finds it by vector too. They are
+  // documents: a model with role prompts embeds them again as such, and one without reuses the query's vector.
+  const prompted = Boolean(EMBED_PROMPTS_BY_MODEL[embedding.call.model]);
+  const texts = prompted ? labels.map((l) => l.label) : labels.length > 1 ? [english] : [];
+  const docEmbedding = texts.length ? await embedTexts(deps.inference, texts, { role: 'document', now, log: deps.log }) : null;
+  if (docEmbedding) calls.push(docEmbedding.call);
+  const docVector = (i: number): number[] | undefined =>
+    prompted ? (docEmbedding?.ok ? docEmbedding.vectors[i] : undefined) : i === 0 ? (labels.length > 1 ? (docEmbedding?.ok ? docEmbedding.vectors[0] : undefined) : vector) : vector;
   const vectors: IndexVector[] = [];
-  const pivotVector = labels.length > 1 ? (pivotEmbedding?.ok ? pivotEmbedding.vectors[0] : undefined) : vector;
+  const pivotVector = docVector(0);
   if (pivotVector) vectors.push({ id: labels[0]!.labelId, values: pivotVector, metadata: { token, kind: input.kind, lang: 'en', label: english, source: 'emergent' } });
-  if (labels[1]) vectors.push({ id: labels[1].labelId, values: vector, metadata: { token, kind: input.kind, lang: input.lang, label: raw, source: 'emergent' } });
+  const rawVector = labels[1] ? docVector(1) : undefined;
+  if (labels[1] && rawVector) vectors.push({ id: labels[1].labelId, values: rawVector, metadata: { token, kind: input.kind, lang: input.lang, label: raw, source: 'emergent' } });
   // A label is marked embedded only once its vector is in: a failed pivot
   // embedding leaves the English label for the backfill to find.
   await deps.index.upsert(vectors);

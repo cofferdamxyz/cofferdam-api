@@ -125,9 +125,10 @@ const VECTORS: Record<string, number[]> = {
   'Warehouse Associate': axis(25),
 };
 
-function embedFrom(table: Record<string, number[]>, seen: string[][] = []): OnetPlanDeps['embed'] {
-  return async (texts) => {
+function embedFrom(table: Record<string, number[]>, seen: string[][] = [], roles: string[] = []): OnetPlanDeps['embed'] {
+  return async (texts, role) => {
     seen.push(texts);
+    roles.push(role);
     return texts.map((t) => {
       const v = table[t];
       if (!v) throw new Error(`no fake embedding for "${t}"`);
@@ -377,15 +378,17 @@ describe('planOnetLayer', () => {
     expect(p.codes.every((c) => c.scheme === 'onet-soc-2019' && c.source === 'esco-onet-crosswalk-v1')).toBe(true);
   });
 
-  it('embeds each text once, the open titles and their candidates only', async () => {
+  it('embeds the open titles as queries, their candidates as documents and each label again as a document, each text once a role', async () => {
     const seen: string[][] = [];
-    await plan({ embed: embedFrom(VECTORS, seen) });
-    const all = seen.flat();
-    expect(new Set(all).size).toBe(all.length);
-    expect(all).toContain('warehouse worker');
-    expect(all).toContain('plumbing technician');
-    expect(all).not.toContain('Pipefitter');
-    expect(all).not.toContain('Orphan Title');
+    const roles: string[] = [];
+    const { plan: p } = await plan({ embed: embedFrom(VECTORS, seen, roles) });
+    const byRole = (role: string) => seen.filter((_, i) => roles[i] === role).flat();
+    for (const role of ['query', 'document']) expect(new Set(byRole(role)).size).toBe(byRole(role).length);
+    expect(byRole('query')).toContain('Steamfitter');
+    expect(byRole('query')).not.toContain('warehouse worker');
+    expect(byRole('document')).toEqual(expect.arrayContaining(['warehouse worker', 'plumbing technician', ...p.labels.map((l) => l.label)]));
+    expect(seen.flat()).not.toContain('Pipefitter');
+    expect(seen.flat()).not.toContain('Orphan Title');
   });
 
   it('embeds in batches of at most 100', async () => {
@@ -397,7 +400,8 @@ describe('planOnetLayer', () => {
       return texts.map((t) => VECTORS[t] ?? near(5, 30, 0.97));
     };
     const p = await planOnetLayer({ crosswalk: readCrosswalk(CROSSWALK), titles: many, tokens: r.esco.tokens, english: r.english, known: r.known, release: '31.0' }, { embed });
-    expect(seen.map((b) => b.length)).toEqual([100, 51]);
+    // The 150 titles as queries, the one candidate's label, then the 150 labels as documents.
+    expect(seen.map((b) => b.length)).toEqual([100, 50, 1, 100, 50]);
     expect(p.counts.single).toBe(150);
   });
 

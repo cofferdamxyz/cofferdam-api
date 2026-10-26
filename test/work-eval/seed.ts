@@ -37,7 +37,7 @@ export async function seededRegistry(inference: Inference) {
         labels.push({ labelId: await labelIdOf(t.token, lang, norm), token: t.token, lang, label, labelNorm: norm, kind: 'preferred', embedded: true });
       }
     }
-    const e = await embedTexts(inference, labels.map((l) => l.label));
+    const e = await embedTexts(inference, labels.map((l) => l.label), { role: 'document' });
     if (!e.ok) throw new Error(`seed embedding failed for ${t.token}`);
     await store.insertToken({ token: t.token, kind: t.kind, source: 'seed', labelEn: t.labels.en?.[0] ?? t.token, escoUri: null, iscoCode: null, status: 'active', mergedInto: null }, labels, 0);
     await index.upsert(labels.map((l, i) => ({ id: l.labelId, values: e.vectors[i]!, metadata: { token: t.token, kind: t.kind, lang: l.lang, label: l.label, source: 'seed' } })));
@@ -45,7 +45,7 @@ export async function seededRegistry(inference: Inference) {
   const certificates = await planCertificateImport();
   for (const t of certificates.tokens) {
     const labels = certificates.labels.filter((l) => l.token === t.token);
-    const e = await embedTexts(inference, labels.map((l) => l.label));
+    const e = await embedTexts(inference, labels.map((l) => l.label), { role: 'document' });
     if (!e.ok) throw new Error(`certificate embedding failed for ${t.token}`);
     await store.insertToken(t, labels, 0);
     await index.upsert(labels.map((l, i) => ({ id: l.labelId, values: e.vectors[i]!, metadata: { token: t.token, kind: 'cert', lang: l.lang, label: l.label, source: 'seed' } })));

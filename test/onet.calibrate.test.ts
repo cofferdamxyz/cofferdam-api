@@ -44,7 +44,7 @@ import {
   titleForms,
   type OnetCandidate,
 } from '../src/services/work/onet.js';
-import { embedTexts, labelNorm, type Candidate } from '../src/services/work/registry.js';
+import { embedTexts, labelNorm, type Candidate, type EmbedRole } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 
 const RUN = process.env.ONET_CALIBRATE === '1';
@@ -158,20 +158,25 @@ describe.skipIf(!RUN)("US layer, Clef's floor (opt-in, from the Mac)", () => {
       : await askClef();
 
     async function askClef(): Promise<Answer[]> {
-      const vectors = new Map<string, number[]>();
-      const texts = [...new Set(asks.flatMap((a) => [a.title, ...a.candidates.flatMap((c) => english.get(c.token.token) ?? [])]))];
-      for (let i = 0; i < texts.length; i += 100) {
-        const batch = texts.slice(i, i + 100);
-        for (let attempt = 0; ; attempt++) {
-          const e = await embedTexts(inference, batch);
-          if (e.ok) {
-            batch.forEach((t, j) => vectors.set(t, unit(e.vectors[j]!)));
-            break;
+      // The titles are queries and the candidates' labels documents, as the import ranks them.
+      const embedAll = async (texts: string[], role: EmbedRole) => {
+        const vectors = new Map<string, number[]>();
+        for (let i = 0; i < texts.length; i += 100) {
+          const batch = texts.slice(i, i + 100);
+          for (let attempt = 0; ; attempt++) {
+            const e = await embedTexts(inference, batch, { role });
+            if (e.ok) {
+              batch.forEach((t, j) => vectors.set(t, unit(e.vectors[j]!)));
+              break;
+            }
+            if (attempt >= 4) throw new Error(`embedding failed five times at ${i}`);
+            await sleep(1_000 * 2 ** attempt);
           }
-          if (attempt >= 4) throw new Error(`embedding failed five times at ${i}`);
-          await sleep(1_000 * 2 ** attempt);
         }
-      }
+        return vectors;
+      };
+      const titleVectors = await embedAll([...new Set(asks.map((a) => a.title))], 'query');
+      const labelVectors = await embedAll([...new Set(asks.flatMap((a) => a.candidates.flatMap((c) => english.get(c.token.token) ?? [])))], 'document');
 
       // Clef at floor 0, so every answer is kept and read at each floor below.
       const choose = clefChooser(inference, { floor: 0 });
@@ -181,14 +186,14 @@ describe.skipIf(!RUN)("US layer, Clef's floor (opt-in, from the Mac)", () => {
         while (next < asks.length) {
           const i = next++;
           const a = asks[i]!;
-          const v = vectors.get(a.title)!;
+          const v = titleVectors.get(a.title)!;
           const shown: Candidate[] = a.candidates
             .map((c) => {
               let score = -1;
               let matched = c.token.labelEn;
               for (const l of english.get(c.token.token) ?? []) {
                 if (labelNorm(l) === a.hide) continue;
-                const s = dot(v, vectors.get(l)!);
+                const s = dot(v, labelVectors.get(l)!);
                 if (s > score) [score, matched] = [s, l];
               }
               return { token: c.token.token, labelEn: c.token.labelEn, matched, matchedLang: 'en', score };

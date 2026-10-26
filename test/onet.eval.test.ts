@@ -38,7 +38,7 @@ import { describe, expect, it } from 'vitest';
 import { createInference } from '../src/services/inference/index.js';
 import { planEscoImport, type EscoLang } from '../src/services/work/esco.js';
 import { onetCandidates, readCrosswalk, readOnetTitles, titleForms } from '../src/services/work/onet.js';
-import { DEFAULT_TAU, embedTexts, labelNorm } from '../src/services/work/registry.js';
+import { EMBED_PROMPTS_BY_MODEL, embedTexts, labelNorm, tauFor, type EmbedRole, type Tau } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 
 const RUN = process.env.ONET_EVAL === '1';
@@ -137,14 +137,14 @@ interface Snap {
   score: number | null;
 }
 
-function snapIn(p: Pool, exact: Map<string, Set<string>>, norm: string, q: Float32Array): Snap {
+function snapIn(p: Pool, exact: Map<string, Set<string>>, norm: string, q: Float32Array, tau: Tau): Snap {
   const holders = exact.get(norm);
   if (holders?.size === 1) return { route: 'label', token: [...holders][0]!, shown: [], score: 1 };
   const c = nearest(p, q);
   const top = c[0];
   if (!top) return { route: 'below', token: null, shown: [], score: null };
   // Another language's label at τ_auto goes to Clef, as the registry sends it.
-  const route: Route = top.english != null && top.english >= DEFAULT_TAU.auto ? 'auto' : top.score >= DEFAULT_TAU.low ? 'band' : 'below';
+  const route: Route = top.english != null && top.english >= tau.auto ? 'auto' : top.score >= tau.low ? 'band' : 'below';
   return { route, token: top.token, shown: c.slice(0, CLEF_SHOWN).map((x) => x.token), score: top.score };
 }
 
@@ -201,7 +201,8 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
 
     const inference = createInference({ WORK_EMBED_MODEL: process.env.WORK_EMBED_MODEL }, { ai: createRestAi({ accountId, token: apiToken }) })!;
     const embedModel = await inference.model('work-embed');
-    const embedMany = async (texts: string[]): Promise<Float32Array> => {
+    const tau = tauFor(embedModel);
+    const embedMany = async (texts: string[], role: EmbedRole): Promise<Float32Array> => {
       const outv = new Float32Array(texts.length * dims);
       const batches: number[] = [];
       for (let i = 0; i < texts.length; i += 100) batches.push(i);
@@ -211,7 +212,7 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
           const from = batches[next++]!;
           const batch = texts.slice(from, from + 100);
           for (let attempt = 0; ; attempt++) {
-            const e = await embedTexts(inference, batch);
+            const e = await embedTexts(inference, batch, { role });
             if (e.ok) {
               e.vectors.forEach((v, j) => outv.set(unit(v), (from + j) * dims));
               break;
@@ -230,7 +231,9 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
     const cacheText = join(out, 'esco-occupation-vectors.json');
     const cacheBin = join(out, 'esco-occupation-vectors.f32');
     let escoVectors: Float32Array;
-    if (existsSync(cacheText) && existsSync(cacheBin) && (JSON.parse(readFileSync(cacheText, 'utf8')) as { model: string; texts: string[] }).model === embedModel) {
+    // A model with role prompts caches its documents under its name and the prompt, so a cache made without them is not read.
+    const cacheModel = EMBED_PROMPTS_BY_MODEL[embedModel] ? `${embedModel}|${EMBED_PROMPTS_BY_MODEL[embedModel]!.document}` : embedModel;
+    if (existsSync(cacheText) && existsSync(cacheBin) && (JSON.parse(readFileSync(cacheText, 'utf8')) as { model: string; texts: string[] }).model === cacheModel) {
       const cached = JSON.parse(readFileSync(cacheText, 'utf8')) as { texts: string[] };
       const buf = readFileSync(cacheBin);
       const all = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
@@ -242,9 +245,9 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
         escoVectors.set(all.subarray(j * dims, (j + 1) * dims), i * dims);
       });
     } else {
-      escoVectors = await embedMany(escoTexts);
+      escoVectors = await embedMany(escoTexts, 'document');
       writeFileSync(cacheBin, Buffer.from(escoVectors.buffer));
-      writeFileSync(cacheText, JSON.stringify({ model: embedModel, texts: escoTexts }));
+      writeFileSync(cacheText, JSON.stringify({ model: cacheModel, texts: escoTexts }));
     }
     const textRow = new Map(escoTexts.map((t, i) => [t, i]));
     const escoRows = new Float32Array(escoLabels.length * dims);
@@ -264,11 +267,11 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
     const exactAfter = new Map([...exactBefore].map(([k, v]) => [k, new Set(v)]));
     for (const l of layer) if (l.lang === 'en') (exactAfter.get(l.norm) ?? exactAfter.set(l.norm, new Set()).get(l.norm)!).add(l.token);
 
-    const queries = await embedMany(sample.map((n) => held.get(n)!.title));
+    const queries = await embedMany(sample.map((n) => held.get(n)!.title), 'query');
     const rows: { norm: string; inEsco: boolean; before: Snap; after: Snap; gold: Set<string> }[] = [];
     sample.forEach((norm, i) => {
       const q = queries.subarray(i * dims, (i + 1) * dims);
-      rows.push({ norm, inEsco: exactBefore.has(norm), before: snapIn(before, exactBefore, norm, q), after: snapIn(after, exactAfter, norm, q), gold: held.get(norm)!.gold });
+      rows.push({ norm, inEsco: exactBefore.has(norm), before: snapIn(before, exactBefore, norm, q, tau), after: snapIn(after, exactAfter, norm, q, tau), gold: held.get(norm)!.gold });
     });
 
     const pct = (a: number, b: number) => (b ? `${((100 * a) / b).toFixed(1)}%` : '—');
@@ -291,7 +294,7 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
     const report = [
       `# The US layer before and after, ${date}`,
       '',
-      `O*NET ${RELEASE} titles held out of the layer (one norm in ten by a fixed hash: ${held.size}), ${rows.length} of them sampled, each snapped against ESCO v1.2.1's occupation labels in English, Portuguese and Spanish (${escoLabels.length}) and then against those and the layer's other labels (${layer.length}), with ${embedModel} over the Workers AI REST API from the Mac. A snap is an exact English label held by one token, else the 20 nearest labels in every language, best per token, taken at τ_auto only through an English one (the registry's rule since 2026-10-26); it is right when its token is one of the ESCO occupations the ESCO–O*NET crosswalk gives an O*NET occupation that lists the title. τ_auto ${DEFAULT_TAU.auto}, τ_low ${DEFAULT_TAU.low}; Clef, the pivot and the mint are not run, so "among ${CLEF_SHOWN}" is the most Clef could get right in the band.`,
+      `O*NET ${RELEASE} titles held out of the layer (one norm in ten by a fixed hash: ${held.size}), ${rows.length} of them sampled, each snapped against ESCO v1.2.1's occupation labels in English, Portuguese and Spanish (${escoLabels.length}) and then against those and the layer's other labels (${layer.length}), with ${embedModel} over the Workers AI REST API from the Mac. A snap is an exact English label held by one token, else the 20 nearest labels in every language, best per token, taken at τ_auto only through an English one (the registry's rule since 2026-10-26); it is right when its token is one of the ESCO occupations the ESCO–O*NET crosswalk gives an O*NET occupation that lists the title. τ_auto ${tau.auto}, τ_low ${tau.low}; Clef, the pivot and the mint are not run, so "among ${CLEF_SHOWN}" is the most Clef could get right in the band.`,
       '',
       '| Titles | Registry | Right | Exact label | τ_auto | Band | Below the band |',
       '|---|---|---|---|---|---|---|',
@@ -304,6 +307,12 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
       '',
     ].join('\n');
     writeFileSync(join(__dirname, 'work-eval', `onet-layer-${date}${process.env.ONET_EVAL_SUFFIX ?? ''}.md`), report);
+    // Every snap, for reading the misses (outside the repository: O*NET's titles).
+    if (process.env.ONET_EVAL_ROWS)
+      writeFileSync(
+        home(process.env.ONET_EVAL_ROWS),
+        JSON.stringify(rows.map((r) => ({ title: held.get(r.norm)!.title, gold: [...r.gold], before: r.before, after: r.after }))),
+      );
     console.log(report);
     expect(rows.length).toBeGreaterThan(0);
   }, 3 * 60 * 60 * 1000);

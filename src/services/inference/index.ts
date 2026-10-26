@@ -127,6 +127,9 @@ export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   '@cf/openai/gpt-oss-120b': { input: 0.35, output: 0.75 },
   // Embeddings bill input only; bge-m3 also reports neurons, which the Work meter prefers.
   '@cf/baai/bge-m3': { input: 0.012, output: 0 },
+  // EmbeddingGemma (decision 0067, rule 7) reports neither usage nor neurons, so every call is priced
+  // here; Cloudflare's pricing page did not list it on 2026-10-26, so this is bge-m3's rate as a stand-in.
+  '@cf/google/embeddinggemma-300m': { input: 0.012, output: 0 },
 };
 
 const unpriced = new Set<string>();

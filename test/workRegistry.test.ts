@@ -6,13 +6,16 @@ import { describe, expect, it } from 'vitest';
 import {
   D1RegistryStore,
   DEFAULT_TAU,
+  DEFAULT_TAU_BY_MODEL,
   EMBED_DIMS_BY_MODEL,
+  EMBED_PROMPTS_BY_MODEL,
   embedTexts,
   labelIdOf,
   labelLangs,
   labelNorm,
   parseTau,
   snap,
+  tauFor,
   tokenOf,
   tokenSlug,
   validPivot,
@@ -23,6 +26,7 @@ import {
   type TokenKind,
 } from '../src/services/work/registry.js';
 import { adjudicationQuestions } from '../src/services/work/clef.js';
+import type { InferenceOp } from '../src/services/inference/index.js';
 import { WorkCallsError } from '../src/services/work/fields.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 import { axis, embedAnswer, fakeInference, jsonModeResult, memoryIndex, near, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
@@ -45,7 +49,7 @@ const SEED: SeedToken[] = [
   { token: 'cert:bosiet', kind: 'cert', labelEn: 'BOSIET', labels: [['en', 'BOSIET', axis(4)]] },
 ];
 
-async function registry(responses: FakeResponses = {}, calls: FakeCall[] = [], extra: SeedToken[] = []) {
+async function registry(responses: FakeResponses = {}, calls: FakeCall[] = [], extra: SeedToken[] = [], models: Partial<Record<InferenceOp, string>> = {}) {
   const db = sqliteD1();
   const store = new D1RegistryStore(db.d1);
   const index = memoryIndex();
@@ -58,7 +62,7 @@ async function registry(responses: FakeResponses = {}, calls: FakeCall[] = [], e
     await index.upsert(labels.map((l, i) => ({ id: l.labelId, values: t.labels[i]![2], metadata: { token: t.token, kind: t.kind, lang: l.lang, label: l.label, source: 'seed' } })));
   }
   let n = 0;
-  const deps: RegistryDeps = { inference: fakeInference(responses, calls), store, index, now: () => NOW, newId: () => `d${++n}` };
+  const deps: RegistryDeps = { inference: fakeInference(responses, calls, models), store, index, now: () => NOW, newId: () => `d${++n}` };
   const decisions = () => db.sqlite.prepare('SELECT decision, token, specialization, probability, raw FROM registry_decisions ORDER BY id').all();
   return { deps, store, index, db, decisions };
 }
@@ -85,11 +89,20 @@ describe('the token shape', () => {
     expect(id).toMatch(/^l[A-Za-z0-9_-]{43}$/);
   });
 
-  it('keeps τ ordered and inside (0, 1]', () => {
-    expect(parseTau(undefined, undefined)).toEqual(DEFAULT_TAU);
+  it('keeps τ ordered and inside (0, 1], and takes what the environment leaves from the model', () => {
+    expect(parseTau(undefined, undefined)).toEqual({});
     expect(parseTau('0.9', '0.7')).toEqual({ auto: 0.9, low: 0.7 });
-    expect(parseTau('0.6', '0.7')).toEqual(DEFAULT_TAU);
-    expect(parseTau('2', 'x')).toEqual(DEFAULT_TAU);
+    expect(parseTau('2', 'x')).toEqual({});
+    const bge = '@cf/baai/bge-m3';
+    const gemma = '@cf/google/embeddinggemma-300m';
+    expect(tauFor(bge)).toEqual(DEFAULT_TAU);
+    expect(tauFor(gemma)).toEqual(DEFAULT_TAU_BY_MODEL[gemma]);
+    expect(tauFor('@cf/some/other-model')).toEqual(DEFAULT_TAU);
+    expect(tauFor(bge, parseTau('0.9', '0.7'))).toEqual({ auto: 0.9, low: 0.7 });
+    expect(tauFor(bge, parseTau('0.9', undefined))).toEqual({ auto: 0.9, low: DEFAULT_TAU.low });
+    // A pair with low not below auto keeps the model's.
+    expect(tauFor(bge, parseTau('0.6', '0.7'))).toEqual(DEFAULT_TAU);
+    expect(tauFor(gemma, parseTau(undefined, '0.99'))).toEqual(DEFAULT_TAU_BY_MODEL[gemma]);
   });
 
   it('takes a pivot only as a short plain English name', () => {
@@ -173,6 +186,42 @@ describe('snap: retrieve, then choose', () => {
     expect(minted).toMatchObject({ source: 'emergent', status: 'pending', iscoCode: null, escoUri: null });
     expect([...index.vectors.values()].filter((v) => v.metadata.token === 'pos:pastry-chef').map((v) => v.metadata.lang).sort()).toEqual(['en', 'pt']);
     expect(await snap(deps, { kind: 'pos', raw: 'confeiteiro', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'pos:pastry-chef' });
+  });
+
+  it('reads τ on the pinned model\'s scale: a cosine of 0.85 snaps under EmbeddingGemma and goes to Clef under bge-m3', async () => {
+    const at85 = (dims: number) => near(0, 10, 0.85).slice(0, dims);
+    const gemma = await registry({ 'work-embed': embedAnswer({ 'task: search result | query: house wireman': at85(768) }) }, [], [], { 'work-embed': '@cf/google/embeddinggemma-300m' });
+    expect(await snap(gemma.deps, { kind: 'pos', raw: 'house wireman', lang: 'en' })).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
+    const calls: FakeCall[] = [];
+    const bge = await registry({ 'work-embed': embedAnswer({ 'house wireman': at85(1024) }), 'work-adjudicate': clef('c0', 0.9) }, calls);
+    expect(await snap(bge.deps, { kind: 'pos', raw: 'house wireman', lang: 'en' })).toMatchObject({ decision: 'chosen', token: 'pos:electrician' });
+    expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate']);
+  });
+
+  it("under EmbeddingGemma, embeds the snapped string as a query and a new token's labels again as documents", async () => {
+    const calls: FakeCall[] = [];
+    const QUERY = 'task: search result | query: ';
+    const DOC = 'title: none | text: ';
+    // The seed's vectors are 1024 axes; EmbeddingGemma answers 768, the same axes cut short.
+    const cut = (v: number[]) => v.slice(0, 768);
+    const table: Record<string, number[]> = {
+      [`${QUERY}Confeiteiro`]: cut(near(1, 11, 0.62)),
+      [`${DOC}pastry chef`]: cut(axis(12)),
+      [`${DOC}Confeiteiro`]: cut(axis(13)),
+    };
+    const { deps, index } = await registry(
+      { 'work-embed': embedAnswer(table), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'Pastry Chef' }) },
+      calls,
+      [],
+      { 'work-embed': '@cf/google/embeddinggemma-300m' },
+    );
+    const out = await snap({ ...deps, tau: { auto: 0.95, low: 0.5 } }, { kind: 'pos', raw: 'Confeiteiro', lang: 'pt' });
+    expect(out).toMatchObject({ decision: 'minted', token: 'pos:pastry-chef' });
+    expect(calls.filter((c) => c.op === 'work-embed').map((c) => c.input.text)).toEqual([[`${QUERY}Confeiteiro`], [`${DOC}pastry chef`, `${DOC}Confeiteiro`]]);
+    // The raw string's label holds its document vector, not the query's.
+    const stored = [...index.vectors.values()].filter((v) => v.metadata.token === 'pos:pastry-chef');
+    expect(stored.find((v) => v.metadata.lang === 'pt')!.values).toEqual(table[`${DOC}Confeiteiro`]);
+    expect(stored.find((v) => v.metadata.lang === 'en')!.values).toEqual(table[`${DOC}pastry chef`]);
   });
 
   it('marks a minted label embedded only once its vector is in the index', async () => {
@@ -684,12 +733,27 @@ describe('embedTexts', () => {
 
   it("accepts the pinned model's vector size and fails closed on any other", async () => {
     const gemma = fakeInference({ 'work-embed': answer(768) }, [], { 'work-embed': '@cf/google/embeddinggemma-300m' });
-    expect((await embedTexts(gemma, ['plumber'])).ok).toBe(true);
-    expect((await embedTexts(fakeInference({ 'work-embed': answer(1024) }), ['plumber'])).ok).toBe(true);
+    expect((await embedTexts(gemma, ['plumber'], { role: 'query' })).ok).toBe(true);
+    expect((await embedTexts(fakeInference({ 'work-embed': answer(1024) }), ['plumber'], { role: 'query' })).ok).toBe(true);
     // bge-m3's indexes hold 1024 dimensions: a 768-dimension answer under that pin is a bad shape.
-    expect((await embedTexts(fakeInference({ 'work-embed': answer(768) }), ['plumber'])).ok).toBe(false);
+    expect((await embedTexts(fakeInference({ 'work-embed': answer(768) }), ['plumber'], { role: 'query' })).ok).toBe(false);
     const unknown = fakeInference({ 'work-embed': answer(1024) }, [], { 'work-embed': '@cf/some/other-model' });
-    expect((await embedTexts(unknown, ['plumber'])).ok).toBe(false);
+    expect((await embedTexts(unknown, ['plumber'], { role: 'query' })).ok).toBe(false);
     expect(EMBED_DIMS_BY_MODEL['@cf/baai/bge-m3']).toBe(1024);
+  });
+
+  it("sends EmbeddingGemma its prompt for the role, and bge-m3 the texts as they are", async () => {
+    const calls: FakeCall[] = [];
+    const sent = () => calls.map((c) => c.input.text);
+    const many = (dims: number) => (input: Record<string, unknown>) => ({ data: (input.text as string[]).map(() => new Array<number>(dims).fill(0.01)) });
+    const gemma = fakeInference({ 'work-embed': many(768) }, calls, { 'work-embed': '@cf/google/embeddinggemma-300m' });
+    await embedTexts(gemma, ['Plomero'], { role: 'query' });
+    await embedTexts(gemma, ['plumber', 'pipe fitter'], { role: 'document' });
+    expect(sent()).toEqual([['task: search result | query: Plomero'], ['title: none | text: plumber', 'title: none | text: pipe fitter']]);
+    calls.length = 0;
+    await embedTexts(fakeInference({ 'work-embed': many(1024) }, calls), ['Plomero'], { role: 'query' });
+    await embedTexts(fakeInference({ 'work-embed': many(1024) }, calls), ['plumber'], { role: 'document' });
+    expect(sent()).toEqual([['Plomero'], ['plumber']]);
+    expect(EMBED_PROMPTS_BY_MODEL['@cf/baai/bge-m3']).toBeUndefined();
   });
 });

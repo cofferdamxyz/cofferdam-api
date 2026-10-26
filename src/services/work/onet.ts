@@ -52,7 +52,7 @@ import type { Inference } from '../inference/index.js';
 import { adjudicationQuestions, clefInput, nationalTitleState, readChoice } from './clef.js';
 import { parseCsv } from './esco.js';
 import type { CodeRelation, NationalCode, NationalLabel } from './national.js';
-import { ADJUDICATION_CANDIDATES, DEFAULT_TAU, labelIdOf, labelNorm, type Candidate, type RegistryLabel, type RegistryToken } from './registry.js';
+import { ADJUDICATION_CANDIDATES, DEFAULT_TAU, labelIdOf, type EmbedRole, labelNorm, type Candidate, type RegistryLabel, type RegistryToken } from './registry.js';
 
 export type CrosswalkMatch = 'exactMatch' | 'closeMatch' | 'broadMatch' | 'narrowMatch' | 'exactISCO';
 
@@ -314,8 +314,13 @@ export interface OnetChoice {
 }
 
 export interface OnetPlanDeps {
-  /** Vectors for texts, in order (called with up to 100 at a time); null for a text the model cannot embed. */
-  embed(texts: string[]): Promise<(number[] | null)[]>;
+  /**
+   * Vectors for texts in their role, in order (called with up to 100 at a
+   * time); null for a text the model cannot embed. A title is a query when
+   * candidates are ranked for it and a document once it is a label; a
+   * candidate's label is a document.
+   */
+  embed(texts: string[], role: EmbedRole): Promise<(number[] | null)[]>;
   /** Clef, where the cosine is not sure; without it such a title is placed nowhere. */
   choose?(ask: OnetAsk, candidates: Candidate[]): Promise<OnetChoice>;
   margin?: number;
@@ -386,22 +391,22 @@ async function pool<T>(items: readonly T[], parallel: number, run: (item: T) => 
   await Promise.all(Array.from({ length: Math.max(1, Math.min(parallel, items.length)) }, worker));
 }
 
-/** Embed every distinct text once, 100 at a time, as unit vectors; a text the model cannot embed has none. */
-async function embedAll(deps: OnetPlanDeps, texts: readonly string[]): Promise<Map<string, number[]>> {
+/** Embed every distinct text once in its role, 100 at a time, as unit vectors; a text the model cannot embed has none. */
+async function embedAll(deps: OnetPlanDeps, texts: readonly string[], role: EmbedRole): Promise<Map<string, number[]>> {
   const unique = [...new Set(texts)];
   const batches: string[][] = [];
   for (let i = 0; i < unique.length; i += 100) batches.push(unique.slice(i, i + 100));
   const out = new Map<string, number[]>();
   let done = 0;
   await pool(batches, deps.parallel ?? 1, async (batch) => {
-    const vectors = await deps.embed(batch);
+    const vectors = await deps.embed(batch, role);
     if (vectors.length !== batch.length) throw new Error(`embed answered ${vectors.length} vectors for ${batch.length} texts`);
     batch.forEach((t, j) => {
       const v = vectors[j];
       if (v) out.set(t, unit(v));
     });
     done += batch.length;
-    deps.progress?.('embedded', done, unique.length);
+    deps.progress?.(`embedded (${role})`, done, unique.length);
   });
   return out;
 }
@@ -465,14 +470,15 @@ export async function planOnetLayer(input: OnetPlanInput, deps: OnetPlanDeps): P
   // Vectors: every title that may become a label, and the English labels of its candidates.
   const open = entries.filter((e) => e.placement.method === 'none');
   const ranked = new Set(open.flatMap((e) => candidates.get(e.onetCode)!.map((c) => c.token.token)));
-  const vectors = await embedAll(deps, [...open.map((e) => e.title), ...[...ranked].flatMap((t) => input.english.get(t) ?? [])]);
+  const titleVectors = await embedAll(deps, open.map((e) => e.title), 'query');
+  const labelVectors = await embedAll(deps, [...ranked].flatMap((t) => input.english.get(t) ?? []), 'document');
 
   // The candidates ranked by cosine: a sure, clear best is taken, anything else goes to Clef.
   const sure = deps.sure ?? ONET_SURE;
   const noneMax = deps.noneMax ?? ONET_NONE_MAX;
   const close: Entry[] = [];
   for (const e of open) {
-    const v = vectors.get(e.title);
+    const v = titleVectors.get(e.title);
     if (!v) {
       e.placement.method = 'unembedded';
       continue;
@@ -483,7 +489,7 @@ export async function planOnetLayer(input: OnetPlanInput, deps: OnetPlanDeps): P
         let score = -1;
         let matched = c.token.labelEn;
         for (const l of input.english.get(c.token.token) ?? [c.token.labelEn]) {
-          const w = vectors.get(l);
+          const w = labelVectors.get(l);
           const s = w ? dot(v, w) : -1;
           if (s > score) [score, matched] = [s, l];
         }
@@ -538,6 +544,10 @@ export async function planOnetLayer(input: OnetPlanInput, deps: OnetPlanDeps): P
   for (const e of entries) if (PLACED.has(e.placement.method)) addTo(placedOn, e.norm, e.placement.token!);
   for (const e of entries) if (PLACED.has(e.placement.method) && placedOn.get(e.norm)!.size > 1) e.placement.method = 'ambiguous';
 
+  // Each label's own vector: its title embedded as a document. A title the model cannot embed so is left out.
+  const stored = await embedAll(deps, [...new Set(entries.filter((e) => PLACED.has(e.placement.method)).map((e) => e.title))], 'document');
+  for (const e of entries) if (PLACED.has(e.placement.method) && !stored.has(e.title)) e.placement.method = 'unembedded';
+
   const labels = new Map<string, NationalLabel>();
   const reached = new Map<string, Set<string>>();
   for (const e of entries) {
@@ -590,7 +600,7 @@ export async function planOnetLayer(input: OnetPlanInput, deps: OnetPlanDeps): P
   };
   for (const p of placements) counts[p.method]++;
   const out = [...labels.values()];
-  return { labels: out, vectors: new Map(out.map((l) => [l.labelId, vectors.get(l.label)!])), codes: [...codes.values()], placements, counts };
+  return { labels: out, vectors: new Map(out.map((l) => [l.labelId, stored.get(l.label)!])), codes: [...codes.values()], placements, counts };
 }
 
 /**

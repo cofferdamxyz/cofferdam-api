@@ -294,7 +294,7 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, calls: WorkCa
   for (const code of draft.languages) tokens.add(`lang:${code}`);
   const list = [...tokens].sort();
 
-  const embedding = await embedTexts(deps.inference, [listingText(draft, english)], { now, log: deps.log });
+  const embedding = await embedTexts(deps.inference, [listingText(draft, english)], { role: 'document', now, log: deps.log });
   calls.push(embedding.call);
   if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
 

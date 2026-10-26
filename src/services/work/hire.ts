@@ -162,7 +162,7 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
 
   // 3. The registry's nearest occupations and skills to the task, and which of them the job needs.
   const task = fields.task ?? sentence;
-  const embedding = await embedTexts(inference, [task], { now, log: deps.log });
+  const embedding = await embedTexts(inference, [task], { role: 'query', now, log: deps.log });
   calls.push(embedding.call);
   if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
   const near: NeedCandidate[] = [];

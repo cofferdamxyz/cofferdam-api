@@ -109,7 +109,7 @@ describe.skipIf(!LIVE)('Clef classification patterns (live, Workers AI)', () => 
     const needs: { id: string; expected: string; probabilities: { token: string; p: number }[] }[] = [];
     for (const p of HIRER_PROMPTS.filter((x) => !x.expected.refuse)) {
       const task = p.expected.task ?? p.text;
-      const e = await embedTexts(inference, [task]);
+      const e = await embedTexts(inference, [task], { role: 'query' });
       if (!e.ok) throw new Error('embedding failed');
       const near: NeedCandidate[] = [];
       for (const kind of ['pos', 'skill'] as const) for (const c of (await candidatesFor(registry, kind, e.vectors[0]!)).slice(0, kind === 'pos' ? 4 : 8)) near.push({ token: c.token, label: c.labelEn, kind });

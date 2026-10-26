@@ -62,7 +62,7 @@ import {
   type OnetChoice,
   type TitlePlacement,
 } from '../src/services/work/onet.js';
-import { embedTexts } from '../src/services/work/registry.js';
+import { embedTexts, tauFor } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 
 const RUN = process.env.ONET_IMPORT === '1';
@@ -161,10 +161,10 @@ describe.skipIf(!RUN)('US layer import (opt-in, from the Mac)', () => {
     const plan = await planOnetLayer(
       { crosswalk, titles, tokens: esco.tokens, english, known, foreign, release: RELEASE },
       {
-        embed: async function embed(texts): Promise<(number[] | null)[]> {
+        embed: async function embed(texts, role): Promise<(number[] | null)[]> {
           let reason = '';
           for (let attempt = 0; attempt < 5; attempt++) {
-            const e = await embedTexts(inference, texts, { log: (event) => (reason = String(event.reason ?? '')) });
+            const e = await embedTexts(inference, texts, { role, log: (event) => (reason = String(event.reason ?? '')) });
             if (e.ok) return e.vectors;
             await sleep(1_000 * 2 ** attempt);
           }
@@ -174,14 +174,16 @@ describe.skipIf(!RUN)('US layer import (opt-in, from the Mac)', () => {
             return [null];
           }
           const half = Math.ceil(texts.length / 2);
-          return [...(await embed(texts.slice(0, half))), ...(await embed(texts.slice(half)))];
+          return [...(await embed(texts.slice(0, half), role)), ...(await embed(texts.slice(half), role))];
         },
         choose,
         noneMax,
+        // A sure best is one at the pinned model's τ_auto.
+        sure: tauFor(embedModel).auto,
         margin: process.env.ONET_MARGIN ? Number(process.env.ONET_MARGIN) : ONET_MARGIN,
         parallel: PARALLEL,
         progress: (event, done, total) => {
-          if (done === total || done % 5_000 < (event === 'embedded' ? 100 : 1)) process.stdout.write(`${event} ${done} of ${total}\n`);
+          if (done === total || done % 5_000 < (event.startsWith('embedded') ? 100 : 1)) process.stdout.write(`${event} ${done} of ${total}\n`);
         },
       },
     );

@@ -24,7 +24,7 @@ import { join } from 'node:path';
 
 import type { Inference } from '../../src/services/inference/index.js';
 import { planEscoImport, type EscoLang } from '../../src/services/work/esco.js';
-import { D1RegistryStore, embedTexts, type IndexMatch, type IndexVector, type RegistryLabel, type VectorIndex } from '../../src/services/work/registry.js';
+import { D1RegistryStore, EMBED_PROMPTS_BY_MODEL, embedTexts, type IndexMatch, type IndexVector, type RegistryLabel, type VectorIndex } from '../../src/services/work/registry.js';
 import { sqliteD1 } from '../fixtures/work/d1.js';
 
 export const homePath = (p: string) => p.replace(/^~(?=\/)/, homedir());
@@ -85,9 +85,11 @@ function poolIndex(dims: number, rows: Float32Array, labels: readonly RegistryLa
   };
 }
 
-/** ESCO's occupation label texts embedded with `work-embed`, from the cache or, when it is missing or another model's, embedded and cached. */
+/** ESCO's occupation label texts embedded with `work-embed` as documents, from the cache or, when it is missing or another model's (or prompt's), embedded and cached. */
 async function labelVectors(inference: Inference, texts: string[], cacheDir: string): Promise<{ dims: number; vectors: Float32Array }> {
-  const model = await inference.model('work-embed');
+  const embedModel = await inference.model('work-embed');
+  // A model with role prompts caches its documents under its name and the prompt, so a cache made without them is not read.
+  const model = EMBED_PROMPTS_BY_MODEL[embedModel] ? `${embedModel}|${EMBED_PROMPTS_BY_MODEL[embedModel]!.document}` : embedModel;
   const cacheText = join(cacheDir, 'esco-occupation-vectors.json');
   const cacheBin = join(cacheDir, 'esco-occupation-vectors.f32');
   if (existsSync(cacheText) && existsSync(cacheBin)) {
@@ -111,7 +113,7 @@ async function labelVectors(inference: Inference, texts: string[], cacheDir: str
   for (let from = 0; from < texts.length; from += 100) {
     const batch = texts.slice(from, from + 100);
     for (let attempt = 0; ; attempt++) {
-      const e = await embedTexts(inference, batch);
+      const e = await embedTexts(inference, batch, { role: 'document' });
       if (e.ok) {
         if (!dims) {
           dims = e.vectors[0]!.length;

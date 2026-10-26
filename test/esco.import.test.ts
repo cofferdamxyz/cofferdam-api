@@ -85,7 +85,7 @@ describe.skipIf(!RUN)('ESCO import (opt-in, from the Mac)', () => {
         const b = batches[next++]!;
         let attempt = 0;
         for (;;) {
-          const e = await embedTexts(inference, b.labels.map((l) => l.label));
+          const e = await embedTexts(inference, b.labels.map((l) => l.label), { role: 'document' });
           if (e.ok) {
             e.vectors.forEach((v, j) => (lines[b.from + j] = vectorLine(b.labels[j]!, tokens.get(b.labels[j]!.token)!, v)));
             break;

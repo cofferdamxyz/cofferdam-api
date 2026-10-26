@@ -58,7 +58,7 @@ describe.skipIf(!RUN)('certificate seed import (opt-in, from the Mac)', () => {
     const lines: string[] = [];
     for (let i = 0; i < plan.labels.length; i += BATCH) {
       const batch = plan.labels.slice(i, i + BATCH);
-      const e = await embedTexts(inference, batch.map((l) => l.label));
+      const e = await embedTexts(inference, batch.map((l) => l.label), { role: 'document' });
       if (!e.ok) throw new Error(`bge-m3 failed at label ${i}`);
       e.vectors.forEach((v, j) => lines.push(vectorLine(batch[j]!, tokens.get(batch[j]!.token)!, v)));
     }

@@ -686,7 +686,7 @@ export async function snapCertificate(deps: RegistryDeps, input: SnapInput, ctx:
   }
 
   // 3. The nearest labels, for credentials that fit.
-  const embedding = await embedTexts(deps.inference, [raw], { now, log: deps.log });
+  const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
   calls.push(embedding.call);
   if (!embedding.ok) return ctx.result({ decision: 'unmatched', ...none });
   const near = (await candidatesFor(deps, 'cert', embedding.vectors[0]!))

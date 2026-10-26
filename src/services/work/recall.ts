@@ -121,7 +121,7 @@ export async function recall(deps: RecallDeps, intent: RecallIntent): Promise<Re
 }
 
 async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: string[], calls: WorkCall[]): Promise<RecallOutcome> {
-  const embedding = await embedTexts(deps.inference, [intent.queryText], { now: deps.now, log: deps.log });
+  const embedding = await embedTexts(deps.inference, [intent.queryText], { role: 'query', now: deps.now, log: deps.log });
   calls.push(embedding.call);
   if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
   const vector = embedding.vectors[0]!;
