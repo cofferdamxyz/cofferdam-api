@@ -38,7 +38,11 @@ const OCC_EN = [
   `Occupation,${uri('05')},9991,deck officer,,,released,,,,,,,9991.2`,
   `Occupation,${uri('06')},9992,warehouse worker,,,released,,,,,,,9992.1`,
 ].join('\n');
-const OCC_PT = [OCC_HEADER, `Occupation,${uri('04')},9991,oficial de máquinas,maquinista naval,,released,,,,,,,9991.1`].join('\n');
+const OCC_PT = [
+  OCC_HEADER,
+  `Occupation,${uri('04')},9991,oficial de máquinas,maquinista naval,,released,,,,,,,9991.1`,
+  `Occupation,${uri('02')},9990,canalizador,tubista,,released,,,,,,,9990.2`,
+].join('\n');
 
 const CROSSWALK = [
   'Mapping project name,ESCO-O*NET Crosswalk,',
@@ -63,11 +67,13 @@ const JOB_TITLES = [
   '99-0001.00,Synthetic Pipe Trades,Pipefitter,,08',
   '99-0001.00,Synthetic Pipe Trades,Pipe Trades Generalist,,08',
   '99-0001.00,Synthetic Pipe Trades,Pipe Trades Helper,,08',
+  '99-0001.00,Synthetic Pipe Trades,Tubista,,08',
   '99-0002.00,Synthetic Marine Engineers,Marine Engine Mechanic,,04',
   '99-0002.00,Synthetic Marine Engineers,Maquinista Naval,,04',
   '99-0002.00,Synthetic Marine Engineers,Chief Engineer (CE),CE,04',
   '99-0002.00,Synthetic Marine Engineers,Yard Technician,,04',
   '99-0003.00,Synthetic Ship Officers,Deck Watch Officer,,10',
+  '99-0003.00,Synthetic Ship Officers,Ship Officer Trainee,,10',
   '99-0004.00,Synthetic Stock Clerks,Stock Handler (Stock Hand),Stock Hand,02',
   '99-0004.00,Synthetic Stock Clerks,Yard Technician,,02',
   '99-0004.00,Synthetic Stock Clerks,Plumbing Technician,,02',
@@ -107,6 +113,10 @@ const VECTORS: Record<string, number[]> = {
   'Pipe Trades Generalist': mix({ 0: 0.5, 1: 0.49, 2: 0.48 }, 12),
   'Pipe Trades Helper': mix({ 0: 0.5, 1: 0.5, 2: 0.4 }, 13),
   'Deck Watch Officer': near(4, 14, 0.8),
+  'Ship Officer Trainee': near(4, 28, 0.7),
+  // Titles held only by a Portuguese label: the plumber's "tubista", the ship engineer's "maquinista naval".
+  Tubista: near(0, 27, 0.97),
+  'Maquinista Naval': near(3, 26, 0.96),
   'Marine Engine Mechanic': near(3, 20, 0.96),
   'Chief Engineer': axis(21),
   'Yard Technician': axis(22),
@@ -133,8 +143,10 @@ const CLEF: Record<string, [string, number, number]> = {
   // Sure it is the one candidate, but not that it is one at all: left out.
   'Chief Engineer': ['c0', 0.75, 0.2],
   'Yard Technician': ['c0', 0.8, 0.05],
-  // One of them, but Clef is not sure which: the embedding's best, the deck officer.
-  'Deck Watch Officer': ['c1', 0.55, 0.05],
+  // One of them, and Clef's most probable is the embedding's best, the deck officer.
+  'Deck Watch Officer': ['c0', 0.55, 0.05],
+  // One of them, but Clef's most probable (the ship engineer) is not the embedding's best: left out.
+  'Ship Officer Trainee': ['c1', 0.6, 0.05],
   'Stock Hand': ['c0', 0.9, 0.04],
   'Warehouse Associate': ['none', 0.7, 0.7],
 };
@@ -158,6 +170,7 @@ async function plan(deps: Partial<OnetPlanDeps> = {}, calls: FakeCall[] = []) {
     tokens: r.esco.tokens,
     english: r.english,
     known: r.known,
+    foreign: r.foreign,
     release: '31.0',
   };
   const out = await planOnetLayer(input, { embed: embedFrom(VECTORS), choose: clefChooser(fakeInference({ 'work-adjudicate': clefAnswers }, calls)), ...deps });
@@ -184,7 +197,7 @@ describe('readCrosswalk', () => {
 describe('readOnetTitles', () => {
   it('reads the job titles with their short titles, and the reported titles', () => {
     const titles = readOnetTitles(JOB_TITLES);
-    expect(titles).toHaveLength(15);
+    expect(titles).toHaveLength(17);
     expect(titles.find((t) => t.title.startsWith('Chief'))).toEqual({ onetCode: '99-0002.00', title: 'Chief Engineer (CE)', short: 'CE' });
     expect(titles[0]!.short).toBeNull();
     expect(readOnetTitles(REPORTED)).toEqual([
@@ -260,6 +273,8 @@ describe('planOnetLayer', () => {
     expect(at('Marine Engine Mechanic')).toEqual([['99-0002.00', 'single', t('04')]]);
     expect(at('Chief Engineer')).toEqual([['99-0002.00', 'none', null]]);
     expect(at('Deck Watch Officer')).toEqual([['99-0003.00', 'clef', t('05')]]);
+    // Clef's most probable candidate is not the embedding's best: neither is taken.
+    expect(at('Ship Officer Trainee')).toEqual([['99-0003.00', 'disagreed', null]]);
     expect(at('Stock Handler')).toEqual([['99-0004.00', 'single', t('06')]]);
     expect(at('Stock Hand')).toEqual([['99-0004.00', 'clef', t('06')]]);
     // The crosswalk's one candidate, which Clef says the title is not.
@@ -273,7 +288,7 @@ describe('planOnetLayer', () => {
 
     // Clef saw the O*NET occupation and the crosswalk's candidates, best first, by key.
     const asked = calls.map((c) => c.input as { state: string; questions: { match: { criteria: Record<string, string> } } });
-    expect(asked).toHaveLength(9);
+    expect(asked).toHaveLength(10);
     expect(asked[0]!.state).toBe('A job title as the US O*NET database lists it, under the occupation "Synthetic Pipe Trades":\nSteamfitter');
     expect(asked[0]!.questions.match.criteria).toEqual({
       c0: 'pipe fitter',
@@ -288,8 +303,10 @@ describe('planOnetLayer', () => {
     const at = (title: string) => p.placements.filter((x) => x.title === title).map((x) => [x.onetCode, x.method, x.token]);
     const t = (n: string) => tokenOfUri(esco.tokens, n);
     expect(at('Pipefitter')).toEqual([['99-0001.00', 'known', t('01')]]);
-    expect(at('Maquinista Naval')).toEqual([['99-0002.00', 'known', t('04')]]);
     expect(at('Plumbing Technician')).toEqual([['99-0004.00', 'elsewhere', t('02')]]);
+    // Held only by a Portuguese label: placed on its holder, never on another token.
+    expect(at('Maquinista Naval')).toEqual([['99-0002.00', 'single', t('04')]]);
+    expect(at('Tubista')).toEqual([['99-0001.00', 'elsewhere', t('02')]]);
     expect(at('Yard Technician')).toEqual([
       ['99-0002.00', 'ambiguous', t('04')],
       ['99-0004.00', 'ambiguous', t('06')],
@@ -298,16 +315,17 @@ describe('planOnetLayer', () => {
     expect(at('Orphan Title')).toEqual([['99-0005.00', 'no_candidate', null]]);
     expect(at('Unmapped Title')).toEqual([['99-0006.00', 'no_candidate', null]]);
     expect(p.counts).toEqual({
-      titles: 18,
-      labels: 6,
+      titles: 20,
+      labels: 7,
       codes: 6,
-      single: 2,
+      single: 3,
       lead: 1,
       clef: 3,
       none: 3,
       clef_failed: 1,
-      known: 2,
-      elsewhere: 1,
+      disagreed: 1,
+      known: 1,
+      elsewhere: 2,
       ambiguous: 2,
       acronym: 1,
       qualified: 0,
@@ -323,6 +341,7 @@ describe('planOnetLayer', () => {
       ['Sprinkler System Installer', t('03'), 'onet:31.0:99-0001.00'],
       ['Steamfitter', t('01'), 'onet:31.0:99-0001.00'],
       ['Marine Engine Mechanic', t('04'), 'onet:31.0:99-0002.00'],
+      ['Maquinista Naval', t('04'), 'onet:31.0:99-0002.00'],
       ['Deck Watch Officer', t('05'), 'onet:31.0:99-0003.00'],
       ['Stock Handler', t('06'), 'onet:31.0:99-0004.00'],
       ['Stock Hand', t('06'), 'onet:31.0:99-0004.00'],
@@ -389,7 +408,7 @@ describe('planOnetLayer', () => {
 
   it("counts a Clef answer without none's probability as failed, never as Clef's none", async () => {
     const { plan: p } = await plan({ choose: async () => ({ token: null, p: 0.9, probabilities: { 'pos:x': 0.9 } }) });
-    expect(p.placements.filter((x) => x.method === 'clef_failed')).toHaveLength(9);
+    expect(p.placements.filter((x) => x.method === 'clef_failed')).toHaveLength(10);
     expect(p.counts.none).toBe(0);
   });
 
@@ -413,11 +432,12 @@ describe('planOnetLayer', () => {
       'Chief Engineer',
       'Yard Technician',
       'Deck Watch Officer',
+      'Ship Officer Trainee',
       'Stock Hand',
       'Yard Technician',
       'Warehouse Associate',
     ]);
-    expect(noClef.labels.map((l) => l.label)).toEqual(['Sprinkler System Installer', 'Marine Engine Mechanic', 'Stock Handler']);
+    expect(noClef.labels.map((l) => l.label)).toEqual(['Sprinkler System Installer', 'Marine Engine Mechanic', 'Maquinista Naval', 'Stock Handler']);
     const method = async (deps: Partial<OnetPlanDeps>) => (await plan({ choose: undefined, ...deps })).plan.placements.find((x) => x.title === 'Sprinkler System Installer')!.method;
     expect(await method({ sure: 0.99 })).toBe('none');
     expect(await method({ margin: 0.98 })).toBe('none');

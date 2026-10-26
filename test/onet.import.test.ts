@@ -111,7 +111,7 @@ describe.skipIf(!RUN)('US layer import (opt-in, from the Mac)', () => {
       if (existsSync(path)) occupations[lang] = readFileSync(path, 'utf8');
     }
     const esco = await planEscoImport({ occupations });
-    const { english, known } = layerLabelSets(esco.tokens, esco.labels);
+    const { english, known, foreign } = layerLabelSets(esco.tokens, esco.labels);
 
     const crosswalk = readCrosswalk(readFileSync(join(onetDir, 'esco-onet', 'ONET_Occupations_0_updated.csv'), 'utf8'));
     const titles = [
@@ -159,7 +159,7 @@ describe.skipIf(!RUN)('US layer import (opt-in, from the Mac)', () => {
     const started = Date.now();
     const unembeddable: string[] = [];
     const plan = await planOnetLayer(
-      { crosswalk, titles, tokens: esco.tokens, english, known, release: RELEASE },
+      { crosswalk, titles, tokens: esco.tokens, english, known, foreign, release: RELEASE },
       {
         embed: async function embed(texts): Promise<(number[] | null)[]> {
           let reason = '';
@@ -237,7 +237,7 @@ describe.skipIf(!RUN)('US layer import (opt-in, from the Mac)', () => {
     });
     const row = (p: TitlePlacement) =>
       `| ${p.onetCode} ${occupation.get(p.onetCode) ?? ''} | ${p.title} | ${label(p.token)} | ${p.best == null ? '' : `${round(p.best)} / ${round(p.second)}`} | ${round(p.p)} / ${round(p.none)} |`;
-    const methods: TitlePlacement['method'][] = ['single', 'lead', 'clef', 'none', 'clef_failed', 'elsewhere', 'ambiguous', 'acronym', 'qualified', 'no_candidate', 'unembedded'];
+    const methods: TitlePlacement['method'][] = ['single', 'lead', 'clef', 'none', 'disagreed', 'clef_failed', 'elsewhere', 'ambiguous', 'acronym', 'qualified', 'no_candidate', 'unembedded'];
     writeFileSync(
       join(out, 'review.md'),
       [
@@ -245,7 +245,7 @@ describe.skipIf(!RUN)('US layer import (opt-in, from the Mac)', () => {
         '',
         `Embedding model ${embedModel}; Clef ${choose ? `on: none at most ${noneMax}, its own choice from ${floor}` : 'off'}; margin ${process.env.ONET_MARGIN ?? ONET_MARGIN}. ${plan.labels.length} labels and ${plan.codes.length} codes on ${written.size} tokens.`,
         '',
-        "What to expect of the Clef placements (`test/work-eval/onet-clef-2026-10-25.md`, on 400 titles ESCO already holds, read as shipped): of titles asked with their own occupation's candidates, 49% were placed, 74% of those on the candidate ESCO gives the title and the rest on another candidate of the same O*NET occupation, often a broader or narrower sibling; of titles asked with another occupation's candidates, 0.5% were placed. Read the clef sample with that in mind: a sibling is a near miss, another occupation is a wrong label.",
+        "What to expect of the Clef placements (`test/work-eval/onet-clef-2026-10-26.md`, on 400 titles ESCO already holds, read as shipped): of titles asked with their own occupation's candidates, 47% were placed, 84% of those on the candidate ESCO gives the title and the rest on another candidate of the same O*NET occupation, often a broader or narrower sibling; of titles asked with another occupation's candidates, 0.8% were placed. `disagreed` titles are those where Clef's most probable candidate was not the embedding's best and Clef was not sure enough to choose. Read the clef sample with that in mind: a sibling is a near miss, another occupation is a wrong label.",
         '',
         '| Method | Titles |',
         '| --- | --- |',

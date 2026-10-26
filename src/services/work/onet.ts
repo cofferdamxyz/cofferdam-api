@@ -27,13 +27,15 @@
  * - Clef's answer is read in two parts, as calibrated on titles ESCO already
  *   holds (`test/onet.calibrate.test.ts`). Whether the title is one of the
  *   candidates is Clef's probability of none, at most `noneMax`. Which one is
- *   Clef's choice when it reaches `floor`, else the embedding's best: among
- *   close siblings ("journalist", "business journalist") the embedding picked
- *   the holder more often, and Clef's question allows the broader occupation.
+ *   Clef's choice when it reaches `floor`; else the embedding's best, but only
+ *   when it is also Clef's most probable candidate (`disagreed` otherwise:
+ *   where they part, the embedding's pick is often a word match, "Quality
+ *   Checker" on cigar inspector).
  *
  * What is left out:
- * - A title the registry already holds, in any language, stays where it is,
- *   so ESCO's own words keep their tokens.
+ * - A title the registry already holds in English stays where it is, so
+ *   ESCO's own words keep their tokens; one it holds only in Portuguese or
+ *   Spanish is placed on that holder or nowhere (`layerLabelSets`).
  * - A title placed on two tokens is left out of both, since a label of two
  *   occupations cannot decide a snap.
  * - A bare acronym ("CPA", "CMO") is left out, since it names too much
@@ -85,15 +87,18 @@ export const ONET_SURE = DEFAULT_TAU.auto;
 /**
  * Clef's most probable none for a title placed: above it the title is left
  * out. A wrong label is taken by the exact-label shortcut without a model,
- * while a title left out is snapped as it is today, so the bound is strict.
- * With `ONET_FLOOR` (the shipped reading), on 400 titles ESCO already holds
- * (`test/work-eval/onet-clef-2026-10-25.md`): asked with their own
- * occupation's candidates, 49% were placed, 74% of those on the candidate
- * ESCO gives the title and the rest on another of the occupation's
- * candidates (often its broader or narrower sibling: "journalist" for
- * "business journalist"); asked with another occupation's, 0.5% were placed.
+ * while a title left out is snapped as it is today, so the reading is strict:
+ * Clef's own choice from `ONET_FLOOR`, else the embedding's best only when it
+ * is also Clef's most probable candidate. On 400 titles ESCO already holds
+ * (`test/work-eval/onet-clef-2026-10-26.md`): asked with their own
+ * occupation's candidates, 47% were placed, 84% of those on the candidate
+ * ESCO gives the title and the rest on another candidate of the occupation;
+ * asked with another occupation's, 0.8% were placed. Without the agreement
+ * check, 0.15 placed 1.8% of those, and a graded sample of what it added put
+ * one in eight titles in use and one in four index titles on the wrong
+ * occupation, nearly all where Clef and the embedding disagreed (2026-10-26).
  */
-export const ONET_NONE_MAX = 0.1;
+export const ONET_NONE_MAX = 0.15;
 /** The probability at which Clef's own choice names the token; below it the embedding's best does. */
 export const ONET_FLOOR = 0.7;
 
@@ -154,6 +159,7 @@ export function readOnetTitles(text: string): OnetTitle[] {
 }
 
 const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
+const addTo = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
 /** A title ending in a parenthesis: "CPA (Certified Public Accountant)", "Endoscopy Technician (Endoscopy Tech)". */
 const ENDS_IN_PARENTHESIS = /^(.+?)\s*\((.+)\)$/;
 /** A form with no lower-case letter is a bare acronym: "CPA", "AP BD+C". */
@@ -246,29 +252,33 @@ export function onetCandidates(rows: readonly CrosswalkRow[], tokens: readonly R
 }
 
 /**
- * What the plan needs of the registry's labels: each occupation's English
- * labels (preferred and alternative), to rank candidates; and every
- * occupation label in any language and of any kind, by norm: a title the
- * registry already holds, in any language, stays where it is. Since
- * 2026-10-26 the exact-label shortcut reads a string's own language and
- * English, so a title held only in Portuguese or Spanish no longer snaps an
- * English string by label. In English on another token it would leave that
- * language's own label ambiguous (`elsewhere`); on its holder (`known`:
- * "detective", "tenor") it would not, and a later run may place it there.
+ * What the plan needs of the registry's labels.
+ * - `english`: each occupation's English labels (preferred and alternative),
+ *   to rank candidates.
+ * - `known`: every English occupation label, of any kind, by norm. The
+ *   exact-label shortcut reads an English string's English labels only
+ *   (`labelLangs`, since 2026-10-26), so a title held there stays where it
+ *   is: `known` on one of its candidates, `elsewhere` on another token.
+ * - `foreign`: the Portuguese and Spanish occupation labels, by norm. A
+ *   Portuguese or Spanish string reads its own language and English, so an
+ *   English label on another token would make that label ambiguous for it: a
+ *   title held only there may be placed on its holder ("detective",
+ *   "tenor"), never elsewhere.
  */
 export function layerLabelSets(tokens: readonly RegistryToken[], labels: readonly RegistryLabel[]) {
   const occupations = new Map(tokens.filter((t) => t.kind === 'pos').map((t) => [t.token, t]));
   const english = new Map<string, string[]>();
   const known = new Map<string, Set<string>>();
+  const foreign = new Map<string, Set<string>>();
   for (const t of occupations.values()) english.set(t.token, [t.labelEn]);
   for (const l of labels) {
     if (!occupations.has(l.token)) continue;
-    (known.get(l.labelNorm) ?? known.set(l.labelNorm, new Set()).get(l.labelNorm)!).add(l.token);
+    addTo(l.lang === 'en' ? known : foreign, l.labelNorm, l.token);
     if (l.lang !== 'en' || (l.kind !== 'preferred' && l.kind !== 'alternative')) continue;
     const list = english.get(l.token)!;
     if (!list.includes(l.label)) list.push(l.label);
   }
-  return { english, known };
+  return { english, known, foreign };
 }
 
 // ── The plan ────────────────────────────────────────────────────────────────
@@ -282,6 +292,7 @@ export interface OnetPlanInput {
   /** `layerLabelSets` of the registry's labels. */
   english: Map<string, string[]>;
   known: Map<string, Set<string>>;
+  foreign?: Map<string, Set<string>>;
   /** The O*NET release the titles come from: `31.0`. */
   release: string;
 }
@@ -321,6 +332,7 @@ export type PlacementMethod =
   | 'clef'
   | 'none'
   | 'clef_failed'
+  | 'disagreed'
   | 'known'
   | 'elsewhere'
   | 'ambiguous'
@@ -402,8 +414,6 @@ interface Entry {
   /** The candidates ranked by cosine, for a contest. */
   ranked?: { c: OnetCandidate; score: number; matched: string }[];
 }
-
-const addTo = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
 
 /** Place every O*NET title on one candidate token, or on none; see the module comment. */
 export async function planOnetLayer(input: OnetPlanInput, deps: OnetPlanDeps): Promise<OnetPlan> {
@@ -498,14 +508,29 @@ export async function planOnetLayer(input: OnetPlanInput, deps: OnetPlanDeps): P
         score: r.score,
       }));
       const pick = await choose({ title: e.title, onetCode: e.onetCode, occupation: occupationTitle.get(e.onetCode) ?? '' }, shown);
-      // Whether: Clef's probability of none (an answer without it fails). Which: Clef's choice at its floor, else the embedding's best.
+      // Whether: Clef's probability of none (an answer without it fails). Which: Clef's choice at its floor, else the
+      // embedding's best when it is also Clef's most probable candidate; when they name different ones, nothing.
       const none = pick.probabilities?.none ?? null;
       const failed = Boolean(pick.failed) || none == null;
       const chosen = pick.token && shown.some((s) => s.token === pick.token) ? pick.token : null;
-      const token = !failed && none <= noneMax ? (chosen ?? shown[0]!.token) : null;
-      Object.assign(e.placement, { token, p: pick.p, none, method: token ? 'clef' : failed ? 'clef_failed' : 'none' });
+      const p = (t: string) => pick.probabilities?.[t] ?? 0;
+      const likeliest = shown.reduce((a, b) => (p(b.token) > p(a.token) ? b : a)).token;
+      let method: PlacementMethod;
+      let token: string | null = null;
+      if (failed) method = 'clef_failed';
+      else if (none > noneMax) method = 'none';
+      else if (chosen) [method, token] = ['clef', chosen];
+      else if (likeliest === shown[0]!.token) [method, token] = ['clef', likeliest];
+      else method = 'disagreed';
+      Object.assign(e.placement, { token, p: pick.p, none, method });
       deps.progress?.('chosen', ++done, close.length);
     });
+  }
+
+  // A title held only in Portuguese or Spanish goes on its holder or nowhere.
+  for (const e of entries) {
+    const holders = input.foreign?.get(e.norm);
+    if (holders && PLACED.has(e.placement.method) && !holders.has(e.placement.token!)) Object.assign(e.placement, { method: 'elsewhere', token: [...holders][0]! });
   }
 
   // A title placed on two tokens is left out of both.
@@ -554,6 +579,7 @@ export async function planOnetLayer(input: OnetPlanInput, deps: OnetPlanDeps): P
     clef: 0,
     none: 0,
     clef_failed: 0,
+    disagreed: 0,
     known: 0,
     elsewhere: 0,
     ambiguous: 0,
