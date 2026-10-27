@@ -13,33 +13,45 @@
  *
  * Input: a snapshot of the registry's vectors in NDJSON (`{ id, values,
  * metadata }`, for example `test/registry.reembed.test.ts`'s v2 files):
- * every line's id and metadata are kept and its `metadata.label` (the label,
- * cut at 200 characters as the index holds it) is embedded again. Output:
- * `vectors-v3-001.ndjson`, … (5,000 a file) for
- * `wrangler vectorize upsert token-registry-v3`, and, for
- * `test/registry.tau.test.ts`, each kind's texts and vectors
- * (`<out>/tau-cache/embeddinggemma-2-GGUF-Q8_0-prompted-<kind>.json` and
- * `.f32`).
+ * every line's id and metadata are kept and its `metadata.label` is embedded
+ * again: the label as the index holds it, cut at 200 characters (5 of ESCO's
+ * 229,810), with runs of white space as one space (131), since
+ * llama-embedding reads one text a line. Output: `vectors-v3-001.ndjson`, …
+ * (5,000 a file) for `wrangler vectorize upsert token-registry-v3`, and, for
+ * `test/registry.tau.test.ts`, each kind's texts and vectors under the τ
+ * cache's names (`<out>/tau-cache/embeddinggemma-2-GGUF-Q8_0-doc-<8 hex>-<kind>.json`
+ * and `.f32`, `test/fixtures/work/registryTools.ts`).
+ *
+ * `--widths 768,512` also writes each narrower width's files from the same
+ * vectors, cut to their first dimensions and normalised again (EmbeddingGemma
+ * 2 is trained for Matryoshka truncation to 512, 256 or 128):
+ * `vectors-v3-512-001.ndjson`, …
+ *
+ * Each run of llama-embedding is saved as it ends (`<out>/parts/`), so a run
+ * that stops resumes where it stopped; the parts are deleted once the files
+ * are written.
  *
  *   node scripts/work/embed-registry.mjs --in ~/Development/esco/import/registry-embeddinggemma-300m --out ~/Development/esco/import/registry-embeddinggemma-2
  *
  * Options: --hf <repo:quant> (default ggml-org/embeddinggemma-2-GGUF:Q8_0,
  * resolved from llama.cpp's Hugging Face cache) or --model <path to .gguf>;
- * --batch <lines a run> (default 4000); --limit <n> (the first n lines, to
+ * --batch <texts a run> (default 4000); --limit <n> (the first n lines, to
  * try it). Needs brew's llama-embedding (llama.cpp). Writes nothing to
  * Cloudflare.
  */
 
 import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const DOCUMENT = 'title: none | text: ';
 const DIMS = 768;
 const PER_FILE = 5_000;
-const TAU_TAG = 'embeddinggemma-2-GGUF-Q8_0-prompted';
+// The τ cache's stem, as `cacheStem` in test/fixtures/work/registryTools.ts names it: the model, its document prompt's fingerprint.
+const TAU_STEM = `embeddinggemma-2-GGUF-Q8_0-doc-${createHash('sha256').update(DOCUMENT).digest('hex').slice(0, 8)}`;
 
 function option(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -57,6 +69,11 @@ const model = home(option('model'));
 const hf = option('hf', 'ggml-org/embeddinggemma-2-GGUF:Q8_0');
 const batch = Number(option('batch', '4000'));
 const limit = Number(option('limit', '0'));
+const widths = option('widths', String(DIMS)).split(',').map(Number);
+if (!widths.includes(DIMS) || widths.some((w) => !Number.isInteger(w) || w < 1 || w > DIMS)) {
+  console.error(`--widths lists ${DIMS} and narrower widths, e.g. ${DIMS},512`);
+  process.exit(2);
+}
 
 // The snapshot: ids, metadata, the texts to embed.
 const lines = [];
@@ -69,7 +86,9 @@ for (const f of readdirSync(input).filter((f) => /\.ndjson$/.test(f)).sort()) {
   }
   if (limit && lines.length >= limit) break;
 }
-const texts = [...new Set(lines.map((l) => l.metadata.label.replace(/\s+/g, ' ').trim()))];
+const clean = (label) => label.replace(/\s+/g, ' ').trim();
+const texts = [...new Set(lines.map((l) => clean(l.metadata.label)))];
+const row = new Map(texts.map((t, i) => [t, i]));
 console.log(`${lines.length} vectors, ${texts.length} distinct texts, ${batch} a run`);
 
 /** One llama-embedding run over these texts: their unit vectors, in order. */
@@ -94,37 +113,64 @@ function embed(chunk) {
   }
 }
 
-const vectors = new Map();
+// Every text's vector, a run at a time; a run saved by an earlier attempt is read back.
+const all = new Float32Array(texts.length * DIMS);
+const parts = join(out, 'parts');
+mkdirSync(parts, { recursive: true });
 const t0 = Date.now();
-for (let i = 0; i < texts.length; i += batch) {
+for (let i = 0, n = 0; i < texts.length; i += batch, n++) {
   const chunk = texts.slice(i, i + batch);
-  embed(chunk).forEach((v, j) => vectors.set(chunk[j], v));
-  const done = Math.min(i + batch, texts.length);
-  console.log(`embedded ${done} of ${texts.length} (${Math.round((Date.now() - t0) / 1000)} s)`);
+  const stem = join(parts, String(n).padStart(4, '0'));
+  if (existsSync(`${stem}.json`) && existsSync(`${stem}.f32`) && JSON.stringify(JSON.parse(readFileSync(`${stem}.json`, 'utf8'))) === JSON.stringify(chunk)) {
+    const buf = readFileSync(`${stem}.f32`);
+    all.set(new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)), i * DIMS);
+    continue;
+  }
+  const part = new Float32Array(chunk.length * DIMS);
+  embed(chunk).forEach((v, j) => part.set(v, j * DIMS));
+  writeFileSync(`${stem}.f32`, Buffer.from(part.buffer));
+  writeFileSync(`${stem}.json`, JSON.stringify(chunk));
+  all.set(part, i * DIMS);
+  console.log(`embedded ${Math.min(i + batch, texts.length)} of ${texts.length} (${Math.round((Date.now() - t0) / 1000)} s)`);
+}
+const vectorOf = (label) => {
+  const at = row.get(clean(label)) * DIMS;
+  return all.subarray(at, at + DIMS);
+};
+
+/** A vector cut to its first `width` dimensions and normalised again, rounded as the index files hold it. */
+function cut(v, width) {
+  const head = v.subarray(0, width);
+  const n = Math.sqrt(head.reduce((s, x) => s + x * x, 0)) || 1;
+  return Array.from(head, (x) => Math.round((x / n) * 1e6) / 1e6);
 }
 
-// The index's files.
+// The index's files, written one at a time: `vectors-v3-NNN` at the full width, `vectors-v3-<width>-NNN` at each narrower one.
 mkdirSync(out, { recursive: true });
-for (const f of readdirSync(out)) if (/^vectors-v3-\d{3}\.ndjson$/.test(f)) rmSync(join(out, f));
-const rows = lines.map((l) => JSON.stringify({ id: l.id, values: vectors.get(l.metadata.label.replace(/\s+/g, ' ').trim()).map((x) => Math.round(x * 1e6) / 1e6), metadata: l.metadata }));
+for (const f of readdirSync(out)) if (/^vectors-v3-(\d+-)?\d{3}\.ndjson$/.test(f)) rmSync(join(out, f));
 let files = 0;
-for (let i = 0; i < rows.length; i += PER_FILE) {
-  writeFileSync(join(out, `vectors-v3-${String(++files).padStart(3, '0')}.ndjson`), rows.slice(i, i + PER_FILE).join('\n') + '\n');
+for (let i = 0; i < lines.length; i += PER_FILE) {
+  files++;
+  for (const width of widths) {
+    const rows = lines.slice(i, i + PER_FILE).map((l) => JSON.stringify({ id: l.id, values: cut(vectorOf(l.metadata.label), width), metadata: l.metadata }));
+    writeFileSync(join(out, `vectors-v3-${width === DIMS ? '' : `${width}-`}${String(files).padStart(3, '0')}.ndjson`), rows.join('\n') + '\n');
+  }
 }
 
 // The τ calibration's documents, by kind.
 const cache = join(out, 'tau-cache');
 mkdirSync(cache, { recursive: true });
 for (const kind of ['pos', 'skill']) {
-  const kindTexts = [...new Set(lines.filter((l) => l.metadata.kind === kind).map((l) => l.metadata.label.replace(/\s+/g, ' ').trim()))];
+  const kindTexts = [...new Set(lines.filter((l) => l.metadata.kind === kind).map((l) => clean(l.metadata.label)))];
   const f32 = new Float32Array(kindTexts.length * DIMS);
-  kindTexts.forEach((t, i) => f32.set(vectors.get(t), i * DIMS));
-  writeFileSync(join(cache, `${TAU_TAG}-${kind}.f32`), Buffer.from(f32.buffer));
-  writeFileSync(join(cache, `${TAU_TAG}-${kind}.json`), JSON.stringify(kindTexts));
+  kindTexts.forEach((t, i) => f32.set(vectorOf(t), i * DIMS));
+  writeFileSync(join(cache, `${TAU_STEM}-${kind}.f32`), Buffer.from(f32.buffer));
+  writeFileSync(join(cache, `${TAU_STEM}-${kind}.json`), JSON.stringify(kindTexts));
 }
+rmSync(parts, { recursive: true, force: true });
 console.log(
   [
-    `wrote ${rows.length} vectors in ${files} files to ${out}, and the τ cache to ${cache}, in ${Math.round((Date.now() - t0) / 1000)} s`,
+    `wrote ${lines.length} vectors in ${files} files a width (${widths.join(', ')}) to ${out}, and the τ cache (${DIMS}) to ${cache}, in ${Math.round((Date.now() - t0) / 1000)} s`,
     'load them one file at a time into the v3 index, once the founder has created it:',
     `  for f in ${out}/vectors-v3-[0-9][0-9][0-9].ndjson; do wrangler vectorize upsert token-registry-v3 --file="$f" || break; done`,
   ].join('\n'),

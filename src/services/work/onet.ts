@@ -82,7 +82,7 @@ export const ONET_REGION = 'us';
 const ONET_NAME = 'the US O*NET database';
 /** How far the best candidate must lead the second, in cosine, to be taken without Clef. */
 export const ONET_MARGIN = 0.04;
-/** The cosine the best candidate must reach to be taken without Clef: the registry's τ_auto. */
+/** The cosine the best candidate must reach to be taken without Clef: bge-m3's τ_auto, the default; the import passes the pinned model's (`tauFor(model).auto`) as `sure`. */
 export const ONET_SURE = DEFAULT_TAU.auto;
 /**
  * Clef's most probable none for a title placed: above it the title is left

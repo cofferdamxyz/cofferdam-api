@@ -861,7 +861,7 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   // The new token's own labels join the index, so the next snap finds it by vector too. They are documents:
   // - a model with role prompts embeds them again as such, and one without reuses the query's vector;
   // - the string's own label takes the client's document vector when it sent one;
-  // - under a model the plane cannot run, the rest (the English name) waits at embedded = 0 for a backfill.
+  // - under a model the plane cannot run, the rest (the English name) waits at embedded = 0 (no backfill is built yet).
   const planeEmbeds = !CLIENT_EMBED_MODELS.has(embedModel);
   const prompted = Boolean(EMBED_PROMPTS_BY_MODEL[embedModel]);
   const clientDoc = input.vectors?.document;
@@ -880,8 +880,9 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   if (pivotVector) vectors.push({ id: labels[0]!.labelId, values: pivotVector, metadata: { token, kind: input.kind, lang: 'en', label: english, source: 'emergent' } });
   const rawVector = labels[1] ? docVector(1) : undefined;
   if (labels[1] && rawVector) vectors.push({ id: labels[1].labelId, values: rawVector, metadata: { token, kind: input.kind, lang: input.lang, label: raw, source: 'emergent' } });
-  // A label is marked embedded only once its vector is in: a failed pivot
-  // embedding leaves the English label for the backfill to find.
+  // A label is marked embedded only once its vector is in: one whose document
+  // call failed stays at embedded = 0, where the exact-label shortcut still
+  // finds it and no vector holds it (nothing embeds it later yet).
   await deps.index.upsert(vectors);
   await deps.store.markEmbedded(vectors.map((v) => v.id));
   return record({ decision: 'minted', token, labelEn: english, specialization: false, score, probability: null, candidates }, clefModel);

@@ -427,6 +427,26 @@ describe('planOnetLayer', () => {
     expect(p.counts.unembedded).toBe(1);
   });
 
+  it("stores each label's vector from its title embedded as a document, never the title's query vector", async () => {
+    // A model with role prompts answers one text differently as a query and as a document.
+    const DOCS: Record<string, number[]> = { Steamfitter: axis(40), 'Stock Handler': axis(41), 'Deck Watch Officer': axis(42) };
+    const embed: OnetPlanDeps['embed'] = async (texts, role) => texts.map((t) => (role === 'document' && DOCS[t]) || VECTORS[t]!);
+    const { plan: p } = await plan({ embed });
+    for (const [title, doc] of Object.entries(DOCS)) {
+      const label = p.labels.find((l) => l.label === title)!;
+      expect(p.vectors.get(label.labelId), title).toEqual(doc);
+    }
+  });
+
+  it('leaves out a placed title whose document embedding fails, though its query was embedded and placed', async () => {
+    const embed: OnetPlanDeps['embed'] = async (texts, role) => texts.map((t) => (role === 'document' && t === 'Steamfitter' ? null : VECTORS[t]!));
+    const { plan: p } = await plan({ embed });
+    expect(p.placements.find((x) => x.title === 'Steamfitter')!.method).toBe('unembedded');
+    expect(p.labels.some((l) => l.label === 'Steamfitter')).toBe(false);
+    expect([...p.vectors.values()].every((v) => Array.isArray(v) && v.length === 1024)).toBe(true);
+    expect(p.counts.unembedded).toBe(1);
+  });
+
   it('places nothing Clef would decide without Clef, and takes a candidate without it only when sure and clear', async () => {
     const { plan: noClef } = await plan({ choose: undefined });
     expect(noClef.placements.filter((x) => x.method === 'none').map((x) => x.title)).toEqual([

@@ -240,6 +240,23 @@ describe('snap: retrieve, then choose', () => {
     expect([...index.vectors.values()].filter((v) => v.metadata.token === 'pos:pastry-chef').map((v) => v.metadata.lang)).toEqual(['pt']);
   });
 
+  it("under EmbeddingGemma, a mint whose document call fails stores no vector and marks no label embedded, never the query's vector in their place", async () => {
+    const QUERY = 'task: search result | query: ';
+    // Only the query has a fake embedding, so the call for the new labels as documents fails.
+    const { deps, db, index } = await registry(
+      { 'work-embed': embedAnswer({ [`${QUERY}Confeiteiro`]: near(1, 11, 0.62).slice(0, 768) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'Pastry Chef' }) },
+      [],
+      [],
+      { 'work-embed': '@cf/google/embeddinggemma-300m' },
+    );
+    expect(await snap({ ...deps, tau: { auto: 0.95, low: 0.5 } }, { kind: 'pos', raw: 'Confeiteiro', lang: 'pt' })).toMatchObject({ decision: 'minted', token: 'pos:pastry-chef' });
+    expect(db.sqlite.prepare("SELECT lang, embedded FROM registry_labels WHERE token = 'pos:pastry-chef' ORDER BY lang").all()).toEqual([
+      { lang: 'en', embedded: 0 },
+      { lang: 'pt', embedded: 0 },
+    ]);
+    expect([...index.vectors.values()].filter((v) => v.metadata.token === 'pos:pastry-chef')).toEqual([]);
+  });
+
   it('mints only on Clef’s own none at its floor: an empty or unknown answer in the band is no token', async () => {
     for (const answer of [{ answers: {} }, { answers: { match: { choice: 'c9', probabilities: { c9: 0.9 } } } }]) {
       const calls: FakeCall[] = [];
