@@ -141,7 +141,9 @@ export interface Env {
   /**
    * τ for retrieve-then-choose, cosine in (0, 1]: at or above `WORK_TAU_AUTO`
    * the best candidate snaps without a model; down to `WORK_TAU_LOW` Clef
-   * adjudicates; below, a mint. Unset or invalid: 0.95 and 0.6 (`services/work/registry.ts`).
+   * adjudicates; below, a mint. Unset or invalid: the pinned `work-embed` model's own
+   * (`DEFAULT_TAU_BY_MODEL` in `services/work/registry.ts`: bge-m3 0.95 and 0.6, EmbeddingGemma
+   * 0.81 and 0.45); one set alone keeps the other's, and a pair out of order falls back to the model's.
    */
   WORK_TAU_AUTO?: string;
   WORK_TAU_LOW?: string;
