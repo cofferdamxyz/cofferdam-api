@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PARSE_JSON_SCHEMA, ParseShapeError, expiryDate, parseRequest, readParse, type ParsedCv } from '../src/services/work/parse.js';
 import { scoreParse, sectionScore, type ParseTruth } from './work-eval/parseScore.js';
+import { createLocalAi, LocalAiError, localRequest, parseLocalReaders } from './work-eval/localAi.js';
 
 interface FixtureCv {
   id: string;
@@ -217,5 +218,62 @@ describe('scoreParse', () => {
     a.phone = '+525512345678';
     const s = scoreParse(readParse(asChat(a), NOW), es.truth);
     expect(sectionScore(s, 'identity')).toEqual({ right: 4, total: 4 });
+  });
+});
+
+describe('local readers (the on-device candidates on the Mac)', () => {
+  const reader = { label: 'Gemma 4 E2B (LiteRT-LM)', url: 'http://127.0.0.1:9379', model: 'gemma-4-E2B-it.litertlm,gpu' };
+
+  it('reads WORK_PARSE_LOCAL and refuses what it cannot use', () => {
+    expect(parseLocalReaders(undefined)).toEqual([]);
+    expect(parseLocalReaders('  ')).toEqual([]);
+    expect(parseLocalReaders('[{"label":"a","url":"http://127.0.0.1:8080/v1/","model":"m","paths":["image","text"]}]')).toEqual([
+      { label: 'a', url: 'http://127.0.0.1:8080', model: 'm', paths: ['image', 'text'] },
+    ]);
+    expect(() => parseLocalReaders('{"label":"a"}')).toThrow(/JSON array/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"127.0.0.1:8080","model":"m"}]')).toThrow(/url/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":""}]')).toThrow(/model/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","paths":["pdf"]}]')).toThrow(/paths/);
+    expect(parseLocalReaders('[{"label":"a","url":"http://x:8080/v1/chat/completions","model":"m","paths":["image","image"]}]')).toEqual([
+      { label: 'a', url: 'http://x:8080', model: 'm', paths: ['image'] },
+    ]);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m"},{"label":"a","url":"http://y","model":"n"}]')).toThrow(/twice/);
+  });
+
+  it('turns thinking off in both servers\' words and keeps the image and the schema', () => {
+    const request = parseRequest('local:x', { kind: 'image', pages: [{ mime: 'image/png', base64: 'AAAA' }] });
+    // The cloud request asks for low effort, which LiteRT-LM reads as thinking on.
+    expect(request.reasoning_effort).toBe('low');
+    const body = localRequest(reader, request) as any;
+    expect(body).toMatchObject({ model: 'gemma-4-E2B-it.litertlm,gpu', stream: false, reasoning_effort: 'none', chat_template_kwargs: { enable_thinking: false } });
+    expect(body.messages[1].content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } });
+    expect(body.response_format).toEqual(request.response_format);
+  });
+
+  it('posts to the chat endpoint and answers what readParse reads', async () => {
+    const calls: { url: string; body: any }[] = [];
+    const answer = { choices: [{ message: { content: JSON.stringify(answerFor(CVS[0]!.truth)) } }], usage: { prompt_tokens: 900, completion_tokens: 300 } };
+    const fakeFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify(answer), { status: 200 });
+    }) as unknown as typeof fetch;
+    const ai = createLocalAi(reader, { fetch: fakeFetch });
+    const result = await ai.run('ignored' as never, parseRequest('local:x', { kind: 'text', text: 'Rafael' }) as never);
+    expect(calls[0]!.url).toBe('http://127.0.0.1:9379/v1/chat/completions');
+    expect(calls[0]!.body.model).toBe('gemma-4-E2B-it.litertlm,gpu');
+    expect(readParse(result, NOW).identity.name).toBe('Rafael Exemplo');
+  });
+
+  it('names the reader and the status when the server refuses or is down', async () => {
+    const html = (async () => new Response('<html>busy</html>', { status: 200 })) as unknown as typeof fetch;
+    await expect(createLocalAi(reader, { fetch: html }).run('x' as never, {} as never)).rejects.toThrow(/answered 200: not JSON: <html>busy/);
+    const refuse = (async () => new Response('model not found', { status: 404 })) as unknown as typeof fetch;
+    await expect(createLocalAi(reader, { fetch: refuse }).run('x' as never, {} as never)).rejects.toThrow(
+      new LocalAiError(reader.label, 404, 'model not found'),
+    );
+    const down = (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+    await expect(createLocalAi(reader, { fetch: down }).run('x' as never, {} as never)).rejects.toThrow(/Gemma 4 E2B \(LiteRT-LM\) answered network/);
   });
 });
