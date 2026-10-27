@@ -1,0 +1,718 @@
+{
+  "about": "Synthetic listings and hirer sentences for the Curated tier-2 floor (recall.ts TIER2_FLOOR): what a listing that misses the token gate scores against a sentence, by relation. Invented; no real person, company or place beyond a city name. A listing's text is what the phone embeds as the listing's document (listingText without the English names): its titles joined by '; ', then its skills, then its certificates, the parts joined by '. '. A sentence names which listings are right (the occupation it asks for, in any language), near (an adjacent occupation a hirer would still want to see as tier 2) and industry (the same industry, another occupation: never a finalist). Every other listing is far. A listing in Portuguese or Spanish also carries `english`: the registry's English names for its claims, which the plane's own embed appends in brackets (listingText) and the phone's does not.",
+  "listings": [
+    {
+      "id": "en-lawyer",
+      "lang": "en",
+      "text": "Lawyer; Associate Attorney; Law Clerk. contract drafting; commercial litigation; lease agreements; legal research; client counselling. State Bar admission"
+    },
+    {
+      "id": "pt-advogado",
+      "lang": "pt",
+      "text": "Advogado; Advogado Associado; Estagiário de Direito. contratos; direito trabalhista; revisão de contratos de aluguel; audiências; pareceres jurídicos. OAB",
+      "english": [
+        "lawyer",
+        "contract law",
+        "labour law",
+        "lease agreements",
+        "legal opinions"
+      ]
+    },
+    {
+      "id": "en-paralegal",
+      "lang": "en",
+      "text": "Paralegal; Legal Assistant. drafting pleadings; document review; case file management; filing with the court. Paralegal certificate"
+    },
+    {
+      "id": "en-accountant",
+      "lang": "en",
+      "text": "Accountant; Staff Accountant; Bookkeeper. tax returns for small businesses; monthly closing; payroll; reconciliations; QuickBooks. CPA"
+    },
+    {
+      "id": "es-contador",
+      "lang": "es",
+      "text": "Contador; Contador Público; Auxiliar contable. declaraciones de impuestos; nómina; conciliaciones bancarias; facturación electrónica; estados financieros. Cédula profesional de Contador Público",
+      "english": [
+        "accountant",
+        "tax returns",
+        "payroll",
+        "bank reconciliation",
+        "electronic invoicing",
+        "financial statements"
+      ]
+    },
+    {
+      "id": "en-bookkeeper",
+      "lang": "en",
+      "text": "Bookkeeper; Accounts Payable Clerk. invoicing; bank reconciliations; expense tracking; QuickBooks; monthly reports"
+    },
+    {
+      "id": "en-tax-advisor",
+      "lang": "en",
+      "text": "Tax advisor; Tax Preparer. individual and small business tax returns; tax planning; IRS correspondence; quarterly estimates. Enrolled Agent"
+    },
+    {
+      "id": "en-auditor",
+      "lang": "en",
+      "text": "Internal auditor; Audit Associate. financial statement audits; internal controls testing; SOX compliance; risk assessment. CPA"
+    },
+    {
+      "id": "en-electrician",
+      "lang": "en",
+      "text": "Residential electrician; Journeyman Electrician. panel upgrades; EV charger installation; lighting; troubleshooting circuits; generator transfer switches. Texas Journeyman Electrician License"
+    },
+    {
+      "id": "pt-eletricista",
+      "lang": "pt",
+      "text": "Eletricista predial; Eletricista de Manutenção. instalação de tomadas e iluminação; quadros de distribuição; carregadores de carro elétrico; manutenção preventiva. NR-10",
+      "english": [
+        "electrician",
+        "electrical installation",
+        "distribution boards",
+        "electric vehicle charger installation",
+        "preventive maintenance"
+      ]
+    },
+    {
+      "id": "es-electricista",
+      "lang": "es",
+      "text": "Electricista residencial; Electricista de mantenimiento. instalaciones eléctricas; cargadores para auto eléctrico; centros de carga; iluminación; corrección de fallas. DC-3 electricidad",
+      "english": [
+        "electrician",
+        "electrical installation",
+        "electric vehicle charger installation",
+        "load centres",
+        "lighting",
+        "fault finding"
+      ]
+    },
+    {
+      "id": "en-offshore-electrician",
+      "lang": "en",
+      "text": "Offshore electrician; Electrical Technician. platform electrical maintenance; motor control centres; hazardous area equipment; generators; switchgear. BOSIET; CompEx"
+    },
+    {
+      "id": "en-welder",
+      "lang": "en",
+      "text": "Welder; Pipe Welder; Fabricator. TIG and stick welding; carbon steel and stainless pipe; reading isometrics; structural fabrication; cutting and grinding. AWS D1.1 certification"
+    },
+    {
+      "id": "pt-soldador",
+      "lang": "pt",
+      "text": "Soldador; Soldador de tubulação. soldagem TIG e eletrodo revestido; tubulação de aço carbono; leitura de isométricos; inspeção visual. Qualificação de soldador",
+      "english": [
+        "welder",
+        "pipe welder",
+        "TIG welding",
+        "shielded metal arc welding",
+        "carbon steel piping",
+        "isometric drawings",
+        "visual weld inspection"
+      ]
+    },
+    {
+      "id": "en-plumber",
+      "lang": "en",
+      "text": "Plumber; Service Plumber. leak repair; water heater replacement; drain cleaning; fixture installation; PEX repiping. Texas Journeyman Plumber License"
+    },
+    {
+      "id": "pt-encanador",
+      "lang": "pt",
+      "text": "Encanador; Bombeiro hidráulico. reparo de vazamentos; troca de torneiras e registros; desentupimento; instalação de aquecedores; tubulação de PVC e cobre",
+      "english": [
+        "plumber",
+        "leak repair",
+        "tap replacement",
+        "drain unblocking",
+        "water heater installation",
+        "PVC and copper piping"
+      ]
+    },
+    {
+      "id": "es-plomero",
+      "lang": "es",
+      "text": "Plomero; Plomero oficial. reparación de fugas; cambio de llaves y mezcladoras; destape de drenajes; instalación de calentadores; tubería de cobre y PVC",
+      "english": [
+        "plumber",
+        "leak repair",
+        "tap replacement",
+        "drain unblocking",
+        "water heater installation",
+        "copper and PVC piping"
+      ]
+    },
+    {
+      "id": "en-hvac",
+      "lang": "en",
+      "text": "HVAC technician; Air Conditioning Technician. AC installation and repair; refrigerant charging; ductwork; thermostats; furnace maintenance. EPA 608 certification"
+    },
+    {
+      "id": "en-carpenter",
+      "lang": "en",
+      "text": "Carpenter; Finish Carpenter. framing; cabinet installation; trim and moulding; deck building; door hanging"
+    },
+    {
+      "id": "en-painter",
+      "lang": "en",
+      "text": "Painter; Residential Painter. interior and exterior painting; drywall patching; surface preparation; spray finishing"
+    },
+    {
+      "id": "en-handyman",
+      "lang": "en",
+      "text": "Handyman; Property Maintenance Technician. minor plumbing and electrical repairs; furniture assembly; drywall repair; fixture replacement; general home repairs"
+    },
+    {
+      "id": "en-nurse",
+      "lang": "en",
+      "text": "Registered nurse; Home Health Nurse. medication administration; wound care; patient assessment; IV therapy; charting. RN license; BLS"
+    },
+    {
+      "id": "en-caregiver",
+      "lang": "en",
+      "text": "Caregiver; Home Health Aide. elderly care; personal hygiene assistance; meal preparation; companionship; mobility support. CPR certification"
+    },
+    {
+      "id": "en-developer",
+      "lang": "en",
+      "text": "Software developer; Full-stack Developer. React; Node.js; TypeScript; REST APIs; PostgreSQL; mobile apps"
+    },
+    {
+      "id": "pt-desenvolvedor",
+      "lang": "pt",
+      "text": "Desenvolvedor de software; Desenvolvedor Full Stack. React; Node.js; TypeScript; APIs REST; aplicativos móveis; PostgreSQL",
+      "english": [
+        "software developer",
+        "full-stack developer",
+        "React",
+        "Node.js",
+        "TypeScript",
+        "REST APIs",
+        "mobile applications",
+        "PostgreSQL"
+      ]
+    },
+    {
+      "id": "en-data-analyst",
+      "lang": "en",
+      "text": "Data analyst; Business Intelligence Analyst. SQL; dashboards; Excel; Python; reporting; data cleaning"
+    },
+    {
+      "id": "en-truck-driver",
+      "lang": "en",
+      "text": "Truck driver; CDL Driver. long-haul freight; flatbed loads; logbook compliance; pre-trip inspections. CDL Class A"
+    },
+    {
+      "id": "pt-motorista",
+      "lang": "pt",
+      "text": "Motorista de caminhão; Motorista carreteiro. transporte de cargas; longas distâncias; inspeção do veículo; amarração de carga. CNH categoria E; MOPP",
+      "english": [
+        "truck driver",
+        "freight transport",
+        "long-haul driving",
+        "vehicle inspection",
+        "load securing"
+      ]
+    },
+    {
+      "id": "en-chef",
+      "lang": "en",
+      "text": "Chef; Sous Chef; Line Cook. menu planning; kitchen management; food safety; plating; inventory. ServSafe Manager"
+    },
+    {
+      "id": "pt-cozinheiro",
+      "lang": "pt",
+      "text": "Cozinheiro; Chefe de cozinha. preparo de pratos; planejamento de cardápio; higiene alimentar; gestão de estoque",
+      "english": [
+        "cook",
+        "head chef",
+        "food preparation",
+        "menu planning",
+        "food hygiene",
+        "stock management"
+      ]
+    },
+    {
+      "id": "en-gardener",
+      "lang": "en",
+      "text": "Gardener; Landscaper. lawn mowing; hedge trimming; planting; irrigation maintenance; weeding"
+    },
+    {
+      "id": "es-jardinero",
+      "lang": "es",
+      "text": "Jardinero; Paisajista. corte de césped; poda de setos; plantación; mantenimiento de riego; limpieza de áreas verdes",
+      "english": [
+        "gardener",
+        "landscaper",
+        "lawn mowing",
+        "hedge trimming",
+        "planting",
+        "irrigation maintenance"
+      ]
+    },
+    {
+      "id": "es-traductora",
+      "lang": "es",
+      "text": "Traductora inglés-español; Traductora jurídica. traducción de contratos; manuales técnicos; documentos legales; corrección de estilo. Perito traductor",
+      "english": [
+        "translator",
+        "legal translation",
+        "contract translation",
+        "technical manuals",
+        "proofreading"
+      ]
+    },
+    {
+      "id": "en-rigger",
+      "lang": "en",
+      "text": "Rigger; Crane Rigger. load planning; sling and shackle selection; signalling crane operators; lifting operations; equipment inspection. NCCCO Rigger Level II"
+    },
+    {
+      "id": "en-crane-operator",
+      "lang": "en",
+      "text": "Crane operator; Mobile Crane Operator. telescopic cranes; lift planning; daily inspections; load charts. NCCCO Mobile Crane Operator"
+    },
+    {
+      "id": "en-cleaner",
+      "lang": "en",
+      "text": "House cleaner; Housekeeper. deep cleaning; laundry; kitchen and bathroom cleaning; move-out cleaning"
+    },
+    {
+      "id": "en-marine-engineer",
+      "lang": "en",
+      "text": "Marine engineer; Third Assistant Engineer. main engine overhauls; purifiers; engine room watchkeeping; ship service generators. STCW"
+    },
+    {
+      "id": "en-mechanic",
+      "lang": "en",
+      "text": "Auto mechanic; Automotive Technician. brake and suspension repair; diagnostics; oil changes; engine repair. ASE certification"
+    }
+  ],
+  "sentences": [
+    {
+      "id": "accountant-taxes-en",
+      "locale": "en-US",
+      "text": "Need an accountant to file my small business taxes before the deadline next month, budget $400.",
+      "right": [
+        "en-accountant",
+        "es-contador",
+        "en-tax-advisor"
+      ],
+      "near": [
+        "en-bookkeeper"
+      ],
+      "industry": [
+        "en-auditor",
+        "en-lawyer",
+        "pt-advogado",
+        "en-paralegal"
+      ]
+    },
+    {
+      "id": "lawyer-lease-en",
+      "locale": "en-US",
+      "text": "Looking for a lawyer to review a commercial lease agreement before I sign it this week, $300.",
+      "right": [
+        "en-lawyer",
+        "pt-advogado"
+      ],
+      "near": [
+        "en-paralegal"
+      ],
+      "industry": [
+        "en-accountant",
+        "es-contador",
+        "en-tax-advisor",
+        "en-bookkeeper",
+        "en-auditor",
+        "es-traductora"
+      ]
+    },
+    {
+      "id": "advogado-aluguel-pt",
+      "locale": "pt-BR",
+      "text": "Preciso de um advogado para revisar um contrato de aluguel comercial antes de assinar, pago 500.",
+      "right": [
+        "pt-advogado",
+        "en-lawyer"
+      ],
+      "near": [
+        "en-paralegal"
+      ],
+      "industry": [
+        "en-accountant",
+        "es-contador",
+        "en-tax-advisor",
+        "en-bookkeeper",
+        "en-auditor",
+        "es-traductora"
+      ]
+    },
+    {
+      "id": "contador-anual-es",
+      "locale": "es-MX",
+      "text": "Necesito un contador para presentar la declaración anual de mi negocio este mes, 3000 pesos.",
+      "right": [
+        "es-contador",
+        "en-accountant",
+        "en-tax-advisor"
+      ],
+      "near": [
+        "en-bookkeeper"
+      ],
+      "industry": [
+        "en-auditor",
+        "en-lawyer",
+        "pt-advogado",
+        "en-paralegal"
+      ]
+    },
+    {
+      "id": "contador-renda-pt",
+      "locale": "pt-BR",
+      "text": "Preciso de um contador para fazer a declaração de imposto de renda da minha empresa, pago 600.",
+      "right": [
+        "es-contador",
+        "en-accountant",
+        "en-tax-advisor"
+      ],
+      "near": [
+        "en-bookkeeper"
+      ],
+      "industry": [
+        "en-auditor",
+        "en-lawyer",
+        "pt-advogado",
+        "en-paralegal"
+      ]
+    },
+    {
+      "id": "bookkeeping-en",
+      "locale": "en-US",
+      "text": "Someone to reconcile six months of bank statements and set up QuickBooks for my shop, $250.",
+      "right": [
+        "en-bookkeeper",
+        "en-accountant"
+      ],
+      "near": [
+        "es-contador",
+        "en-tax-advisor"
+      ],
+      "industry": [
+        "en-auditor",
+        "en-lawyer",
+        "pt-advogado",
+        "en-paralegal"
+      ]
+    },
+    {
+      "id": "audit-en",
+      "locale": "en-US",
+      "text": "Need an internal controls review of my company's finance processes before an investor due diligence, $1,500.",
+      "right": [
+        "en-auditor"
+      ],
+      "near": [
+        "en-accountant"
+      ],
+      "industry": [
+        "en-bookkeeper",
+        "en-tax-advisor",
+        "es-contador",
+        "en-lawyer",
+        "pt-advogado",
+        "en-paralegal"
+      ]
+    },
+    {
+      "id": "ev-charger-en",
+      "locale": "en-US",
+      "text": "Need a licensed electrician to install a 220V EV charger in my garage this Saturday, budget $400.",
+      "right": [
+        "en-electrician",
+        "pt-eletricista",
+        "es-electricista"
+      ],
+      "near": [
+        "en-offshore-electrician",
+        "en-handyman"
+      ],
+      "industry": [
+        "en-plumber",
+        "pt-encanador",
+        "es-plomero",
+        "en-hvac",
+        "en-welder",
+        "pt-soldador",
+        "en-carpenter",
+        "en-painter"
+      ]
+    },
+    {
+      "id": "quadro-pt",
+      "locale": "pt-BR",
+      "text": "Preciso de um eletricista para trocar o quadro de disjuntores e instalar tomadas novas na cozinha, pago 350.",
+      "right": [
+        "pt-eletricista",
+        "en-electrician",
+        "es-electricista"
+      ],
+      "near": [
+        "en-offshore-electrician",
+        "en-handyman"
+      ],
+      "industry": [
+        "en-plumber",
+        "pt-encanador",
+        "es-plomero",
+        "en-hvac",
+        "en-welder",
+        "pt-soldador",
+        "en-carpenter",
+        "en-painter"
+      ]
+    },
+    {
+      "id": "sink-en",
+      "locale": "en-US",
+      "text": "My kitchen sink is leaking under the cabinet, need someone today after 2pm. I'll pay $120.",
+      "right": [
+        "en-plumber",
+        "pt-encanador",
+        "es-plomero"
+      ],
+      "near": [
+        "en-handyman"
+      ],
+      "industry": [
+        "en-electrician",
+        "pt-eletricista",
+        "es-electricista",
+        "en-hvac",
+        "en-welder",
+        "en-carpenter",
+        "en-painter"
+      ]
+    },
+    {
+      "id": "calentador-es",
+      "locale": "es-MX",
+      "text": "Necesito un plomero para instalar un calentador de agua nuevo en mi casa esta semana, 2500 pesos.",
+      "right": [
+        "es-plomero",
+        "en-plumber",
+        "pt-encanador"
+      ],
+      "near": [
+        "en-handyman",
+        "en-hvac"
+      ],
+      "industry": [
+        "en-electrician",
+        "pt-eletricista",
+        "es-electricista",
+        "en-welder",
+        "pt-soldador",
+        "en-carpenter",
+        "en-painter"
+      ]
+    },
+    {
+      "id": "pipe-welding-en",
+      "locale": "en-US",
+      "text": "Need a certified pipe welder for stainless steel process piping on a two-week shutdown, $45 an hour.",
+      "right": [
+        "en-welder",
+        "pt-soldador"
+      ],
+      "near": [],
+      "industry": [
+        "en-electrician",
+        "en-offshore-electrician",
+        "en-plumber",
+        "en-rigger",
+        "en-marine-engineer",
+        "en-mechanic"
+      ]
+    },
+    {
+      "id": "ac-repair-en",
+      "locale": "en-US",
+      "text": "My AC stopped cooling, need a technician to check the refrigerant and fix it today, $200.",
+      "right": [
+        "en-hvac"
+      ],
+      "near": [
+        "en-handyman"
+      ],
+      "industry": [
+        "en-electrician",
+        "pt-eletricista",
+        "es-electricista",
+        "en-plumber",
+        "en-mechanic"
+      ]
+    },
+    {
+      "id": "nurse-en",
+      "locale": "en-US",
+      "text": "Home nurse to administer IV antibiotics and change a wound dressing daily for two weeks, $80 a visit.",
+      "right": [
+        "en-nurse"
+      ],
+      "near": [
+        "en-caregiver"
+      ],
+      "industry": []
+    },
+    {
+      "id": "caregiver-en",
+      "locale": "en-US",
+      "text": "Looking for a caregiver for my father three afternoons a week, help with meals and walks, $25 an hour.",
+      "right": [
+        "en-caregiver"
+      ],
+      "near": [
+        "en-nurse"
+      ],
+      "industry": [
+        "en-cleaner",
+        "en-chef"
+      ]
+    },
+    {
+      "id": "app-en",
+      "locale": "en-US",
+      "text": "Need a developer to build a small React Native app with a Node backend, fixed price $5,000.",
+      "right": [
+        "en-developer",
+        "pt-desenvolvedor"
+      ],
+      "near": [
+        "en-data-analyst"
+      ],
+      "industry": []
+    },
+    {
+      "id": "dashboard-en",
+      "locale": "en-US",
+      "text": "Someone to build a sales dashboard from our Excel exports with SQL and Python, $800.",
+      "right": [
+        "en-data-analyst"
+      ],
+      "near": [
+        "en-developer",
+        "pt-desenvolvedor"
+      ],
+      "industry": [
+        "en-accountant",
+        "en-bookkeeper"
+      ]
+    },
+    {
+      "id": "freight-en",
+      "locale": "en-US",
+      "text": "CDL driver to haul a flatbed load from Houston to Dallas next Tuesday, $600.",
+      "right": [
+        "en-truck-driver",
+        "pt-motorista"
+      ],
+      "near": [],
+      "industry": [
+        "en-rigger",
+        "en-crane-operator",
+        "en-mechanic"
+      ]
+    },
+    {
+      "id": "jantar-pt",
+      "locale": "pt-BR",
+      "text": "Procuro um cozinheiro para um jantar de 20 pessoas no sábado, pago 800.",
+      "right": [
+        "pt-cozinheiro",
+        "en-chef"
+      ],
+      "near": [],
+      "industry": [
+        "en-cleaner",
+        "en-caregiver"
+      ]
+    },
+    {
+      "id": "gardener-en",
+      "locale": "en-US",
+      "text": "Weekly gardener, $60 each visit.",
+      "right": [
+        "en-gardener",
+        "es-jardinero"
+      ],
+      "near": [
+        "en-handyman"
+      ],
+      "industry": [
+        "en-cleaner",
+        "en-painter"
+      ]
+    },
+    {
+      "id": "rigger-en",
+      "locale": "en-US",
+      "text": "Looking for a certified rigger to help move a 2-ton genset onto my boat at Galveston marina Friday morning, $300.",
+      "right": [
+        "en-rigger"
+      ],
+      "near": [
+        "en-crane-operator"
+      ],
+      "industry": [
+        "en-truck-driver",
+        "en-welder",
+        "en-marine-engineer"
+      ]
+    },
+    {
+      "id": "translation-en",
+      "locale": "en-US",
+      "text": "Someone fluent in Spanish to translate a 12-page contract by Monday, $150.",
+      "right": [
+        "es-traductora"
+      ],
+      "near": [],
+      "industry": [
+        "en-lawyer",
+        "pt-advogado",
+        "en-paralegal"
+      ]
+    },
+    {
+      "id": "cleaning-en",
+      "locale": "en-US",
+      "text": "Deep clean of a 2-bedroom apartment before move-out on Friday, $180.",
+      "right": [
+        "en-cleaner"
+      ],
+      "near": [
+        "en-handyman"
+      ],
+      "industry": [
+        "en-painter",
+        "en-gardener",
+        "es-jardinero"
+      ]
+    },
+    {
+      "id": "brakes-en",
+      "locale": "en-US",
+      "text": "Need a mechanic to replace the front brake pads and rotors on my pickup this weekend, $300.",
+      "right": [
+        "en-mechanic"
+      ],
+      "near": [],
+      "industry": [
+        "en-truck-driver",
+        "pt-motorista",
+        "en-welder",
+        "en-marine-engineer"
+      ]
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import {
   type BlockRefusal,
 } from '../src/services/work/blocks.js';
 import documents from './fixtures/work/documents.json';
+import tier2 from './fixtures/work/tier2-floor.json';
 import { FIXTURE_CVS, HIRER_PROMPTS, REFUSED_BLOCKS, fixtureBlocks } from './fixtures/work/index.js';
 
 const block = (text: string, kind = 'experience', lang = 'en') => checkBlock({ kind, lang, text });
@@ -386,6 +387,23 @@ describe('the Work fixtures', () => {
         if (v != null) expect(p.text.includes(v), `${p.id}.${key}: ${v}`).toBe(true);
       }
       if (p.expected.refuse) expect(p.expected.task).toBeNull();
+    }
+  });
+
+  it('hold the tier-2 floor set: every listing text, English name and sentence de-identified, every relation a listing', () => {
+    const ids = new Set(tier2.listings.map((l) => l.id));
+    expect(ids.size).toBe(tier2.listings.length);
+    for (const l of tier2.listings) {
+      expect(scanText(l.text), l.id).toBeNull();
+      expect(l.lang, l.id).toMatch(/^(en|pt|es)$/);
+      for (const name of (l as { english?: string[] }).english ?? []) expect(scanText(name), `${l.id}: ${name}`).toBeNull();
+    }
+    for (const s of tier2.sentences) {
+      expect(scanText(s.text), s.id).toBeNull();
+      const named = [...s.right, ...s.near, ...s.industry];
+      expect(s.right.length, s.id).toBeGreaterThan(0);
+      expect(new Set(named).size, s.id).toBe(named.length);
+      for (const id of named) expect(ids.has(id), `${s.id}: ${id}`).toBe(true);
     }
   });
 });
