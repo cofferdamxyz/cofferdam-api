@@ -205,7 +205,8 @@ export function languageCode(raw: string): string | null {
 /** The same claim twice, ignoring case and accents. */
 const claimKey = (raw: string) => fold(raw).replace(/\s+/g, ' ').trim();
 
-function dedupeClaims(claims: CvClaim[]): CvClaim[] {
+/** Claims without repeats, ignoring case and accents; the first of each is kept. */
+export function dedupeClaims<T extends CvClaim>(claims: T[]): T[] {
   const seen = new Set<string>();
   return claims.filter((c) => {
     const k = claimKey(c.raw);

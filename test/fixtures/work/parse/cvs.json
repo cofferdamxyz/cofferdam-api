@@ -1,0 +1,121 @@
+{
+  "_note": "Synthetic CVs for the whole-CV parse evaluation (test/workParse.eval.test.ts). Invented people, example.com addresses, no real personal data. The images are the cofferdam-app spike's samples (branch spike/ocr-first-documents, 19fbbbd). `ocr` is the text path's input: the pt CV's OCR lines in reading order (the spike's TEST_CV_LINES); the es sidebar CV's lines merged top to bottom across both columns, the order a line-sorted OCR read gives and the case that broke the block path on the Pixel. Replace it with a dump from the Pixel's ML Kit when one is taken. `truth` is what a correct parse holds; dates as cofferdam.cv.v1 keeps them (YYYY or YYYY-MM).",
+  "cvs": [
+    {
+      "id": "cv-pt",
+      "locale": "pt-BR",
+      "layout": "one column",
+      "image": "cv-pt.png",
+      "ocr": [
+        "Rafael Exemplo",
+        "Eletricista Offshore | Macaé, RJ | rafael.exemplo@example.com",
+        "RESUMO",
+        "Eletricista com 8 anos em plataformas de produção (FPSO) na Bacia de Campos.",
+        "Manutenção de painéis de média tensão, comissionamento e áreas classificadas.",
+        "EXPERIÊNCIA",
+        "2021 – atual Eletricista de Manutenção — Oceânica Serviços Marítimos",
+        "FPSO P-00: manutenção preventiva e corretiva de motores e painéis.",
+        "2017 – 2021 Eletricista Montador — Atlântico Engenharia",
+        "Montagem de leitos de cabos e testes de isolamento.",
+        "FORMAÇÃO",
+        "2016 Técnico em Eletrotécnica — SENAI Macaé",
+        "CERTIFICAÇÕES",
+        "NR-10 Básico e SEP (válido até 2027-03-15)",
+        "NR-35 Trabalho em Altura (válido até 2026-11-30)",
+        "CBSP / BOSIET com HUET (válido até 2028-01-20)",
+        "Ex-i e Ex-d — Atmosferas Explosivas (IECEx CoPC)",
+        "IDIOMAS",
+        "Português (nativo), Inglês (intermediário), Espanhol (básico)",
+        "HABILIDADES",
+        "Painéis de média tensão, inversores de frequência, megômetro,",
+        "leitura de diagramas unifilares, permissão de trabalho (PT)."
+      ],
+      "truth": {
+        "identity": { "name": "Rafael Exemplo", "email": "rafael.exemplo@example.com", "phone": null, "location": "Macaé, RJ" },
+        "headline": { "title": "Eletricista Offshore", "years": 8 },
+        "experience": [
+          { "title": "Eletricista de Manutenção", "employer": "Oceânica Serviços Marítimos", "start": "2021", "end": null, "current": true },
+          { "title": "Eletricista Montador", "employer": "Atlântico Engenharia", "start": "2017", "end": "2021", "current": false }
+        ],
+        "education": [{ "qualification": "Técnico em Eletrotécnica", "institution": "SENAI Macaé", "end": "2016" }],
+        "skills": [
+          "Painéis de média tensão",
+          "inversores de frequência",
+          "megômetro",
+          "leitura de diagramas unifilares",
+          "permissão de trabalho (PT)"
+        ],
+        "certificates": [
+          { "name": "NR-10 Básico e SEP", "expires": "2027-03" },
+          { "name": "NR-35 Trabalho em Altura", "expires": "2026-11" },
+          { "name": "CBSP / BOSIET com HUET", "expires": "2028-01" },
+          { "name": "Ex-i e Ex-d — Atmosferas Explosivas (IECEx CoPC)", "expires": null }
+        ],
+        "languages": [
+          { "code": "pt", "level": "fluent" },
+          { "code": "en", "level": "basic" },
+          { "code": "es", "level": "basic" }
+        ]
+      }
+    },
+    {
+      "id": "cv-es-sidebar",
+      "locale": "es-MX",
+      "layout": "sidebar",
+      "image": "cv-es-sidebar.png",
+      "ocr": [
+        "MARÍA EJEMPLO",
+        "TÉCNICA EN SEGURIDAD INDUSTRIAL",
+        "PERFIL",
+        "Técnica en seguridad industrial con 6 años en",
+        "CONTACTO",
+        "plantas petroquímicas. Responsable de permisos",
+        "+52 55 1234 5678",
+        "de trabajo, inspecciones y capacitación de",
+        "maria.ejemplo@example.com",
+        "cuadrillas en espacios confinados.",
+        "Av. Reforma 123, CDMX",
+        "EXPERIENCIA LABORAL",
+        "HABILIDADES",
+        "Supervisora de Seguridad",
+        "• Análisis de riesgos (HAZOP)",
+        "Petroquímica del Golfo S.A. de C.V. | 2022 – actualidad",
+        "• Permisos de trabajo",
+        "Coordinación de permisos y auditorías en planta.",
+        "• Auditorías de seguridad",
+        "• Investigación de incidentes",
+        "Inspectora de Seguridad",
+        "• Primeros auxilios",
+        "Servicios Industriales Tamaulipas | 2019 – 2022",
+        "Inspecciones diarias y reportes de incidentes.",
+        "IDIOMAS",
+        "Español (nativo)",
+        "EDUCACIÓN",
+        "Inglés intermedio B1",
+        "INSTITUTO TECNOLÓGICO DE CIUDAD MADERO",
+        "Ingeniería en Seguridad Industrial, 2018"
+      ],
+      "truth": {
+        "identity": { "name": "María Ejemplo", "email": "maria.ejemplo@example.com", "phone": "+52 55 1234 5678", "location": "Av. Reforma 123, CDMX" },
+        "headline": { "title": "Técnica en Seguridad Industrial", "years": 6 },
+        "experience": [
+          { "title": "Supervisora de Seguridad", "employer": "Petroquímica del Golfo S.A. de C.V.", "start": "2022", "end": null, "current": true },
+          { "title": "Inspectora de Seguridad", "employer": "Servicios Industriales Tamaulipas", "start": "2019", "end": "2022", "current": false }
+        ],
+        "education": [{ "qualification": "Ingeniería en Seguridad Industrial", "institution": "Instituto Tecnológico de Ciudad Madero", "end": "2018" }],
+        "skills": [
+          "Análisis de riesgos (HAZOP)",
+          "Permisos de trabajo",
+          "Auditorías de seguridad",
+          "Investigación de incidentes",
+          "Primeros auxilios"
+        ],
+        "certificates": [],
+        "languages": [
+          { "code": "es", "level": "fluent" },
+          { "code": "en", "level": "basic" }
+        ]
+      }
+    }
+  ]
+}
