@@ -497,9 +497,9 @@ export const DEFAULT_TAU: Tau = { auto: 0.95, low: 0.6 };
 export const DEFAULT_TAU_BY_MODEL: Readonly<Record<string, Tau>> = {
   '@cf/baai/bge-m3': DEFAULT_TAU,
   '@cf/google/embeddinggemma-300m': { auto: 0.81, low: 0.45 },
-  // Provisional, EmbeddingGemma's: version 2 has a scale of its own (unrelated pairs near 0.72), so these are
-  // set again from its own vectors (`test/registry.tau.test.ts`) before v3 serves.
-  [EMBEDDINGGEMMA_2_GGUF]: { auto: 0.81, low: 0.45 },
+  // Version 2's own scale (unrelated labels 0.68 on average, crowded at the top), on held-out ESCO labels from
+  // its llama-embedding vectors, the same at 768 and 512 dimensions (test/work-eval, 2026-10-27).
+  [EMBEDDINGGEMMA_2_GGUF]: { auto: 0.96, low: 0.81 },
 };
 
 /** τ as `WORK_TAU_AUTO` and `WORK_TAU_LOW` set it: either, both or neither. */
