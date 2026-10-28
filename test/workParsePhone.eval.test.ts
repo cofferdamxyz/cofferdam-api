@@ -22,6 +22,8 @@
  *
  *      WORK_PARSE_PHONE=<results.json> WORK_PARSE_PHONE_LABEL=iphone16 yarn vitest run test/workParsePhone.eval.test.ts
  *
+ *    WORK_PARSE_PHONE_NOTE adds a paragraph under the method (what the run's
+ *    results cannot say, such as a runtime built from unreleased sources).
  *    Writes `test/work-eval/parse-<date>-<label>.md` (never over an earlier
  *    one). The results, every answer included, stay where they are, outside
  *    the repository, like the Mac's runs data. Steps: the workspace
@@ -39,11 +41,16 @@ import type { ParseTruth } from './work-eval/parseScore.js';
 const PLAN_DIR = process.env.WORK_PARSE_PHONE_PLAN;
 const RESULTS = process.env.WORK_PARSE_PHONE;
 
-/** The readers of decision 0068's iPhone check (2026-10-28): LFM3-VL on the full page and at 1,024 image tokens, Gemma 4 E2B with the schema in the prompt. */
+/**
+ * The readers of decision 0068's iPhone check (2026-10-28): LFM3-VL on the full page and at 1,024 image tokens, Gemma 4
+ * E2B at its own image limit and at 280 tokens, each with the schema as llama.rn's `json_schema` over a formatted prompt,
+ * the path that reads like `llama-server` (`response_format` made LFM3-VL write its header again on llama.rn).
+ */
 const DEFAULT_READERS: PhoneReader[] = [
-  { label: 'LFM3-VL-2B QAD-Q4_0, full page', model: 'lfm3-vl-2b', imageMaxTokens: null, schema: 'grammar' },
-  { label: 'LFM3-VL-2B QAD-Q4_0, 1,024 image tokens', model: 'lfm3-vl-2b', imageMaxTokens: 1024, schema: 'grammar' },
-  { label: 'Gemma 4 E2B Q4_0, schema in the prompt', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'prompt' },
+  { label: 'LFM3-VL-2B QAD-Q4_0, full page', model: 'lfm3-vl-2b', imageMaxTokens: null, schema: 'json' },
+  { label: 'LFM3-VL-2B QAD-Q4_0, 1,024 image tokens', model: 'lfm3-vl-2b', imageMaxTokens: 1024, schema: 'json' },
+  { label: 'Gemma 4 E2B Q4_0, up to 1,120 image tokens', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'json' },
+  { label: 'Gemma 4 E2B Q4_0, 280 image tokens', model: 'gemma-4-e2b', imageMaxTokens: 280, schema: 'json' },
 ];
 
 interface FixtureCv {
@@ -88,7 +95,7 @@ describe.skipIf(!RESULTS)('Whole-CV parse on a phone: the score', () => {
     const label = (process.env.WORK_PARSE_PHONE_LABEL ?? 'phone').replace(/[^a-z0-9-]+/gi, '-').toLowerCase();
     const title = process.env.WORK_PARSE_PHONE_TITLE ?? results.device.model ?? label;
     const path = freePath(join(__dirname, 'work-eval'), `parse-${date}-${label}`);
-    writeFileSync(path, phoneReport(results, scored, all, { date, title }));
+    writeFileSync(path, phoneReport(results, scored, all, { date, title, note: process.env.WORK_PARSE_PHONE_NOTE }));
     for (const r of scored) {
       console.log(`${r.score ? 'ok  ' : 'FAIL'} ${r.reader} ${r.cv} #${r.run} ${r.msToJson} ms ${Math.round((r.score?.accuracy ?? 0) * 100)}%${r.failure ? ` (${r.failure})` : ''}`);
     }

@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { PARSE_JSON_SCHEMA, PARSE_SYSTEM, ParseShapeError, expiryDate, parseRequest, readParse, type ParsedCv } from '../src/services/work/parse.js';
 import { scoreParse, sectionScore, type ParseTruth } from './work-eval/parseScore.js';
 import { createLocalAi, LocalAiError, localRequest, parseLocalReaders, SCHEMA_IN_PROMPT, THINKING_MAX_TOKENS, withSchemaInPrompt } from './work-eval/localAi.js';
-import { parsePhoneReaders, parsePhoneResults, phonePlan, phoneReport, scorePhoneRuns } from './work-eval/phoneBench.js';
+import { answerOf, parsePhoneReaders, parsePhoneResults, phonePlan, phoneReport, scorePhoneRuns } from './work-eval/phoneBench.js';
 
 interface FixtureCv {
   id: string;
@@ -346,8 +346,8 @@ describe('the phone benchmark (the app reads, the Mac scores)', () => {
 
   it('scores the phone\'s answers like the Mac\'s, a failed call or a broken answer at zero', () => {
     const [pt, es] = CVS as [FixtureCv, FixtureCv];
-    const run = (cv: string, n: number, text: string, ok = true) => ({
-      reader: readers[0]!.label, cv, run: n, ok, error: ok ? null : 'jetsam', text, msToJson: 30_000 + n, msFirstToken: 4_000,
+    const run = (cv: string, n: number, text: string, ok = true, content: string | null = null) => ({
+      reader: readers[0]!.label, cv, run: n, ok, error: ok ? null : 'jetsam', text, content, msToJson: 30_000 + n, msFirstToken: 4_000,
       promptTokens: 2_700, predictedTokens: 600, peakFootprint: 2.1e9, minAvailable: 3e9, thermalBefore: 'nominal', thermalAfter: 'fair', stoppedLimit: false,
     });
     const raw = {
@@ -363,16 +363,24 @@ describe('the phone benchmark (the app reads, the Mac scores)', () => {
         run(pt.id, 1, '{"experience": "many"}'),
         run(es.id, 0, '', false),
         run(es.id, 1, '```json\n' + JSON.stringify(answerFor(es.truth)) + '\n```'),
+        // llama.rn's parsed content is the answer when it gives one; its stream opens with the template's assistant header.
+        run(es.id, 2, '<|im_start|>assistant\n' + JSON.stringify(answerFor(es.truth)), true, JSON.stringify(answerFor(es.truth))),
+        run(es.id, 3, '<|im_start|>assistant\n' + JSON.stringify(answerFor(es.truth))),
       ],
     };
     const results = parsePhoneResults(raw);
     const scored = scorePhoneRuns(results, new Map(CVS.map((cv) => [cv.id, cv.truth])), NOW);
-    expect(scored.map((r) => r.score?.accuracy ?? 0)).toEqual([1, 0, 0, 1]);
+    expect(scored.map((r) => r.score?.accuracy ?? 0)).toEqual([1, 0, 0, 1, 1, 1]);
+    // Only a known header is taken off: anything else before the JSON is the model's and fails the read.
+    expect(answerOf({ text: '<|im_start|>assistant\n{}', content: null })).toBe('{}');
+    expect(answerOf({ text: 'Sure! {}', content: null })).toBe('Sure! {}');
+    expect(answerOf({ text: '<|im_start|>assistant\n{"a":1}', content: '{"b":2}' })).toBe('{"b":2}');
     expect(scored[1]!.failure).toMatch(/^shape:/);
     expect(scored[2]!.failure).toBe('jetsam');
     const md = phoneReport(results, scored, CVS.map((cv) => ({ id: cv.id, locale: 'x', layout: 'y' })), { date: '2026-10-28', title: 'iPhone 16' });
     // OK counts the answers that parsed, as the Mac's report does; the times count every call that answered.
-    expect(md).toContain('| LFM3-VL-2B, full page | 2/4 | 50% | 50% | 4.0 | 30.0 | 30.0 | 2.10 | 3.00 | nominal, fair |');
+    expect(md).toContain('| LFM3-VL-2B, full page | 4/6 | 67% | 50% | 4.0, 30.0 | 4.0 | 30.0 | 30.0 | 2.10 | 3.00 | nominal, fair |');
+    expect(md).toContain('| failed 100% 100% 100% |');
     expect(md).toContain('| 100% failed |');
     expect(() => parsePhoneResults({ v: 2 })).toThrow(/v: 1/);
     expect(() => parsePhoneResults({ v: 1, runs: [{}], readers: [] })).toThrow(/runs\[0\]/);

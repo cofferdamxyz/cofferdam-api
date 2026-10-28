@@ -28,8 +28,11 @@ export interface PhoneReader {
   model: string;
   /** llama.rn's `image_max_tokens` for the projector; null for the model's own limit. */
   imageMaxTokens: number | null;
-  /** `grammar`: the schema as llama.rn's `response_format`; `prompt`: written into the system prompt, no grammar. */
-  schema: 'grammar' | 'prompt';
+  /**
+   * `grammar`: the schema as llama.rn's `response_format` (the chat template's grammar, as `llama-server` does);
+   * `json`: llama.rn's own `json_schema` (a plain JSON grammar from the first token); `prompt`: in the system prompt, no grammar.
+   */
+  schema: 'grammar' | 'json' | 'prompt';
 }
 
 export interface PhonePlan {
@@ -58,8 +61,10 @@ export interface PhoneRun {
   /** False when the call threw; the answer is then empty. */
   ok: boolean;
   error: string | null;
-  /** The model's whole answer. */
+  /** llama.rn's whole stream, the chat template's generation prompt included. */
   text: string;
+  /** The answer as llama.rn's chat parser reads it (what `llama-server` returns on the Mac); null when it gave none. */
+  content: string | null;
   /** From the call to the finished answer: the image, the prompt and the JSON. */
   msToJson: number;
   /** From the call to the first answer token, or null when none came. */
@@ -94,6 +99,9 @@ export interface PhoneResults {
     loadedFootprint: number | null;
     /** How long the reader waited for the phone to cool to nominal before it loaded. */
     cooledMs: number | null;
+    /** The most footprint and the least memory left while it loaded (written every second, so a load iOS ends still shows them). */
+    loadPeakFootprint: number | null;
+    loadMinAvailable: number | null;
   }[];
   runs: PhoneRun[];
 }
@@ -150,7 +158,9 @@ export function parsePhoneReaders(raw: string): PhoneReader[] {
     const max = o.imageMaxTokens ?? null;
     if (max !== null && (!Number.isInteger(max) || (max as number) < 1)) throw new Error(`WORK_PARSE_PHONE_READERS[${i}].imageMaxTokens must be a positive integer or null`);
     const schema = o.schema ?? 'grammar';
-    if (schema !== 'grammar' && schema !== 'prompt') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].schema must be "grammar" or "prompt"`);
+    if (schema !== 'grammar' && schema !== 'json' && schema !== 'prompt') {
+      throw new Error(`WORK_PARSE_PHONE_READERS[${i}].schema must be "grammar", "json" or "prompt"`);
+    }
     const label = o.label.trim();
     if (seen.has(label)) throw new Error(`WORK_PARSE_PHONE_READERS names the label ${JSON.stringify(label)} twice`);
     seen.add(label);
@@ -177,6 +187,7 @@ export function parsePhoneResults(raw: unknown): PhoneResults {
       ok: r.ok === true,
       error: strOrNull(r.error),
       text: typeof r.text === 'string' ? r.text : '',
+      content: typeof r.content === 'string' ? r.content : null,
       msToJson: numOrNull(r.msToJson) ?? 0,
       msFirstToken: numOrNull(r.msFirstToken),
       promptTokens: numOrNull(r.promptTokens),
@@ -210,20 +221,44 @@ export function parsePhoneResults(raw: unknown): PhoneResults {
         error: strOrNull(o.error),
         loadedFootprint: numOrNull(o.loadedFootprint),
         cooledMs: numOrNull(o.cooledMs),
+        loadPeakFootprint: numOrNull(o.loadPeakFootprint),
+        loadMinAvailable: numOrNull(o.loadMinAvailable),
       };
     }),
     runs,
   };
 }
 
-/** Every run scored: its answer read as the cloud parse reads a chat result, a failed call or an answer out of shape scoring zero. */
+/**
+ * The assistant headers of the readers' chat templates: LFM3-VL's ChatML and
+ * Gemma 4's turn marker, as their GGUF templates write them.
+ * On 2026-10-28 llama.rn (PR #420's head) gave no parsed `content` for these
+ * grammar-bound reads and returned the model's stream as `text`, opening with
+ * that header before the JSON; `llama-server`'s chat parser strips it and
+ * returns the message alone. Taking the stream after the header is that
+ * parser's step, never a repair of the JSON.
+ */
+export const ASSISTANT_HEADERS: readonly string[] = ['<|im_start|>assistant\n', '<|turn>model\n'];
+
+/** A read's answer as a chat parser gives it: llama.rn's `content` when it has one, else the stream after its template's assistant header. */
+export function answerOf(run: Pick<PhoneRun, 'text' | 'content'>): string {
+  if (run.content?.trim()) return run.content;
+  const header = ASSISTANT_HEADERS.find((h) => run.text.startsWith(h));
+  return header ? run.text.slice(header.length) : run.text;
+}
+
+/**
+ * Every run scored: its answer (`answerOf`) read as the cloud parse reads a
+ * chat result, a failed call or an answer out of shape scoring zero, so the
+ * phone and the Mac's `llama-server` are scored alike.
+ */
 export function scorePhoneRuns(results: PhoneResults, truths: Map<string, ParseTruth>, now = Date.now()): ScoredPhoneRun[] {
   return results.runs.map((r) => {
     const truth = truths.get(r.cv);
     if (!truth) throw new Error(`the results name a CV the fixtures do not hold: ${r.cv}`);
     if (!r.ok) return { ...r, failure: r.error ?? 'the call failed', score: null };
     try {
-      const parsed = readParse({ choices: [{ message: { content: r.text } }] }, now);
+      const parsed = readParse({ choices: [{ message: { content: answerOf(r) } }] }, now);
       return { ...r, failure: null, score: scoreParse(parsed, truth) };
     } catch (err) {
       return { ...r, failure: err instanceof ParseShapeError ? `shape: ${err.reason}` : String(err).slice(0, 200), score: null };
@@ -245,7 +280,12 @@ const cell = (s: string) => s.replace(/\|/g, '\\|');
 const accuracyOf = (r: ScoredPhoneRun) => r.score?.accuracy ?? 0;
 
 /** The report: the summary per reader, then each CV's sections and the misses of each reader's worst run, as in the Mac's report. */
-export function phoneReport(results: PhoneResults, runs: ScoredPhoneRun[], cvs: { id: string; locale: string; layout: string }[], meta: { date: string; title: string }): string {
+export function phoneReport(
+  results: PhoneResults,
+  runs: ScoredPhoneRun[],
+  cvs: { id: string; locale: string; layout: string }[],
+  meta: { date: string; title: string; note?: string },
+): string {
   const out: string[] = [];
   const d = results.device;
   out.push(`# Whole-CV parse on the phone, ${meta.title}, ${meta.date}`, '');
@@ -257,16 +297,26 @@ export function phoneReport(results: PhoneResults, runs: ScoredPhoneRun[], cvs: 
       `${d.totalMemory != null ? `${gb(d.totalMemory)} GB` : 'unknown'} of memory; llama.rn ${results.runtime.llamaRn ?? 'unknown'}, llama.cpp ${results.runtime.llamaCpp ?? 'unknown'}; ` +
       `app ${results.app.version ?? '?'} (${results.app.build ?? '?'}). From ${results.startedAt} to ${results.finishedAt ?? 'an unfinished run'}.`,
     '',
-    'Times are the phone\'s wall clock from the call: to the first answer token, and to the finished JSON (image, prompt and answer). ' +
+    'Times are the phone\'s wall clock from the call: to the first answer token, and to the finished JSON (image, prompt and answer); ' +
+      'a reader\'s first read follows the wait for a cool phone, the four after it run on a phone the reads warm. ' +
       'Peak memory is the app\'s footprint (`phys_footprint`, what iOS ends an app by), the most sampled every 250 ms during a read; ' +
       '"left" is the least `os_proc_available_memory` reported. Thermal is `ProcessInfo.thermalState` before and after each read; ' +
       'each reader waited for the phone to cool to nominal (at most ten minutes) before it loaded, and the KV cache was cleared before every read.',
     '',
+    ...(meta.note?.trim() ? [meta.note.trim(), ''] : []),
   );
-  out.push('## Readers', '', '| Reader | Model | Cooled first, s | Load s | GPU | Footprint loaded, GB | Error |', '|---|---|---|---|---|---|---|');
+  out.push(
+    '## Readers',
+    '',
+    '| Reader | Model | Cooled first, s | Load s | GPU | Footprint loaded, GB | Load peak, GB | Load left, GB | Error |',
+    '|---|---|---|---|---|---|---|---|---|',
+  );
   for (const r of results.readers) {
+    // A reader with no load time, no error and no reads stopped before its model was in memory: the app ended.
+    const error = r.error ? cell(r.error) : r.loadMs == null && !results.runs.some((x) => x.reader === r.label) ? 'the app ended before it loaded' : '';
     out.push(
-      `| ${cell(r.label)} | ${r.model} | ${secs(r.cooledMs)} | ${secs(r.loadMs)} | ${r.gpu == null ? '—' : r.gpu ? 'yes' : `no${r.reasonNoGPU ? ` (${cell(r.reasonNoGPU)})` : ''}`} | ${gb(r.loadedFootprint)} | ${r.error ? cell(r.error) : ''} |`,
+      `| ${cell(r.label)} | ${r.model} | ${secs(r.cooledMs)} | ${secs(r.loadMs)} | ${r.gpu == null ? '—' : r.gpu ? 'yes' : `no${r.reasonNoGPU ? ` (${cell(r.reasonNoGPU)})` : ''}`} | ` +
+        `${gb(r.loadedFootprint)} | ${gb(r.loadPeakFootprint)} | ${gb(r.loadMinAvailable)} | ${error} |`,
     );
   }
   out.push('');
@@ -284,13 +334,16 @@ export function phoneReport(results: PhoneResults, runs: ScoredPhoneRun[], cvs: 
   out.push(
     '## Summary',
     '',
-    '| Reader | OK | Accuracy (mean) | Worst CV | First token, median s | JSON, median s | JSON, max s | Peak memory, GB | Left, GB | Thermal |',
-    '|---|---|---|---|---|---|---|---|---|---|',
+    '| Reader | OK | Accuracy (mean) | Worst CV | First read: first token, JSON s | First token, median s | JSON, median s | JSON, max s | Peak memory, GB | Left, GB | Thermal |',
+    '|---|---|---|---|---|---|---|---|---|---|---|',
   );
   for (const r of rows) {
     const done = r.rs.filter((x) => x.ok);
+    // The reader's first read came after the run waited for the phone to cool: a user's single read.
+    const first = done[0];
     out.push(
-      `| ${cell(r.label)} | ${r.ok.length}/${r.rs.length} | ${pct(r.acc)} | ${pct(r.worst)} | ${secs(median(done.map((x) => x.msFirstToken).filter((x): x is number => x != null)))} | ` +
+      `| ${cell(r.label)} | ${r.ok.length}/${r.rs.length} | ${pct(r.acc)} | ${pct(r.worst)} | ${first ? `${secs(first.msFirstToken)}, ${secs(first.msToJson)}` : '—'} | ` +
+        `${secs(median(done.map((x) => x.msFirstToken).filter((x): x is number => x != null)))} | ` +
         `${secs(median(done.map((x) => x.msToJson)))} | ${secs(done.length ? Math.max(...done.map((x) => x.msToJson)) : null)} | ${gb(r.peak)} | ${gb(r.left)} | ${r.thermal.join(', ') || '—'} |`,
     );
   }
