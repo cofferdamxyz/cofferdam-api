@@ -14,9 +14,12 @@
  * The body is the parse request with the server's own model name, no stream,
  * and thinking off in both servers' words: `reasoning_effort: "none"` (LiteRT-LM
  * reads `low` as thinking on) and `chat_template_kwargs.enable_thinking: false`
- * (llama.cpp). An image stays an OpenAI `image_url` part with a data URI, which
- * both servers take. The answer is the server's JSON body, which `readParse`
- * reads like a Workers AI chat result. Nothing leaves the Mac.
+ * (llama.cpp). A reader set to `thinking: true` turns the template's switch on
+ * instead, keeps the request's own effort and may answer up to
+ * `THINKING_MAX_TOKENS`, so a reasoning block and the JSON after it fit. An
+ * image stays an OpenAI `image_url` part with a data URI, which both servers
+ * take. The answer is the server's JSON body, which `readParse` reads like a
+ * Workers AI chat result. Nothing leaves the Mac.
  */
 
 import type { AiBinding } from '../../src/services/inference/index.js';
@@ -30,7 +33,12 @@ export interface LocalReader {
   model: string;
   /** The parse paths to run on it; the image path when absent. */
   paths?: ('image' | 'text')[];
+  /** Thinking on (the template's `enable_thinking`); off when absent, as the phone runs it. */
+  thinking?: boolean;
 }
+
+/** The answer's cap with thinking on: the reasoning block and the JSON after it (LFM3-VL's card allows 16,384). */
+export const THINKING_MAX_TOKENS = 8_192;
 
 export class LocalAiError extends Error {
   constructor(
@@ -50,7 +58,7 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url, model, paths?}');
+    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url, model, paths?, thinking?}');
   }
   if (!Array.isArray(parsed)) throw new Error('WORK_PARSE_LOCAL must be a JSON array');
   const readers = parsed.map((r, i): LocalReader => {
@@ -70,7 +78,8 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
       }
       paths = [...new Set(o.paths as ('image' | 'text')[])];
     }
-    return { label: field('label'), url, model: field('model'), ...(paths ? { paths } : {}) };
+    if (o.thinking != null && typeof o.thinking !== 'boolean') throw new Error(`WORK_PARSE_LOCAL[${i}].thinking must be true or false`);
+    return { label: field('label'), url, model: field('model'), ...(paths ? { paths } : {}), ...(o.thinking === true ? { thinking: true } : {}) };
   });
   // The report groups runs by label, so two readers must not share one.
   const seen = new Set<string>();
@@ -81,9 +90,12 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
   return readers;
 }
 
-/** The request a local server gets: the parse request, the server's model name, no stream, thinking off. */
+/** The request a local server gets: the parse request, the server's model name, no stream, thinking off unless the reader asks. */
 export function localRequest(reader: LocalReader, request: Record<string, unknown>): Record<string, unknown> {
   const kwargs = (request.chat_template_kwargs ?? {}) as Record<string, unknown>;
+  if (reader.thinking) {
+    return { ...request, model: reader.model, stream: false, max_tokens: THINKING_MAX_TOKENS, chat_template_kwargs: { ...kwargs, enable_thinking: true } };
+  }
   return {
     ...request,
     model: reader.model,

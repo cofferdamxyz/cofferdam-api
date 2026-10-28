@@ -37,7 +37,7 @@
  * On-device readers run in the same report through OpenAI-compatible servers
  * on the Mac (`test/work-eval/localAi.ts`; workspace decision 0068, proposed
  * amendment): WORK_PARSE_LOCAL is a JSON array of `{label, url, model,
- * paths?}`, the image path by default. With the cloud lists set empty, no
+ * paths?, thinking?}`, the image path and thinking off by default. With the cloud lists set empty, no
  * Cloudflare credentials are needed and nothing leaves the Mac:
  *
  *   WORK_PARSE_EVAL=1 WORK_PARSE_IMAGE_MODELS= WORK_PARSE_TEXT_MODELS= \

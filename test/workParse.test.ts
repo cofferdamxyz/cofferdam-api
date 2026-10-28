@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PARSE_JSON_SCHEMA, ParseShapeError, expiryDate, parseRequest, readParse, type ParsedCv } from '../src/services/work/parse.js';
 import { scoreParse, sectionScore, type ParseTruth } from './work-eval/parseScore.js';
-import { createLocalAi, LocalAiError, localRequest, parseLocalReaders } from './work-eval/localAi.js';
+import { createLocalAi, LocalAiError, localRequest, parseLocalReaders, THINKING_MAX_TOKENS } from './work-eval/localAi.js';
 
 interface FixtureCv {
   id: string;
@@ -238,6 +238,18 @@ describe('local readers (the on-device candidates on the Mac)', () => {
       { label: 'a', url: 'http://x:8080', model: 'm', paths: ['image'] },
     ]);
     expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m"},{"label":"a","url":"http://y","model":"n"}]')).toThrow(/twice/);
+    expect(parseLocalReaders('[{"label":"a","url":"http://x","model":"m","thinking":true},{"label":"b","url":"http://x","model":"m","thinking":false}]')).toEqual([
+      { label: 'a', url: 'http://x', model: 'm', thinking: true },
+      { label: 'b', url: 'http://x', model: 'm' },
+    ]);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","thinking":"yes"}]')).toThrow(/thinking/);
+  });
+
+  it('turns thinking on with room for the reasoning when the reader asks', () => {
+    const request = parseRequest('local:x', { kind: 'image', pages: [{ mime: 'image/png', base64: 'AAAA' }] });
+    const body = localRequest({ ...reader, thinking: true }, request) as any;
+    expect(body).toMatchObject({ stream: false, max_tokens: THINKING_MAX_TOKENS, reasoning_effort: 'low', chat_template_kwargs: { enable_thinking: true } });
+    expect(body.response_format).toEqual(request.response_format);
   });
 
   it('turns thinking off in both servers\' words and keeps the image and the schema', () => {
