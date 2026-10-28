@@ -12,9 +12,10 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { PARSE_JSON_SCHEMA, ParseShapeError, expiryDate, parseRequest, readParse, type ParsedCv } from '../src/services/work/parse.js';
+import { PARSE_JSON_SCHEMA, PARSE_SYSTEM, ParseShapeError, expiryDate, parseRequest, readParse, type ParsedCv } from '../src/services/work/parse.js';
 import { scoreParse, sectionScore, type ParseTruth } from './work-eval/parseScore.js';
-import { createLocalAi, LocalAiError, localRequest, parseLocalReaders, THINKING_MAX_TOKENS } from './work-eval/localAi.js';
+import { createLocalAi, LocalAiError, localRequest, parseLocalReaders, SCHEMA_IN_PROMPT, THINKING_MAX_TOKENS, withSchemaInPrompt } from './work-eval/localAi.js';
+import { parsePhoneReaders, parsePhoneResults, phonePlan, phoneReport, scorePhoneRuns } from './work-eval/phoneBench.js';
 
 interface FixtureCv {
   id: string;
@@ -243,6 +244,30 @@ describe('local readers (the on-device candidates on the Mac)', () => {
       { label: 'b', url: 'http://x', model: 'm' },
     ]);
     expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","thinking":"yes"}]')).toThrow(/thinking/);
+    expect(parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"prompt"},{"label":"b","url":"http://x","model":"m","schema":"grammar"}]')).toEqual([
+      { label: 'a', url: 'http://x', model: 'm', schema: 'prompt' },
+      { label: 'b', url: 'http://x', model: 'm' },
+    ]);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"system"}]')).toThrow(/schema/);
+  });
+
+  it('writes the schema into the system prompt, in the LiteRT-LM test app\'s words, when the reader asks', () => {
+    const request = parseRequest('local:x', { kind: 'image', pages: [{ mime: 'image/png', base64: 'AAAA' }] });
+    const body = localRequest({ ...reader, schema: 'prompt' }, request) as any;
+    expect(body.response_format).toBeUndefined();
+    expect(body.messages[0]).toEqual({ role: 'system', content: PARSE_SYSTEM + SCHEMA_IN_PROMPT + JSON.stringify(PARSE_JSON_SCHEMA) });
+    expect(SCHEMA_IN_PROMPT).toBe(
+      '\n\nAnswer with one JSON object only, no Markdown fence, matching this JSON schema exactly: the same keys and nesting, and only the listed enum values.\n',
+    );
+    expect(body.messages[1]).toEqual(request.messages && (request.messages as unknown[])[1]);
+    expect(body).toMatchObject({ stream: false, reasoning_effort: 'none', chat_template_kwargs: { enable_thinking: false }, temperature: 0 });
+    // The cloud request is left as it was.
+    expect((request.response_format as any).json_schema.schema).toBe(PARSE_JSON_SCHEMA);
+    // A request with no system message gets one; one without a JSON schema only loses its format.
+    expect(withSchemaInPrompt({ messages: [{ role: 'user', content: 'x' }], response_format: { type: 'json_schema', json_schema: { a: 1 } } })).toEqual({
+      messages: [{ role: 'system', content: `${SCHEMA_IN_PROMPT}{"a":1}` }, { role: 'user', content: 'x' }],
+    });
+    expect(withSchemaInPrompt({ messages: [], response_format: { type: 'json_object' } })).toEqual({ messages: [] });
   });
 
   it('turns thinking on with room for the reasoning when the reader asks', () => {
@@ -287,5 +312,70 @@ describe('local readers (the on-device candidates on the Mac)', () => {
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
     await expect(createLocalAi(reader, { fetch: down }).run('x' as never, {} as never)).rejects.toThrow(/Gemma 4 E2B \(LiteRT-LM\) answered network/);
+  });
+});
+
+describe('the phone benchmark (the app reads, the Mac scores)', () => {
+  const readers = [
+    { label: 'LFM3-VL-2B, full page', model: 'lfm3-vl-2b', imageMaxTokens: null, schema: 'grammar' as const },
+    { label: 'Gemma 4 E2B, schema in the prompt', model: 'gemma-4-e2b', imageMaxTokens: 1120, schema: 'prompt' as const },
+  ];
+
+  it('plans the cloud parse\'s own request for the phone', () => {
+    const plan = phonePlan(CVS, readers, 5, 'test');
+    const request = parseRequest('local:x', { kind: 'image', pages: [{ mime: 'image/png', base64: 'AAAA' }] });
+    expect(plan.system).toBe(PARSE_SYSTEM);
+    expect(plan.user).toBe(((request.messages as any[])[1].content as any[])[0].text);
+    expect(plan.schema).toBe(PARSE_JSON_SCHEMA);
+    expect(plan).toMatchObject({ v: 1, schemaInPrompt: SCHEMA_IN_PROMPT, maxTokens: request.max_tokens, temperature: 0, runs: 5, readers });
+    expect(plan.cvs).toEqual(CVS.map((cv) => ({ id: cv.id, file: cv.image })));
+    expect(() => phonePlan(CVS, [], 5, 'test')).toThrow(/reader/);
+    expect(() => phonePlan(CVS, readers, 0, 'test')).toThrow(/runs/);
+  });
+
+  it('reads WORK_PARSE_PHONE_READERS and refuses what the app cannot run', () => {
+    expect(parsePhoneReaders('[{"label":"a","model":"lfm3-vl-2b","imageMaxTokens":1024},{"label":"b","model":"gemma-4-e2b","schema":"prompt"}]')).toEqual([
+      { label: 'a', model: 'lfm3-vl-2b', imageMaxTokens: 1024, schema: 'grammar' },
+      { label: 'b', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'prompt' },
+    ]);
+    expect(() => parsePhoneReaders('[]')).toThrow(/non-empty/);
+    expect(() => parsePhoneReaders('[{"label":"a","model":"m","imageMaxTokens":0}]')).toThrow(/imageMaxTokens/);
+    expect(() => parsePhoneReaders('[{"label":"a","model":"m","schema":"system"}]')).toThrow(/schema/);
+    expect(() => parsePhoneReaders('[{"label":"a","model":"m"},{"label":"a","model":"n"}]')).toThrow(/twice/);
+  });
+
+  it('scores the phone\'s answers like the Mac\'s, a failed call or a broken answer at zero', () => {
+    const [pt, es] = CVS as [FixtureCv, FixtureCv];
+    const run = (cv: string, n: number, text: string, ok = true) => ({
+      reader: readers[0]!.label, cv, run: n, ok, error: ok ? null : 'jetsam', text, msToJson: 30_000 + n, msFirstToken: 4_000,
+      promptTokens: 2_700, predictedTokens: 600, peakFootprint: 2.1e9, minAvailable: 3e9, thermalBefore: 'nominal', thermalAfter: 'fair', stoppedLimit: false,
+    });
+    const raw = {
+      v: 1,
+      device: { model: 'iPhone17,3', os: 'iOS 27.0', totalMemory: 7.7e9 },
+      app: { version: '1.0.0', build: '1' },
+      runtime: { llamaRn: '0.13.0-rc.8', llamaCpp: 'b11946' },
+      startedAt: '2026-10-28T13:00:00.000Z',
+      finishedAt: '2026-10-28T13:30:00.000Z',
+      readers: [{ label: readers[0]!.label, model: 'lfm3-vl-2b', loadMs: 1_500, gpu: true, reasonNoGPU: '', error: null, loadedFootprint: 1.4e9 }],
+      runs: [
+        run(pt.id, 0, JSON.stringify(answerFor(pt.truth))),
+        run(pt.id, 1, '{"experience": "many"}'),
+        run(es.id, 0, '', false),
+        run(es.id, 1, '```json\n' + JSON.stringify(answerFor(es.truth)) + '\n```'),
+      ],
+    };
+    const results = parsePhoneResults(raw);
+    const scored = scorePhoneRuns(results, new Map(CVS.map((cv) => [cv.id, cv.truth])), NOW);
+    expect(scored.map((r) => r.score?.accuracy ?? 0)).toEqual([1, 0, 0, 1]);
+    expect(scored[1]!.failure).toMatch(/^shape:/);
+    expect(scored[2]!.failure).toBe('jetsam');
+    const md = phoneReport(results, scored, CVS.map((cv) => ({ id: cv.id, locale: 'x', layout: 'y' })), { date: '2026-10-28', title: 'iPhone 16' });
+    // OK counts the answers that parsed, as the Mac's report does; the times count every call that answered.
+    expect(md).toContain('| LFM3-VL-2B, full page | 2/4 | 50% | 50% | 4.0 | 30.0 | 30.0 | 2.10 | 3.00 | nominal, fair |');
+    expect(md).toContain('| 100% failed |');
+    expect(() => parsePhoneResults({ v: 2 })).toThrow(/v: 1/);
+    expect(() => parsePhoneResults({ v: 1, runs: [{}], readers: [] })).toThrow(/runs\[0\]/);
+    expect(() => scorePhoneRuns(parsePhoneResults({ ...raw, runs: [run('cv-x', 0, '{}')] }), new Map())).toThrow(/cv-x/);
   });
 });
