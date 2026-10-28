@@ -66,13 +66,14 @@ const LIVE = process.env.WORK_PARSE_EVAL === '1';
 /** WORK_PARSE_EVAL=dry runs the harness on a fake model that answers the pt CV's truth for every call, and writes to the OS temp folder. */
 const DRY = process.env.WORK_PARSE_EVAL === 'dry';
 
-/** Workers AI models with image input and JSON-schema output, read 2026-10-27. */
+/** Workers AI models with image input and JSON-schema output, read 2026-10-27; Gemma 4 (vision on its model page) since 2026-10-28. */
 const IMAGE_MODELS = [
   '@cf/zai-org/glm-5.3-flash',
   '@cf/meta/llama-4-scout-17b-16e-instruct',
   '@cf/deepseek-ai/deepseek-v4.1-flash-1017',
   '@cf/qwen/qwen3.8-27b',
   '@cf/moonshotai/kimi-k2.6',
+  '@cf/google/gemma-4-26b-a4b-it',
 ];
 const TEXT_MODELS = ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/zai-org/glm-5.3-flash'];
 
