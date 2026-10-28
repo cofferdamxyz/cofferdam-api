@@ -17,6 +17,11 @@
  * Writes `test/work-eval/clef-<date>.md`.
  *
  *   cd cofferdam-api && WORK_EVAL=1 direnv exec .. yarn vitest run test/workClef.eval.test.ts
+ *
+ * WORK_CLEF_LOCAL='{"label":"d1-2B Q4_K_M (llama.cpp)","url":"http://127.0.0.1:8090"}'
+ * puts a local decision model in Clef's place (`test/work-eval/localClef.ts`;
+ * workspace decision 0068, proposed amendment); the embeddings stay on Workers
+ * AI, and the report is `clef-<date>-<label>.md`.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -32,6 +37,7 @@ import { candidatesFor, embedTexts } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 import documents from './fixtures/work/documents.json';
 import { FIXTURE_CVS, HIRER_PROMPTS } from './fixtures/work/index.js';
+import { localClefSlug, parseLocalClef, withLocalClef } from './work-eval/localClef.js';
 import { seededRegistry } from './work-eval/seed.js';
 
 const LIVE = process.env.WORK_EVAL === '1';
@@ -59,7 +65,9 @@ describe.skipIf(!LIVE)('Clef classification patterns (live, Workers AI)', () => 
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const token = process.env.CLOUDFLARE_API_TOKEN;
     if (!accountId || !token) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
-    const inference = createInference({}, { ai: createRestAi({ accountId, token }) })!;
+    const localClef = parseLocalClef(process.env.WORK_CLEF_LOCAL, 'WORK_CLEF_LOCAL');
+    const rest = createRestAi({ accountId, token });
+    const inference = createInference({}, { ai: localClef ? withLocalClef(rest, localClef) : rest })!;
     const model = await inference.model('work-classify');
     const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 1000) / 10}%` : '—');
 
@@ -126,7 +134,7 @@ describe.skipIf(!LIVE)('Clef classification patterns (live, Workers AI)', () => 
     const md = [
       `# Clef classification patterns, ${date}`,
       '',
-      `\`${model}\` over the Workers AI REST API from the Mac, on the synthetic fixtures of \`test/fixtures/work/\`. Each floor row reads every recorded answer again at that floor; the shipped floors are 0.5.`,
+      `${localClef ? `${localClef.label} through llama.cpp's \`/v1/systemone\` on the Mac, in \`${model}\`'s place (the embeddings over the Workers AI REST API)` : `\`${model}\` over the Workers AI REST API from the Mac`}, on the synthetic fixtures of \`test/fixtures/work/\`. Each floor row reads every recorded answer again at that floor; the shipped floors are 0.5.`,
       '',
       '## Document type',
       '',
@@ -165,7 +173,7 @@ describe.skipIf(!LIVE)('Clef classification patterns (live, Workers AI)', () => 
       ...needs.map((n) => `| ${n.id} | ${n.expected} | ${n.probabilities.map((x) => `${x.token === n.expected ? '**' : ''}${x.token}${x.token === n.expected ? '**' : ''} ${x.p.toFixed(2)}`).join('; ')} |`),
       '',
     ].join('\n');
-    writeFileSync(join(__dirname, 'work-eval', `clef-${date}.md`), md);
+    writeFileSync(join(__dirname, 'work-eval', `clef-${date}${localClef ? `-${localClefSlug(localClef)}` : ''}.md`), md);
     expect(typed).toHaveLength(docs.length);
   }, 1_800_000);
 });

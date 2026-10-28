@@ -17,6 +17,10 @@
  * CHAT_ANSWER_MODEL and CHAT_LONG_MODEL try other models, CHAT_EARLY_ANSWER=off
  * starts answers after the router, CHAT_EVAL_ONLY=<regex> runs the matching
  * ids, CHAT_EVAL_GAP_MS spaces the turns (500 by default).
+ * CHAT_CLEF_LOCAL='{"label":"d1-2B Q4_K_M (llama.cpp)","url":"http://127.0.0.1:8090"}'
+ * routes with a local decision model in Clef's place (`test/work-eval/localClef.ts`;
+ * workspace decision 0068, proposed amendment); the report is then
+ * `report-<date>-<label>.md`.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -30,6 +34,7 @@ import { createInference, type InferenceEnv, type InferenceOp } from '../src/ser
 import prompts from './chat-eval/prompts.json';
 import { createRestAi, type RecordedCall } from './chat-eval/restAi.js';
 import { reportMarkdown, scoreTurn, summarize, summaryText, validatePrompts, type EvalPrompt, type TurnResult } from './chat-eval/score.js';
+import { localClefModel, localClefSlug, parseLocalClef, withLocalClef } from './work-eval/localClef.js';
 
 const LIVE = process.env.CHAT_EVAL === '1';
 /** The action model's "today", so month expectations hold on any day. */
@@ -67,6 +72,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     const highFloor = parseFloor(process.env.CHAT_THINKING_HIGH_FLOOR);
     const gap = Number(process.env.CHAT_EVAL_GAP_MS ?? 500);
     const only = process.env.CHAT_EVAL_ONLY ? new RegExp(process.env.CHAT_EVAL_ONLY) : null;
+    const localClef = parseLocalClef(process.env.CHAT_CLEF_LOCAL, 'CHAT_CLEF_LOCAL');
     const selected = (prompts as EvalPrompt[]).filter((p) => !only || only.test(p.id));
 
     const results: TurnResult[] = [];
@@ -75,8 +81,12 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     for (const prompt of selected) {
       // One adapter per turn, so a cancelled early answer that settles late lands on its own turn.
       const calls: RecordedCall[] = [];
-      const inference = createInference(env, { ai: createRestAi({ accountId, token, onCall: (c) => calls.push(c) }) })!;
+      const rest = createRestAi({ accountId, token, onCall: (c) => calls.push(c) });
+      const ai = localClef ? withLocalClef(rest, localClef, { onCall: (c) => calls.push(c) }) : rest;
+      const inference = createInference(env, { ai })!;
       for (const op of OPS) models[op] = await inference.model(op);
+      // The router's calls are recorded under the local model's name, so the scorer finds them there.
+      if (localClef) models['chat-router'] = localClefModel(localClef);
       const { messages } = parseChatRequest({ account: ACCOUNT, messages: [...(prompt.history ?? []), { role: 'user', text: prompt.text }] });
       const log: Record<string, unknown>[] = [];
       const t0 = Date.now();
@@ -93,8 +103,9 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     const date = new Date().toISOString().slice(0, 10);
     const dir = join(__dirname, 'chat-eval');
     const meta = { date, models, early, tier, highFloor, durationMs: Date.now() - started };
-    writeFileSync(join(dir, `report-${date}.md`), reportMarkdown(results, meta));
-    writeFileSync(join(dir, `report-${date}.json`), JSON.stringify({ meta, summary, results }, null, 2) + '\n');
+    const name = `report-${date}${localClef ? `-${localClefSlug(localClef)}` : ''}`;
+    writeFileSync(join(dir, `${name}.md`), reportMarkdown(results, meta));
+    writeFileSync(join(dir, `${name}.json`), JSON.stringify({ meta, summary, results }, null, 2) + '\n');
     expect(results).toHaveLength(selected.length);
   }, 1_800_000);
 });

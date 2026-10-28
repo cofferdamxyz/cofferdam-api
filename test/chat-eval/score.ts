@@ -165,6 +165,11 @@ export interface CallCost {
 /** One call's cost; Clef's input is always an estimate (characters / 4), its output is free. */
 export function callCost(call: RecordedCall, prices: Record<string, Prices> = PRICES): CallCost {
   const short = call.model.split('/').pop() ?? call.model;
+  // A model on the Mac in Clef's place (`local:<label>`, test/work-eval/localClef.ts) bills nothing.
+  if (call.model.startsWith('local:')) {
+    const reportedIn = call.usage?.prompt_tokens;
+    return { model: short, tokensIn: reportedIn ?? Math.ceil(call.inputChars / 4), tokensOut: 0, estimated: reportedIn === undefined, billed: false, usd: 0 };
+  }
   // A call refused before the model ran bills nothing.
   if (call.status === 'network' || (typeof call.status === 'number' && call.status >= 400)) {
     return { model: short, tokensIn: 0, tokensOut: 0, estimated: false, billed: false, usd: 0 };
