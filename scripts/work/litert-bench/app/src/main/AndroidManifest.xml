@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- A socket on 127.0.0.1 still needs it; reached only through adb forward. -->
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-feature android:name="android.hardware.npu" android:required="false" />
+
+  <application android:label="LiteRT bench" android:largeHeap="true">
+    <!-- The Pixel's system TPU libraries, as Google's AI Edge Gallery declares them. -->
+    <uses-native-library android:name="libedgetpu_util.so" android:required="false" />
+    <uses-native-library android:name="libedgetpu_tachyon.google.so" android:required="false" />
+    <uses-native-library android:name="libedgetpu_client.google.so" android:required="false" />
+    <uses-native-library android:name="libedgetpu_litert.so" android:required="false" />
+
+    <!-- No launcher entry: started with adb shell am start. -->
+    <activity android:name=".MainActivity" android:exported="true" />
+  </application>
+</manifest>

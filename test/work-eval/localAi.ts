@@ -7,7 +7,10 @@
  * run on the Mac, MiniCPM-V 4.7 through llama.cpp's `llama-server` and
  * Gemma 4 E2B through LiteRT-LM's `litert-lm serve`, and answer the same
  * request the cloud models get (`parseRequest`), so one truth and one scorer
- * measure them all (workspace decision 0068, proposed amendment).
+ * measure them all (workspace decision 0068, amendments). A phone serves it
+ * too through `adb forward`: `llama-server` built with the NDK, or the test
+ * app `scripts/work/litert-bench/` for LiteRT-LM's Kotlin API (the Pixel's
+ * TPU, Gemma 4's per-image visual budget).
  *
  *   POST <baseUrl>/v1/chat/completions
  *
@@ -19,7 +22,7 @@
  * `THINKING_MAX_TOKENS`, so a reasoning block and the JSON after it fit. An
  * image stays an OpenAI `image_url` part with a data URI, which both servers
  * take. The answer is the server's JSON body, which `readParse` reads like a
- * Workers AI chat result. Nothing leaves the Mac.
+ * Workers AI chat result. Nothing leaves the Mac, or the phone on its cable.
  */
 
 import type { AiBinding } from '../../src/services/inference/index.js';
