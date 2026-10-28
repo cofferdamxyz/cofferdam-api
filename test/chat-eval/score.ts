@@ -510,6 +510,8 @@ export interface ReportMeta {
   /** The high-effort floor of a Thinking run; null or absent: never high. */
   highFloor?: number | null;
   durationMs: number;
+  /** The prompt file when it is not `test/chat-eval/prompts.json` (CHAT_EVAL_PROMPTS), such as spoken prompts' transcripts. */
+  promptsFrom?: string;
 }
 
 /** The console summary: a few lines. */
@@ -529,7 +531,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   const out: string[] = [];
   out.push(`# Chat evaluation, ${meta.date}`, '');
   out.push(
-    `Decision 0037's evaluation: ${s.n} prompts from \`test/chat-eval/prompts.json\` through the real turn (\`runChat\`, the inference seam, Workers AI over REST). Models: ${Object.entries(meta.models)
+    `Decision 0037's evaluation: ${s.n} prompts from \`${meta.promptsFrom ?? 'test/chat-eval/prompts.json'}\` through the real turn (\`runChat\`, the inference seam, Workers AI over REST). Models: ${Object.entries(meta.models)
       .map(([op, m]) => `${op} \`${m}\``)
       .join(', ')}. Early answer ${meta.early ? 'on' : 'off'}. Tier ${meta.tier ?? 'ordinary'}${meta.tier === 'thinking' ? ` (high effort at or above ${meta.highFloor ?? 'never'})` : ''}. Run time ${Math.round(meta.durationMs / 1000)} s.`,
     '',

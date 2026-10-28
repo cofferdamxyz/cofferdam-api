@@ -20,11 +20,14 @@
  * CHAT_CLEF_LOCAL='{"label":"d1-2B Q4_K_M (llama.cpp)","url":"http://127.0.0.1:8090"}'
  * routes with a local decision model in Clef's place (`test/work-eval/localClef.ts`;
  * workspace decision 0068, proposed amendment); the report is then
- * `report-<date>-<label>.md`.
+ * `report-<date>-<label>.md`. CHAT_EVAL_PROMPTS=<file> runs another prompt set
+ * of the same shape, such as the spoken prompts' transcripts that
+ * `scripts/chat/voice-asr.mjs` writes, and CHAT_EVAL_LABEL names its report
+ * (`report-<date>-<label>.md`).
  */
 
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -57,7 +60,9 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const token = process.env.CLOUDFLARE_API_TOKEN;
     if (!accountId || !token) throw new Error('CHAT_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in the environment');
-    expect(validatePrompts(prompts)).toEqual([]);
+    const promptsFile = process.env.CHAT_EVAL_PROMPTS;
+    const promptSet = (promptsFile ? JSON.parse(readFileSync(promptsFile, 'utf8')) : prompts) as EvalPrompt[];
+    expect(validatePrompts(promptSet)).toEqual([]);
 
     const env: InferenceEnv = {
       CHAT_ROUTER_MODEL: process.env.CHAT_ROUTER_MODEL,
@@ -73,7 +78,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     const gap = Number(process.env.CHAT_EVAL_GAP_MS ?? 500);
     const only = process.env.CHAT_EVAL_ONLY ? new RegExp(process.env.CHAT_EVAL_ONLY) : null;
     const localClef = parseLocalClef(process.env.CHAT_CLEF_LOCAL, 'CHAT_CLEF_LOCAL');
-    const selected = (prompts as EvalPrompt[]).filter((p) => !only || only.test(p.id));
+    const selected = promptSet.filter((p) => !only || only.test(p.id));
 
     const results: TurnResult[] = [];
     const models: Record<string, string> = {};
@@ -102,8 +107,10 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     console.log(summaryText(summary));
     const date = new Date().toISOString().slice(0, 10);
     const dir = join(__dirname, 'chat-eval');
-    const meta = { date, models, early, tier, highFloor, durationMs: Date.now() - started };
-    const name = `report-${date}${localClef ? `-${localClefSlug(localClef)}` : ''}`;
+    const meta = { date, models, early, tier, highFloor, durationMs: Date.now() - started, ...(promptsFile ? { promptsFrom: basename(promptsFile) } : {}) };
+    const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const suffix = [localClef ? localClefSlug(localClef) : '', process.env.CHAT_EVAL_LABEL ? slug(process.env.CHAT_EVAL_LABEL) : ''].filter(Boolean);
+    const name = `report-${date}${suffix.map((s) => `-${s}`).join('')}`;
     writeFileSync(join(dir, `${name}.md`), reportMarkdown(results, meta));
     writeFileSync(join(dir, `${name}.json`), JSON.stringify({ meta, summary, results }, null, 2) + '\n');
     expect(results).toHaveLength(selected.length);
