@@ -135,8 +135,16 @@ export function violations(spec, live, profilesById = null) {
   if (Array.isArray(live.otel) && live.otel.length) out.push(`otel: ${live.otel.length} exporter(s) (must be none)`);
   if (spec.dlp?.enabled) {
     if (live.dlp?.enabled !== true) out.push(`dlp.enabled: ${JSON.stringify(live.dlp?.enabled)} (must be true)`);
-    const action = live.dlp?.action ?? live.dlp?.policies?.[0]?.action;
+    const policy = Array.isArray(live.dlp?.policies) ? live.dlp.policies[0] : null;
+    const action = policy?.action ?? live.dlp?.action;
     if (action !== 'BLOCK') out.push(`dlp.action: ${JSON.stringify(action)} (must be "BLOCK")`);
+    if (!policy) out.push('dlp.policies: none (the legacy form stores no check side; apply.mjs writes the policies form)');
+    else {
+      if (policy.enabled !== true) out.push('dlp.policies[0].enabled: false (must be true)');
+      const wantCheck = spec.dlp.check ?? ['REQUEST'];
+      const check = Array.isArray(policy.check) ? policy.check : [];
+      if (!wantCheck.every((c) => check.includes(c))) out.push(`dlp.check: ${JSON.stringify(check)} (must include ${JSON.stringify(wantCheck)})`);
+    }
     const profiles = gatewayProfileIds(live);
     if (!profiles.length) out.push('dlp.profiles: none (the strict gateway blocks on at least one profile)');
     else if (!profilesById) out.push('dlp.detectors: the profiles could not be read (the token needs Zero Trust Read), so no detector is shown on');
@@ -178,7 +186,7 @@ export function summary(live, profilesById = null) {
     cache_ttl: live.cache_ttl,
     logpush: live.logpush ?? false,
     otel: Array.isArray(live.otel) ? live.otel.length : 0,
-    dlp: live.dlp?.enabled ? `${live.dlp.action ?? live.dlp.policies?.[0]?.action ?? '?'} on ${ids.length} profile(s)` : 'off',
+    dlp: live.dlp?.enabled ? `${live.dlp.policies?.[0]?.action ?? live.dlp.action ?? '?'} on ${ids.length} profile(s)${Array.isArray(live.dlp.policies?.[0]?.check) ? `, check ${live.dlp.policies[0].check.join('+')}` : ', legacy form'}` : 'off',
     detectors: det,
     rate_limit: live.rate_limiting_limit ? `${live.rate_limiting_limit}/${live.rate_limiting_interval}s ${live.rate_limiting_technique ?? ''}`.trim() : 'none',
     authentication: live.authentication ?? false,

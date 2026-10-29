@@ -34,7 +34,8 @@ export interface GatewayFacts {
   cacheTtlSeconds: number;
   logpush: boolean;
   otelExporters: number;
-  dlp: { enabled: boolean; action: string | null; profiles: number };
+  /** `check`: the sides of a call DLP reads (`REQUEST`, `RESPONSE`); null when off or in the API's legacy form, which states none. */
+  dlp: { enabled: boolean; action: string | null; profiles: number; check: string[] | null };
   /** True when the gateway refuses a request that no account authorization covers; the plane's binding calls are pre-authenticated in the account. */
   authenticated: boolean;
   /** True when any setting could keep a request or an answer. */
@@ -63,7 +64,7 @@ interface LiveGateway {
   logpush?: unknown;
   otel?: unknown;
   authentication?: unknown;
-  dlp?: { enabled?: unknown; action?: unknown; profiles?: unknown; policies?: { action?: unknown; profiles?: unknown }[] } | null;
+  dlp?: { enabled?: unknown; action?: unknown; profiles?: unknown; policies?: { action?: unknown; profiles?: unknown; check?: unknown }[] } | null;
 }
 
 /** The gateways the plane is configured to use, with what each carries. */
@@ -81,7 +82,9 @@ export function gatewayFacts(id: string, carries: string, live: LiveGateway): Ga
   const logpush = live.logpush === true;
   const otelExporters = Array.isArray(live.otel) ? live.otel.length : 0;
   const dlpEnabled = live.dlp?.enabled === true;
-  const action = typeof live.dlp?.action === 'string' ? live.dlp.action : typeof live.dlp?.policies?.[0]?.action === 'string' ? (live.dlp.policies[0]!.action as string) : null;
+  const policy = live.dlp?.policies?.[0];
+  const action = typeof policy?.action === 'string' ? (policy.action as string) : typeof live.dlp?.action === 'string' ? live.dlp.action : null;
+  const check = Array.isArray(policy?.check) ? (policy.check as unknown[]).filter((c): c is string => typeof c === 'string') : null;
   const profiles = Array.isArray(live.dlp?.profiles) ? live.dlp.profiles.length : (live.dlp?.policies ?? []).reduce((n, p) => n + (Array.isArray(p.profiles) ? p.profiles.length : 0), 0);
   return {
     id,
@@ -90,7 +93,7 @@ export function gatewayFacts(id: string, carries: string, live: LiveGateway): Ga
     cacheTtlSeconds,
     logpush,
     otelExporters,
-    dlp: { enabled: dlpEnabled, action: dlpEnabled ? action : null, profiles: dlpEnabled ? profiles : 0 },
+    dlp: { enabled: dlpEnabled, action: dlpEnabled ? action : null, profiles: dlpEnabled ? profiles : 0, check: dlpEnabled ? check : null },
     authenticated: live.authentication === true,
     canStore: collectsLogs || cacheTtlSeconds > 0 || logpush || otelExporters > 0,
   };

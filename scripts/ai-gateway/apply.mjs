@@ -20,6 +20,8 @@
  * shows what would change.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { api, credentials, detectors, dlpProfile, dlpProfiles, entryAvailable, gatewayProfileIds, getGateway, readSpec, summary, table, violations } from './common.mjs';
 
 const args = process.argv.slice(2);
@@ -73,7 +75,11 @@ for (const g of spec.gateways) {
       }
     } else {
       if (missing.length) console.log(`${g.id}: DLP profiles not found, left out: ${missing.join(', ')}`);
-      body.dlp = { action: wantDlp.action ?? 'BLOCK', enabled: true, profiles: ids };
+      // The dashboard's policies form, with the check side explicit; the legacy `{ action, enabled, profiles }` form
+      // stores no check side. A policy needs an id (the API refuses one without; 7001 on body.dlp), so the live
+      // policy's id is kept and a new one is a UUID.
+      const livePolicy = Array.isArray(live?.dlp?.policies) ? live.dlp.policies[0] : null;
+      body.dlp = { enabled: true, policies: [{ id: livePolicy?.id ?? randomUUID(), enabled: true, action: wantDlp.action ?? 'BLOCK', check: wantDlp.check ?? ['REQUEST'], profiles: ids }] };
       dlpOn = true;
       // The detectors. Cloudflare ships a predefined profile with every entry off (2026-10-29), so a profile on the
       // gateway detects nothing until its entries are enabled: PUT /dlp/profiles/predefined/<id> (Zero Trust Edit)
