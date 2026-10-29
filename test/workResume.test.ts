@@ -277,10 +277,10 @@ describe('the decision pass, replayed', () => {
     expect(replayRule([search], built)).toEqual({ found: 1, first: 1, top5: 1, kept: 2, asked: 3 });
     expect(replayRule([search], DECISION_RULES['The gate alone, by cosine']!)).toEqual({ found: 0, first: 0, top5: 0, kept: 2, asked: 0 });
     expect(replayRule([search], DECISION_RULES['Other drops only a finalist with no occupation hit']!)).toEqual({ found: 1, first: 1, top5: 1, kept: 3, asked: 3 });
-    // EmbeddingGemma 2's floor: the right miss at 0.7 is still asked; one at 0.6 would not be.
-    const floor = Object.values(DECISION_RULES)[2]!;
-    expect(replayRule([search], floor)).toEqual({ found: 1, first: 1, top5: 1, kept: 2, asked: 3 });
-    expect(replayRule([{ ...search, considered: [{ ...search.considered[0]!, score: 0.6 }, ...search.considered.slice(1)] }], floor)).toEqual({ found: 0, first: 0, top5: 0, kept: 1, asked: 2 });
+    // EmbeddingGemma 2's floor (0.65): the right miss at 0.7 is asked; at 0.6 it is not, though the rule before the tuning (0.5) asked it.
+    const at06 = [{ mode: 'instant' as const, considered: [{ ...search.considered[0]!, score: 0.6 }, ...search.considered.slice(1)] }];
+    expect(replayRule(at06, built)).toEqual({ found: 0, first: 0, top5: 0, kept: 1, asked: 2 });
+    expect(replayRule(at06, Object.values(DECISION_RULES)[2]!)).toEqual({ found: 1, first: 1, top5: 1, kept: 2, asked: 3 });
   });
 
   it('never promotes a finalist that lacks a hard requirement, and never drops one whose call failed', () => {

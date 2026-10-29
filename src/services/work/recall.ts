@@ -15,10 +15,11 @@
  *     hold every required token (`allOf`: certificates, languages) and, when
  *     the intent names some, at least one of the occupation, unit-group or
  *     skill tokens the task needs (`anyOf`): tier 1. A vector-strong miss
- *     (`TIER2_FLOOR`) is tier 2: Curated shows it labelled, so a
+ *     (`tier2FloorFor`) is tier 2: Curated shows it labelled, so a
  *     canonicalization miss never silently excludes a fit worker, and with
  *     the decision pass an Instant search sends it to Clef too, when it holds
  *     every required token, since only Clef's fit can make it tier 1 there.
+ *     The floor follows the pinned embedding model (`tier2FloorFor`).
  *     Before the cut to `FINALIST_CAP`, tier 1 orders an occupation hit before
  *     a unit-group hit before a skill hit alone, then by cosine (decision
  *     0069; on real vacancies an occupation hit was right 85% of the time, a
@@ -40,9 +41,10 @@
  *     the gate's tier stands, as it does when a call fails or answers
  *     nothing. Within a tier the finalists rank by one weighted sum: P(fit),
  *     half of P(related), a fifth of the share of the job's needed skills
- *     they hold and a tenth of cosine (measured on prompts across ISCO
- *     groups, 2026-10-28: snapped profiles are thin, so Clef calls a right
- *     worker related more often than a fit).
+ *     they hold and cosine (tuned on prompts across ISCO groups and on real
+ *     resumes, 2026-10-28: snapped profiles are thin, so Clef calls a right
+ *     worker related more often than a fit, and cosine places the named
+ *     occupation first more often than Clef's probabilities do).
  *  6. One listing per pseudonym (Work Profiles): the best by tier and rank
  *     after the pass, so a profile Clef drops gives way to the same worker's
  *     next one; without the pass, the first in the gate's order (tier, kind
@@ -59,14 +61,23 @@ import { clefInput, FIT_FLOOR, FIT_KEYS, fitQuestions, fitState, OTHER_FLOOR, re
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
 import { namespaceOf, REGION, type ListingRecord, type ListingStore, type Scope } from './listings.js';
-import { embedTexts, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
+import { EMBEDDINGGEMMA_2_GGUF, embedTexts, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
 
 /** Results Vectorize returns per query when metadata comes back (decision 0019; re-check at build time). */
 export const RECALL_TOP_K = 50;
 /** The finalist cap (E1): what the D1 read and Clef's decision pass see. */
 export const FINALIST_CAP = 50;
-/** A token miss is tier 2 only at or above this cosine (bge-m3's scale; it follows the model at the v3 switch). */
+/** A token miss is tier 2 only at or above this cosine: bge-m3's floor, and the default for a model not listed below. */
 export const TIER2_FLOOR = 0.5;
+/**
+ * The tier-2 floor on each embedding model's own scale, as τ follows the pinned model: EmbeddingGemma 2's 0.65 was measured
+ * on its scale (2026-10-27) and adopted by the founder with the v3 switch (decision 0069, 2026-10-28): a fifth fewer Clef
+ * calls on real resumes for nothing lost.
+ */
+export const TIER2_FLOOR_BY_MODEL: Readonly<Record<string, number>> = { '@cf/baai/bge-m3': TIER2_FLOOR, [EMBEDDINGGEMMA_2_GGUF]: 0.65 };
+export function tier2FloorFor(model: string): number {
+  return TIER2_FLOOR_BY_MODEL[model] ?? TIER2_FLOOR;
+}
 /** On-site regions an intent may name: its own and the neighbours its radius reaches. */
 export const MAX_REGIONS = 8;
 /** Remote work is queried in these countries' remote namespaces (the launch markets) unless `WORK_REMOTE_COUNTRIES` says otherwise. */
@@ -75,10 +86,14 @@ export const DEFAULT_REMOTE_COUNTRIES = ['us', 'br', 'mx'];
 export type HireMode = 'instant' | 'curated';
 /** Clef calls at once in the decision pass. */
 export const DECIDE_CONCURRENCY = 8;
-/** Within a tier: P(fit), plus these weights on P(related), on the share of needed skills held and on cosine. */
+/**
+ * Within a tier: P(fit), plus these weights on P(related), on the share of needed skills held and on cosine. Cosine weighs 1,
+ * adopted by the founder on 2026-10-28 from the real-resume replay (decision 0069): the named title first 35 times in 99
+ * against 30 at 0.1, the prompts across ISCO groups unchanged.
+ */
 export const RELATED_WEIGHT = 0.5;
 export const SKILL_WEIGHT = 0.2;
-export const COSINE_WEIGHT = 0.1;
+export const COSINE_WEIGHT = 1;
 
 export interface RecallIntent {
   scope: Scope;
@@ -193,7 +208,8 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
   );
   const merged = answers.flat().sort((a, b) => b.score - a.score);
 
-  // S7: the Bloom gate on the merged set, before any D1 read.
+  // S7: the Bloom gate on the merged set, before any D1 read; the tier-2 floor on the pinned embedding model's scale.
+  const tier2Floor = tier2FloorFor(await deps.inference.model('work-embed'));
   const allOf = intent.allOf.map(bloomProbe);
   const anyOf = intent.anyOf.map(bloomProbe);
   // The kind of hit orders tier 1 before the cut; a kept occupation's hits rank as a skill's (decision 0069).
@@ -207,7 +223,7 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
     const meetsAll = allOf.every(has);
     if (meetsAll && (!anyOf.length || anyOf.some(has))) {
       gated.push({ match: m, gateTier: 1, hit: occupationProbes.some(has) ? 3 : groupProbes.some(has) ? 2 : 1 });
-    } else if (m.score >= TIER2_FLOOR && (intent.mode === 'curated' || (deps.store && meetsAll))) {
+    } else if (m.score >= tier2Floor && (intent.mode === 'curated' || (deps.store && meetsAll))) {
       // A vector-strong miss: labelled when the hirer curates; in an Instant search only Clef's fit could make it tier 1, which
       // a miss without every required token can never reach (decision 0069).
       gated.push({ match: m, gateTier: 2, hit: 0 });
@@ -268,7 +284,7 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
   };
 }
 
-/** Within a tier, one weighted sum: P(fit), half of P(related), a fifth of the share of the job's needed skills held, a tenth of cosine. */
+/** Within a tier, one weighted sum: P(fit), half of P(related), a fifth of the share of the job's needed skills held, and cosine. */
 function rank(f: Finalist, intent: RecallIntent): number {
   const needed = intent.anyOf.filter((t) => t.startsWith('skill:')).length;
   return (f.fit?.pFit ?? 0) + RELATED_WEIGHT * (f.fit?.pRelated ?? 0) + SKILL_WEIGHT * ((f.fit?.skillsHeld ?? 0) / Math.max(1, needed)) + COSINE_WEIGHT * f.score;

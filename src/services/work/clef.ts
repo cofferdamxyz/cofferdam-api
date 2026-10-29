@@ -330,8 +330,12 @@ export const FIT_CRITERIA = {
 } as const;
 export type FitKey = keyof typeof FIT_CRITERIA;
 export const FIT_KEYS = Object.keys(FIT_CRITERIA) as FitKey[];
-/** A fit at or above this probability promotes a finalist the token gate missed to tier 1. */
-export const FIT_FLOOR = 0.5;
+/**
+ * A fit at or above this probability promotes a finalist the token gate missed to tier 1. 0.4, adopted by the founder on
+ * 2026-10-28 from the real-resume replay (decision 0069): two to four more right workers in a hundred for half a finalist
+ * more a search.
+ */
+export const FIT_FLOOR = 0.4;
 /** Other work at or above this probability drops a finalist, token hit or not. */
 export const OTHER_FLOOR = 0.5;
 /** The profile's lists are cut to this many names each, so a state stays short. */

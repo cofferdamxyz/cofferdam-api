@@ -60,7 +60,7 @@ import { MAX_PAGES, PARSE_JSON_SCHEMA, PARSE_SYSTEM, parseRequest, readParse, ty
 import { planHire, type HireDeps, type HirePlan } from '../src/services/work/hire.js';
 import { claimKey, D1ListingStore, listingText, publishListing, type ClaimVectors, type ListingDraft, type PublishDeps } from '../src/services/work/listings.js';
 import { callCostMicroUsd } from '../src/services/work/meter.js';
-import { recall, TIER2_FLOOR } from '../src/services/work/recall.js';
+import { recall } from '../src/services/work/recall.js';
 import { EMBEDDINGGEMMA_2_GGUF, type RegistryDeps } from '../src/services/work/registry.js';
 import type { D1Database } from '@cloudflare/workers-types';
 import { createRestAi } from './chat-eval/restAi.js';
@@ -73,6 +73,7 @@ import {
   applyValue,
   arbiterRequest,
   clefState,
+  BENCH_TIER2_FLOOR,
   CLEF_STATE_MAX_CHARS,
   consideredOf,
   DECISION_RULES,
@@ -709,7 +710,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
             else res.missRelated++;
           } else if (plan.intent.allOf.some((t) => !(heldBy.get(ownId) ?? []).includes(t))) res.missRequired++;
           else if (rank >= 50) res.missRank++;
-          else if (q && mineVec && dot(mineVec, q) < TIER2_FLOOR) res.missFloor++;
+          else if (q && mineVec && dot(mineVec, q) < BENCH_TIER2_FLOOR) res.missFloor++;
           else res.missCut++;
         }
         res.replay = Object.fromEntries(Object.entries(DECISION_RULES).map(([name, rule]) => [name, replayRule(res.decisions, rule)]));

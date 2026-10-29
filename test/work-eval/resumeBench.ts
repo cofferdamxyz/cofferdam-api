@@ -24,7 +24,8 @@
 import { parseCvDate, type CvDate } from '../../src/services/work/cv.js';
 import { FIT_FLOOR, OTHER_FLOOR, type ClefQuestion } from '../../src/services/work/clef.js';
 import type { ParsedCv, ParsePage } from '../../src/services/work/parse.js';
-import { COSINE_WEIGHT, RELATED_WEIGHT, SKILL_WEIGHT, type Finalist } from '../../src/services/work/recall.js';
+import { COSINE_WEIGHT, RELATED_WEIGHT, SKILL_WEIGHT, tier2FloorFor, type Finalist } from '../../src/services/work/recall.js';
+import { EMBEDDINGGEMMA_2_GGUF } from '../../src/services/work/registry.js';
 
 // ── The dataset ─────────────────────────────────────────────────────────────
 
@@ -909,32 +910,47 @@ export function consideredOf(
 /** A rule over one considered finalist: kept or not, its tier, its rank within the tier (higher first), and whether Clef is asked at all (default yes). */
 export type DecisionRule = (c: Considered, mode: 'instant' | 'curated') => { keep: boolean; tier: 1 | 2; rank: number; asked?: boolean };
 
-const builtRank = (c: Considered) => c.pFit + RELATED_WEIGHT * c.pRelated + SKILL_WEIGHT * c.skillShare + COSINE_WEIGHT * c.score;
+/** The benchmark searches with EmbeddingGemma 2's vectors, as the phone will, so recall's tier-2 floor is that model's. */
+export const BENCH_TIER2_FLOOR = tier2FloorFor(EMBEDDINGGEMMA_2_GGUF);
 
-/** The built rule with one part changed: what drops a finalist, the fit that promotes a miss, or the rank. */
-function ruleWith(drops: (c: Considered) => boolean, fitFloor = FIT_FLOOR, rank: (c: Considered) => number = builtRank): DecisionRule {
+interface RuleOptions {
+  /** What drops a finalist Clef answered; by default other work at `OTHER_FLOOR`. */
+  drops?: (c: Considered) => boolean;
+  /** The fit that promotes a token miss; by default `FIT_FLOOR`. */
+  fitFloor?: number;
+  /** A token miss under this cosine never reaches the pass; by default the benchmark's tier-2 floor. */
+  missFloor?: number;
+  /** Cosine's weight within a tier; by default `COSINE_WEIGHT`. */
+  cosineWeight?: number;
+  /** The rank within a tier, in place of the weighted sum. */
+  rank?: (c: Considered) => number;
+}
+
+/** `recall.ts`'s rule, with any part changed. */
+function ruleWith(o: RuleOptions = {}): DecisionRule {
+  const drops = o.drops ?? ((c: Considered) => c.pOther >= OTHER_FLOOR);
+  const fitFloor = o.fitFloor ?? FIT_FLOOR;
+  const missFloor = o.missFloor ?? BENCH_TIER2_FLOOR;
+  const cosineWeight = o.cosineWeight ?? COSINE_WEIGHT;
+  const rank = o.rank ?? ((c: Considered) => c.pFit + RELATED_WEIGHT * c.pRelated + SKILL_WEIGHT * c.skillShare + cosineWeight * c.score);
   return (c, mode) => {
+    if (c.gateTier === 2 && c.score < missFloor) return { keep: false, tier: 2, rank: 0, asked: false };
     const tier: 1 | 2 = c.gateTier === 1 || (c.choice !== null && c.pFit >= fitFloor && c.meetsAllOf) ? 1 : 2;
     return { keep: !(c.choice !== null && drops(c)) && (mode === 'curated' || tier === 1), tier, rank: rank(c) };
   };
 }
 
-const built = ruleWith((c) => c.pOther >= OTHER_FLOOR);
-/** EmbeddingGemma 2's tier-2 floor, measured on its own scale (2026-10-27); recall's is still bge-m3's 0.5. */
-export const GEMMA_TIER2_FLOOR = 0.65;
-
-/** The rules the benchmark replays on the same decisions; the second is `recall.ts` as built. */
+/** The rules the benchmark replays on the same decisions; the second is `recall.ts` as built, the third as it was before the founder's tuning. */
 export const DECISION_RULES: Record<string, DecisionRule> = {
   'The gate alone, by cosine': (c, mode) => ({ keep: mode === 'curated' || c.gateTier === 1, tier: c.gateTier, rank: c.score, asked: false }),
-  [`As built: other at ${OTHER_FLOOR} drops, a fit at ${FIT_FLOOR} promotes`]: built,
-  [`As built, misses from cosine ${GEMMA_TIER2_FLOOR} (EmbeddingGemma 2's floor)`]: (c, mode) =>
-    c.gateTier === 2 && c.score < GEMMA_TIER2_FLOOR ? { keep: false, tier: 2, rank: 0, asked: false } : built(c, mode),
-  'Other drops at 0.7': ruleWith((c) => c.pOther >= 0.7),
-  'Other drops at 0.9': ruleWith((c) => c.pOther >= 0.9),
-  'Other drops only a finalist with no occupation hit': ruleWith((c) => !c.occupationHit && c.pOther >= OTHER_FLOOR),
-  'Nothing dropped; a fit promotes': ruleWith(() => false),
-  'A fit at 0.4 promotes': ruleWith((c) => c.pOther >= OTHER_FLOOR, 0.4),
-  'As built, ranked by cosine within a tier': ruleWith((c) => c.pOther >= OTHER_FLOOR, FIT_FLOOR, (c) => c.score),
+  [`As built: other at ${OTHER_FLOOR} drops, a fit at ${FIT_FLOOR} promotes, misses from cosine ${BENCH_TIER2_FLOOR}, cosine weighed ${COSINE_WEIGHT}`]: ruleWith(),
+  'Before the tuning: a fit at 0.5, misses from cosine 0.5, cosine weighed 0.1': ruleWith({ fitFloor: 0.5, missFloor: 0.5, cosineWeight: 0.1 }),
+  'Other drops at 0.7': ruleWith({ drops: (c) => c.pOther >= 0.7 }),
+  'Other drops only a finalist with no occupation hit': ruleWith({ drops: (c) => !c.occupationHit && c.pOther >= OTHER_FLOOR }),
+  'Nothing dropped': ruleWith({ drops: () => false }),
+  'A fit at 0.3 promotes': ruleWith({ fitFloor: 0.3 }),
+  'Cosine weighed 2': ruleWith({ cosineWeight: 2 }),
+  'Ranked by cosine alone within a tier': ruleWith({ rank: (c) => c.score }),
 };
 
 /** A rule replayed over searches: the right listing found, first, in the top five; the finalists kept and the Clef calls made, in all. */
