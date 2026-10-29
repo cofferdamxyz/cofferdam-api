@@ -31,15 +31,28 @@
  * `schema=prompt` (`SCHEMA_IN_PROMPT`), so llama.cpp and LiteRT-LM read one
  * prompt. Gemma 4 E2B scored 92% that way on the Pixel's TPU and 41% under
  * LiteRT-LM's constrained decoding (2026-10-28).
+ *
+ * A reader with `answers` instead of `url` is answered in process: a run
+ * lists each request it has no answer for in `<answers>.pending.jsonl` (the
+ * body a server would have received, keyed by its SHA-256) and fails it, and
+ * `scripts/work/litert-answers.py` answers the list with LiteRT-LM's own API,
+ * which takes what `litert-lm serve` drops (its repetition guards, the answer's
+ * cap and a seed) and times each answer; the next run reads the answers
+ * (workspace decision 0068, the runtime test of 2026-10-29).
  */
+
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 
 import type { AiBinding } from '../../src/services/inference/index.js';
 
 export interface LocalReader {
   /** The name in the report ("MiniCPM-V 4.7 1B (llama.cpp)"). */
   label: string;
-  /** The server's base URL, without `/v1` ("http://127.0.0.1:8080"). */
-  url: string;
+  /** The server's base URL, without `/v1` ("http://127.0.0.1:8080"); absent for a reader answered in process. */
+  url?: string;
+  /** A JSON file of answers by request key (`localAnswerKey`), written by `scripts/work/litert-answers.py`, in place of a server. */
+  answers?: string;
   /** The `model` field the server expects (LiteRT-LM: "gemma-4-E2B-it.litertlm,gpu"). */
   model: string;
   /** The parse paths to run on it; the image path when absent. */
@@ -102,7 +115,7 @@ export function withSchemaInPrompt(request: Record<string, unknown>): Record<str
 export class LocalAiError extends Error {
   constructor(
     readonly label: string,
-    readonly status: number | 'network',
+    readonly status: number | 'network' | 'pending' | 'answers',
     detail: string,
   ) {
     super(`${label} answered ${status}${detail ? `: ${detail}` : ''}`);
@@ -120,7 +133,7 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url, model, paths?, thinking?, schema?, maxTokens?, sampling?, pages?, textSource?}');
+    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url or answers, model, paths?, thinking?, schema?, maxTokens?, sampling?, pages?, textSource?}');
   }
   if (!Array.isArray(parsed)) throw new Error('WORK_PARSE_LOCAL must be a JSON array');
   const readers = parsed.map((r, i): LocalReader => {
@@ -130,9 +143,16 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
       if (typeof v !== 'string' || !v.trim()) throw new Error(`WORK_PARSE_LOCAL[${i}].${k} must be a non-empty string`);
       return v.trim();
     };
-    // The base URL; a full endpoint ("…/v1/chat/completions") or "…/v1" is cut back to it.
-    const url = field('url').replace(/\/+$/, '').replace(/\/v1(\/chat\/completions)?$/, '');
-    if (!/^https?:\/\//.test(url)) throw new Error(`WORK_PARSE_LOCAL[${i}].url must start with http:// or https://`);
+    // A reader answered in process names its answers file instead of a server.
+    if (o.answers != null && (typeof o.answers !== 'string' || !o.answers.trim())) throw new Error(`WORK_PARSE_LOCAL[${i}].answers must be a non-empty path`);
+    const answers = typeof o.answers === 'string' ? o.answers.trim() : undefined;
+    if (answers && o.url != null) throw new Error(`WORK_PARSE_LOCAL[${i}] names a url and an answers file; give one`);
+    let url: string | undefined;
+    if (!answers) {
+      // The base URL; a full endpoint ("…/v1/chat/completions") or "…/v1" is cut back to it.
+      url = field('url').replace(/\/+$/, '').replace(/\/v1(\/chat\/completions)?$/, '');
+      if (!/^https?:\/\//.test(url)) throw new Error(`WORK_PARSE_LOCAL[${i}].url must start with http:// or https://`);
+    }
     let paths: LocalReader['paths'];
     if (o.paths != null) {
       if (!Array.isArray(o.paths) || !o.paths.length || o.paths.some((p) => p !== 'image' && p !== 'text')) {
@@ -159,7 +179,8 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
     if (o.textSource === 'ocr' && !(paths?.length === 1 && paths[0] === 'text')) throw new Error(`WORK_PARSE_LOCAL[${i}].textSource "ocr" needs paths ["text"], the text path alone`);
     return {
       label: field('label'),
-      url,
+      ...(url ? { url } : {}),
+      ...(answers ? { answers } : {}),
       model: field('model'),
       ...(paths ? { paths } : {}),
       ...(o.thinking === true ? { thinking: true } : {}),
@@ -200,13 +221,40 @@ export function localRequest(reader: LocalReader, parse: Record<string, unknown>
   };
 }
 
+/** The key of a request in an answers file: the SHA-256 of the body a server would have received. */
+export const localAnswerKey = (body: string): string => createHash('sha256').update(body).digest('hex');
+
+/** Requests listed for an in-process reader this run, by answers file, so the run can refuse to write its report. */
+const pendingAnswers = new Map<string, number>();
+export const localAnswersPending = (reader: LocalReader): number => (reader.answers ? (pendingAnswers.get(reader.answers) ?? 0) : 0);
+
 /** An `AiBinding`-shaped client for one local reader; the model id passed to `run` is ignored. */
 export function createLocalAi(reader: LocalReader, opts: { fetch?: typeof fetch } = {}): AiBinding {
+  if (reader.answers) {
+    // In process: the answer the script wrote for this exact body, else the body is listed for it and this call fails.
+    const file = reader.answers;
+    const known: Record<string, unknown> = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {};
+    const listed = new Set<string>();
+    const answered = async (_model: string, input: Record<string, unknown>) => {
+      const body = JSON.stringify(localRequest(reader, input));
+      const key = localAnswerKey(body);
+      const answer = known[key] as { error?: unknown } | undefined;
+      if (answer && typeof answer.error === 'string') throw new LocalAiError(reader.label, 'answers', answer.error.slice(0, 200));
+      if (answer) return answer;
+      if (!listed.has(key)) {
+        listed.add(key);
+        appendFileSync(`${file}.pending.jsonl`, JSON.stringify({ key, body: JSON.parse(body) as unknown }) + '\n');
+        pendingAnswers.set(file, (pendingAnswers.get(file) ?? 0) + 1);
+      }
+      throw new LocalAiError(reader.label, 'pending', `listed in ${file}.pending.jsonl`);
+    };
+    return { run: answered } as unknown as AiBinding;
+  }
   const doFetch = opts.fetch ?? fetch;
   const run = async (_model: string, input: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
     let res: Response;
     try {
-      res = await doFetch(`${reader.url}/v1/chat/completions`, {
+      res = await doFetch(`${reader.url ?? ''}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(localRequest(reader, input)),

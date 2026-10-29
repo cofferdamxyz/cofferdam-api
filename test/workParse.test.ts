@@ -7,14 +7,25 @@
  * family, the fail-closed reader, and the scorer on the synthetic CVs.
  */
 
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { PARSE_JSON_SCHEMA, PARSE_SYSTEM, ParseShapeError, expiryDate, parseRequest, readParse, type ParsedCv } from '../src/services/work/parse.js';
 import { scoreParse, sectionScore, type ParseTruth } from './work-eval/parseScore.js';
-import { createLocalAi, LocalAiError, localRequest, parseLocalReaders, SCHEMA_IN_PROMPT, THINKING_MAX_TOKENS, withSchemaInPrompt } from './work-eval/localAi.js';
+import {
+  createLocalAi,
+  LocalAiError,
+  localAnswerKey,
+  localAnswersPending,
+  localRequest,
+  parseLocalReaders,
+  SCHEMA_IN_PROMPT,
+  THINKING_MAX_TOKENS,
+  withSchemaInPrompt,
+} from './work-eval/localAi.js';
 import { answerOf, parsePhoneReaders, parsePhoneResults, phonePlan, phoneReport, scorePhoneRuns } from './work-eval/phoneBench.js';
 
 interface FixtureCv {
@@ -323,6 +334,35 @@ describe('local readers (the on-device candidates on the Mac)', () => {
     expect(calls[0]!.url).toBe('http://127.0.0.1:9379/v1/chat/completions');
     expect(calls[0]!.body.model).toBe('gemma-4-E2B-it.litertlm,gpu');
     expect(readParse(result, NOW).identity.name).toBe('Rafael Exemplo');
+  });
+
+  it('reads a reader answered in process, which names an answers file in place of a server', () => {
+    expect(parseLocalReaders('[{"label":"a","answers":" /tmp/a.json ","model":"m","paths":["text"]}]')).toEqual([
+      { label: 'a', answers: '/tmp/a.json', model: 'm', paths: ['text'] },
+    ]);
+    expect(() => parseLocalReaders('[{"label":"a","answers":"/tmp/a.json","url":"http://x","model":"m"}]')).toThrow(/give one/);
+    expect(() => parseLocalReaders('[{"label":"a","answers":"  ","model":"m"}]')).toThrow(/answers/);
+    expect(() => parseLocalReaders('[{"label":"a","model":"m"}]')).toThrow(/url/);
+  });
+
+  it('answers in process from its file, lists once what it lacks, and fails on an answer the script could not give', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'local-answers-')), 'answers.json');
+    const inProcess = { label: 'LiteRT-LM', answers: file, model: 'gemma-4-e2b', paths: ['text' as const], sampling: { no_repeat_ngram_size: 24 } };
+    const request = parseRequest('local:x', { kind: 'text', text: 'Rafael' }) as never;
+    const ai = createLocalAi(inProcess);
+    await expect(ai.run('x' as never, request)).rejects.toThrow(/answered pending/);
+    await expect(ai.run('x' as never, request)).rejects.toThrow(/answered pending/);
+    const lines = readFileSync(`${file}.pending.jsonl`, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const { key, body } = JSON.parse(lines[0]!) as { key: string; body: Record<string, unknown> };
+    expect(key).toBe(localAnswerKey(JSON.stringify(body)));
+    expect(body).toMatchObject({ model: 'gemma-4-e2b', no_repeat_ngram_size: 24, temperature: 0 });
+    expect(localAnswersPending(inProcess)).toBe(1);
+    const answer = { choices: [{ message: { role: 'assistant', content: '{}' } }], timing: { ms: 1234 } };
+    writeFileSync(file, JSON.stringify({ [key]: answer }));
+    await expect(createLocalAi(inProcess).run('x' as never, request)).resolves.toEqual(answer);
+    writeFileSync(file, JSON.stringify({ [key]: { error: 'RuntimeError: out of memory' } }));
+    await expect(createLocalAi(inProcess).run('x' as never, request)).rejects.toThrow(/answered answers: RuntimeError: out of memory/);
   });
 
   it('names the reader and the status when the server refuses or is down', async () => {

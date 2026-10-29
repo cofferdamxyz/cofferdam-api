@@ -65,7 +65,8 @@ import { EMBEDDINGGEMMA_2_GGUF, type RegistryDeps } from '../src/services/work/r
 import type { D1Database } from '@cloudflare/workers-types';
 import { createRestAi } from './chat-eval/restAi.js';
 import { memoryIndex } from './fixtures/work/fakes.js';
-import { createLocalAi, parseLocalReaders, type LocalReader } from './work-eval/localAi.js';
+import { createLocalAi, localAnswersPending, parseLocalReaders, type LocalReader } from './work-eval/localAi.js';
+import { ungroundedPaths } from './work-eval/grounding.js';
 import { embedAll, loadReplica, ReplicaIndex } from './work-eval/replica.js';
 import {
   addScores,
@@ -246,7 +247,10 @@ async function readOnce(cacheDir: string, reader: string, id: string, run: () =>
     const t0 = Date.now();
     try {
       const { result, model } = await run();
-      out = { ok: true, failure: null, ms: Date.now() - t0, costMicroUsd: costOf(model, result), reading: readingOf(readParse(result)) };
+      // An answer read in process carries the time its runtime took (`timing.ms`); a served one is timed here.
+      const timed = (result as { timing?: { ms?: unknown } } | null)?.timing?.ms;
+      const ms = typeof timed === 'number' && Number.isFinite(timed) ? timed : Date.now() - t0;
+      out = { ok: true, failure: null, ms, costMicroUsd: costOf(model, result), reading: readingOf(readParse(result)) };
     } catch (err) {
       const failure = String((err as Error)?.message ?? err).slice(0, 200);
       if (/\b429\b|rate limit/i.test(failure) && attempt < 3) {
@@ -525,7 +529,11 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         .map((f) => ({ mime: 'image/jpeg' as const, base64: readFileSync(join(pagesDir, id, f)).toString('base64') }));
     const textOf = (id: string) => readFileSync(join(pagesDir, id, 'text.txt'), 'utf8');
     // The lines Apple's Vision recognises on the pages, for a reader with `textSource: "ocr"`, written once per resume.
-    if (localReaders.some((x) => x.textSource === 'ocr')) {
+    // RESUME_GROUND adds rows where a value not in the CV's text is asked of the worker (the answer check, decision 0021):
+    // `strict` (a partial match is not enough), `lesser` (LangExtract's default, a partial match aligns) or `both`.
+    const ground = (process.env.RESUME_GROUND ?? '').trim();
+    if (ground && !['strict', 'lesser', 'both'].includes(ground)) throw new Error('RESUME_GROUND must be strict, lesser or both');
+    if (ground || localReaders.some((x) => x.textSource === 'ocr')) {
       const ocr = spawnSync('swift', [join(__dirname, '..', 'scripts', 'work', 'ocr-pages.swift'), pagesDir, ...sample.map((r) => r.id)], { encoding: 'utf8', maxBuffer: 1 << 24 });
       if (ocr.status !== 0) throw new Error(`ocr-pages.swift exited ${ocr.status}: ${(ocr.stderr ?? '').split('\n').slice(-4).join(' ')}`);
       process.stdout.write(`${ocr.stdout.trim()}\n`);
@@ -605,6 +613,14 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       }
       local.set(reader.label, byId);
     }
+    // A reader answered in process has listed what it could not answer: no report until the script has answered it.
+    const waiting = localReaders.filter((r) => localAnswersPending(r) > 0);
+    if (waiting.length) {
+      throw new Error(
+        `${waiting.map((r) => `${localAnswersPending(r)} requests of "${r.label}" wait in ${r.answers}.pending.jsonl`).join('; ')}: ` +
+          'answer them with `uv run scripts/work/litert-answers.py <answers> --model <file.litertlm>` and run again',
+      );
+    }
 
     // Every path in the cache for this sample, scored.
     const paths = new Map<string, PathResult[]>();
@@ -614,12 +630,22 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       list.push({ id: r.id, category: r.category, score: reading ? scoreReading(reading, truth, new Set(open)) : null, ms, costMicroUsd: cost, failed: !reading });
       paths.set(name, list);
     };
+    const groundedRows = (name: string, r: ResumeRecord, reading: Reading | null, ms: number | null, cost: number | null, text: () => string) => {
+      const modes: [string, boolean][] = ground === 'both' ? [['strict', false], ['lesser', true]] : ground ? [[ground, ground === 'lesser']] : [];
+      for (const [mode, acceptMatchLesser] of modes) {
+        const open = reading ? [...new Set([...readingGaps(reading), ...ungroundedPaths(reading, text(), { acceptMatchLesser })])] : [];
+        addPath(`${name}, answer checked (${mode})`, r, reading, open, ms, cost);
+      }
+    };
     const short = (m: string) => m.split('/').pop()!;
     const cloudCacheReaders = cloudReaders.length ? cloudReaders : [];
     for (const r of sample) {
       const c = cloud.get(r.id);
       // The second reader and the pipeline only when there are two; the local readers below are scored either way.
-      if (c) addPath(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.reading ? readingGaps(c.a.reading) : [], c.a.ms, c.a.costMicroUsd);
+      if (c) {
+        addPath(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.reading ? readingGaps(c.a.reading) : [], c.a.ms, c.a.costMicroUsd);
+        groundedRows(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.ms, c.a.costMicroUsd, () => ocrOf(r.id));
+      }
       if (c?.b) {
         addPath(`${short(cloudCacheReaders[1]!)} alone`, r, c.b.reading, c.b.reading ? readingGaps(c.b.reading) : [], c.b.ms, c.b.costMicroUsd);
         const both = (c.a.costMicroUsd ?? 0) + (c.b.costMicroUsd ?? 0);
@@ -638,6 +664,10 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       for (const [label, byId] of local) {
         const x = byId.get(r.id)!;
         addPath(`${label} (on device)`, r, x.reading, x.reading ? readingGaps(x.reading) : [], x.ms, null);
+        // The text a phone would check the answer against: the text the reader read, else Apple's recognised text.
+        const lr = localReaders.find((l) => l.label === label);
+        const textRead = lr?.paths?.length === 1 && lr.paths[0] === 'text';
+        groundedRows(`${label} (on device)`, r, x.reading, x.ms, null, () => (textRead && lr?.textSource !== 'ocr' ? textOf(r.id) : ocrOf(r.id)));
       }
       if (local.size === 2) {
         const [x, y] = [...local.values()].map((m) => m.get(r.id)!);
