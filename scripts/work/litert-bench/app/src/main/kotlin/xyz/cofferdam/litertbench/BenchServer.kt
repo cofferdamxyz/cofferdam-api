@@ -10,6 +10,7 @@ import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.ActivationDataType
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
@@ -37,7 +38,9 @@ private const val TAG = "LiteRtBench"
  * A test app for the whole-CV parse benchmark (`test/workParse.eval.test.ts`): it serves the
  * benchmark's OpenAI-style requests from LiteRT-LM's Kotlin API on an Android phone, so a reader
  * that needs the Kotlin API (Gemma 4 on the Pixel's TPU, a per-image visual budget) is measured
- * with the same truth and scorer as the others. Never part of the app; synthetic CVs only.
+ * with the same truth and scorer as the others. Never part of the app. Synthetic CVs, or the
+ * real-resume benchmark under workspace decision 0021's exception, after which the answers the
+ * app keeps are deleted (`run-as xyz.cofferdam.litertbench rm -r files/answers`).
  * Steps: workspace `docs/runbooks/android-build.md`, TPU reader check.
  */
 
@@ -47,7 +50,10 @@ private const val TAG = "LiteRtBench"
  * tensor (Backend.GOOGLE_TENSOR). Options: vision=<backend> (the text backend by default),
  * budget=70|140|280|560|1120 (Gemma 4's visual tokens per image; Google's E2B files stop at 280),
  * ctx, threads, format=off (no constrained decoding), schema=prompt (no constrained decoding, the
- * request's JSON schema written into the system prompt instead), spec=on|off (speculative decoding).
+ * request's JSON schema written into the system prompt instead), spec=on|off (speculative decoding,
+ * the engine's multi-token prediction), act=f32|f16 (the activations' precision; the backend's
+ * default when absent). A request's `response_format` of type `regex` is decoded under that regex
+ * (cofferdam-api `test/work-eval/schemaRegex.ts`), the JSON-schema workaround for LiteRT-LM's issue #3510.
  */
 data class Spec(
   val file: String,
@@ -59,6 +65,7 @@ data class Spec(
   val format: Boolean,
   val schemaInPrompt: Boolean = false,
   val speculative: Boolean? = null,
+  val activation: String? = null,
 ) {
   companion object {
     fun parse(model: String): Spec {
@@ -81,6 +88,7 @@ data class Spec(
         format = kv["format"] != "off" && kv["schema"] != "prompt",
         schemaInPrompt = kv["schema"] == "prompt",
         speculative = kv["spec"]?.let { it == "on" },
+        activation = kv["act"]?.lowercase()?.also { require(it == "f32" || it == "f16") { "act must be f32 or f16" } },
       )
     }
   }
@@ -154,7 +162,8 @@ object BenchServer {
     unload()
     // Read when the engine is created: the most visual tokens an image may take.
     ExperimentalFlags.visualTokenBudget = spec.budget
-    // Gemma 4's multi-token prediction (the file's verify graph); null keeps the model's default.
+    // Gemma 4's multi-token prediction (the file's verify graph); null keeps the model's default. The flag,
+    // deprecated in 0.19.0 for EngineConfig's speculativeDecodingConfig, is the one 0.18.1 has.
     ExperimentalFlags.enableSpeculativeDecoding = spec.speculative
     val config =
       EngineConfig(
@@ -165,6 +174,12 @@ object BenchServer {
         maxNumTokens = spec.ctx,
         maxNumImages = 1,
         cacheDir = context.cacheDir.absolutePath,
+        activationDataType =
+          when (spec.activation) {
+            "f32" -> ActivationDataType.FLOAT32
+            "f16" -> ActivationDataType.FLOAT16
+            else -> null
+          },
       )
     Log.i(TAG, "loading $spec")
     val t0 = SystemClock.elapsedRealtime()
@@ -252,10 +267,14 @@ object BenchServer {
     }
     val format =
       request.optJSONObject("response_format")?.takeIf { spec.format }?.let { rf ->
-        if (rf.optString("type") != "json_schema") null
-        else {
-          val js = rf.getJSONObject("json_schema")
-          ResponseFormat.json((js.optJSONObject("schema") ?: js).toString())
+        when (rf.optString("type")) {
+          "json_schema" -> {
+            val js = rf.getJSONObject("json_schema")
+            ResponseFormat.json((js.optJSONObject("schema") ?: js).toString())
+          }
+          // The parse schema as one regex whose whitespace also takes U+2581 (issue #3510's workaround).
+          "regex" -> ResponseFormat.regex(rf.getString("pattern"))
+          else -> null
         }
       }
     // The TPU samples greedily on its own; Google's Gallery passes no sampler there.
@@ -322,7 +341,7 @@ object BenchServer {
           .put("tokens_in_context", tokens)
           .put("images", images)
           .put("budget", spec.budget ?: JSONObject.NULL)
-      // Each answer kept for reading back with run-as (synthetic CVs only).
+      // Each answer kept for reading back with run-as; delete them after a real-resume run.
       runCatching {
         val dir = java.io.File(context.filesDir, "answers").apply { mkdirs() }
         java.io.File(dir, "${System.currentTimeMillis()}.json")

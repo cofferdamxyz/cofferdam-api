@@ -19,6 +19,11 @@
  * booleans, integers with no bounds or a range from 0 of at most 200 values
  * (written out), string enums, and unions of those with null. Any other type,
  * keyword or range throws, so the regex never admits what the schema refuses.
+ *
+ * A workaround, to revert once LiteRT-LM's JSON-schema constraint lets Gemma 4
+ * E2B write its spaces (#3510, and #3721): workspace decision 0068's entry "The
+ * JSON workaround for LiteRT-LM" lists every place that uses it and the check
+ * to run first.
  */
 
 /** Whitespace between tokens: JSON's own, plus SentencePiece's U+2581. */

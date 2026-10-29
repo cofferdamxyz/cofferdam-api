@@ -62,8 +62,8 @@ export interface LocalReader {
   thinking?: boolean;
   /**
    * `prompt`: the schema in the system prompt and no `response_format`; `regex`: the schema as one regex whose whitespace
-   * takes SentencePiece's U+2581 (`schemaRegex.ts`; LiteRT-LM in process only, past its issue #3510); the server's
-   * grammar when absent.
+   * takes SentencePiece's U+2581 (`schemaRegex.ts`; LiteRT-LM only, past its issue #3510: in process, or the Android
+   * test app `scripts/work/litert-bench/`, which hands it to LiteRT-LM's Kotlin API); the server's grammar when absent.
    */
   schema?: 'prompt' | 'regex';
   /** The answer's cap in place of the parse's own (2,500 tokens). */
@@ -167,7 +167,10 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
     }
     if (o.thinking != null && typeof o.thinking !== 'boolean') throw new Error(`WORK_PARSE_LOCAL[${i}].thinking must be true or false`);
     if (o.schema != null && o.schema !== 'prompt' && o.schema !== 'grammar' && o.schema !== 'regex') throw new Error(`WORK_PARSE_LOCAL[${i}].schema must be "prompt", "grammar" or "regex"`);
-    if (o.schema === 'regex' && !answers) throw new Error(`WORK_PARSE_LOCAL[${i}].schema "regex" is for LiteRT-LM answered in process and needs answers`);
+    // A regex goes only to LiteRT-LM: in process (answers), or the Android test app, whose model names a .litertlm file.
+    if (o.schema === 'regex' && !answers && !/\.litertlm\b/.test(String(o.model))) {
+      throw new Error(`WORK_PARSE_LOCAL[${i}].schema "regex" is for LiteRT-LM: answered in process (answers), or the Android test app (a .litertlm model)`);
+    }
     if (o.maxTokens != null && (!Number.isInteger(o.maxTokens) || (o.maxTokens as number) < 256 || (o.maxTokens as number) > 16_384)) {
       throw new Error(`WORK_PARSE_LOCAL[${i}].maxTokens must be a whole number from 256 to 16384`);
     }

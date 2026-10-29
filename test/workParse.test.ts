@@ -262,7 +262,11 @@ describe('local readers (the on-device candidates on the Mac)', () => {
     ]);
     expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"system"}]')).toThrow(/schema/);
     expect(parseLocalReaders('[{"label":"a","answers":"/tmp/a.json","model":"m","schema":"regex"}]')).toEqual([{ label: 'a', answers: '/tmp/a.json', model: 'm', schema: 'regex' }]);
-    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"regex"}]')).toThrow(/needs answers/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"regex"}]')).toThrow(/for LiteRT-LM/);
+    // The Android test app hands the regex to LiteRT-LM's Kotlin API: its model names a .litertlm file.
+    expect(parseLocalReaders('[{"label":"p","url":"http://127.0.0.1:9379","model":"g.litertlm,npu,act=f32","schema":"regex"}]')).toEqual([
+      { label: 'p', url: 'http://127.0.0.1:9379', model: 'g.litertlm,npu,act=f32', schema: 'regex' },
+    ]);
     expect(parseLocalReaders('[{"label":"a","url":"http://x","model":"m","maxTokens":4000,"sampling":{"repeat_penalty":1.1},"pages":"each"}]')).toEqual([
       { label: 'a', url: 'http://x', model: 'm', maxTokens: 4000, sampling: { repeat_penalty: 1.1 }, pages: 'each' },
     ]);
