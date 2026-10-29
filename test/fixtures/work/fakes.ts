@@ -23,7 +23,7 @@ export function fakeInference(responses: FakeResponses, calls: FakeCall[] = [], 
     async run(op, input, _call: InferenceCall = {}) {
       calls.push({ op, input });
       const r = responses[op];
-      const v = typeof r === 'function' ? await (r as (input: Record<string, unknown>) => unknown)(input) : r;
+      const v = typeof r === 'function' ? await (r as (input: Record<string, unknown>, call: InferenceCall) => unknown)(input, _call) : r;
       if (v instanceof Error) throw v;
       return v;
     },

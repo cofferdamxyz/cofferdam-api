@@ -227,7 +227,9 @@ describe('POST /v1/jobs/intent', () => {
     const ops = new Set(recorded.map((r) => r.delta.model));
     expect(ops.has(CLEF_FLASH)).toBe(true);
     expect(ops.has('@cf/baai/bge-m3')).toBe(true);
-    expect(recorded.length).toBe(a.calls.length * 2);
+    // One delta per model, written to the account's row and the plane's.
+    expect(recorded.length).toBe(ops.size * 2);
+    for (const model of ops) expect(recorded.filter((r) => r.delta.model === model)).toHaveLength(2);
   });
 
   it('runs only behind the strict gateway outside development, and counts its own keys after the gate', async () => {

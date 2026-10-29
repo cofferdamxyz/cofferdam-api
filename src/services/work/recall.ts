@@ -87,6 +87,12 @@ export type HireMode = 'instant' | 'curated';
 /** Clef calls at once in the decision pass. */
 export const DECIDE_CONCURRENCY = 8;
 /**
+ * The decision pass's own time limit (decision 0069): a call still running is cancelled and a finalist not yet asked is
+ * left undecided, so both keep the gate's tier, never promoted. On real resumes the pass took about 3 s at the median
+ * and 3.5 s at the 90th percentile, eight calls at a time.
+ */
+export const DECIDE_BUDGET_MS = 6_000;
+/**
  * Within a tier: P(fit), plus these weights on P(related), on the share of needed skills held and on cosine. Cosine weighs 1,
  * adopted by the founder on 2026-10-28 from the real-resume replay (decision 0069): the named title first 35 times in 99
  * against 30 at 0.1, the prompts across ISCO groups unchanged.
@@ -143,6 +149,8 @@ export interface RecallDeps {
   excludePseudonym?: string;
   /** The registry's store, for its tokens' English names: with it the decision pass runs (S8, decision 0069); without it recall stops at the gate. */
   store?: RegistryStore;
+  /** The decision pass's time limit; `DECIDE_BUDGET_MS` when absent. */
+  decideBudgetMs?: number;
   now?: () => number;
   log?: ExecutorOptions['log'];
 }
@@ -325,9 +333,12 @@ async function decide(
   const needed = new Set([...neededSkills, ...jobCertificates]);
   const model = await deps.inference.model('work-decide');
   const out = new Array<{ finalist: Finalist; keep: boolean }>(finalists.length);
+  // The pass's time limit: calls still running are cancelled, and no finalist is asked after it.
+  const budget = new AbortController();
+  const timer = setTimeout(() => budget.abort(new Error('decide_budget')), deps.decideBudgetMs ?? DECIDE_BUDGET_MS);
   let next = 0;
   const worker = async () => {
-    while (next < finalists.length) {
+    while (next < finalists.length && !budget.signal.aborted) {
       const i = next++;
       const f = finalists[i]!;
       const tokens = tokensOf(f);
@@ -339,7 +350,7 @@ async function decide(
       const t0 = now();
       let reading: ReturnType<typeof readChoice<FitKey>> | null = null;
       try {
-        const answer = await deps.inference.run('work-decide', body);
+        const answer = await deps.inference.run('work-decide', body, { signal: budget.signal });
         const call: WorkCall = { op: 'work-decide', model, ok: true, ms: now() - t0, usage: { ...usageOrEstimate(answer, body), neurons: null } };
         calls.push(call);
         reading = readChoice(answer, 'fit', FIT_KEYS, 0);
@@ -365,5 +376,15 @@ async function decide(
     }
   };
   await Promise.all(Array.from({ length: Math.min(DECIDE_CONCURRENCY, finalists.length) }, worker));
+  clearTimeout(timer);
+  // A finalist the time limit left unasked keeps the gate's tier, like one whose call failed.
+  let unasked = 0;
+  for (const [i, f] of finalists.entries()) {
+    if (out[i]) continue;
+    unasked++;
+    const skillsHeld = neededSkills.filter((t) => tokensOf(f).includes(t)).length;
+    out[i] = { finalist: { ...f, fit: { choice: null, pFit: 0, pRelated: 0, pOther: 0, skillsHeld, promoted: false } }, keep: true };
+  }
+  if (budget.signal.aborted) deps.log?.({ event: 'work_decide_budget', model, unasked });
   return out;
 }

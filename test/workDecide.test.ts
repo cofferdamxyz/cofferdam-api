@@ -348,6 +348,33 @@ describe('the decision pass (S8)', () => {
     expect(decideCalls.every((c) => !c.ok)).toBe(true);
   });
 
+  it('stops at its time limit: a call still running is cancelled and keeps the gate’s tier, never promoted', async () => {
+    // Clef answers the plumber at once and takes far longer than the limit for everyone else, until cancelled.
+    const slow = (input: Record<string, unknown>, call: { signal?: AbortSignal }) => {
+      const quick = /Occupations: plumber\./.test(String(input.state));
+      const answer = { answers: { fit: { choice: 'fit', probabilities: { fit: 0.9 } } }, usage: { input_tokens: 200 } };
+      if (quick) return answer;
+      return new Promise((resolve, reject) => {
+        const t = setTimeout(() => resolve(answer), 5_000);
+        call.signal?.addEventListener('abort', () => (clearTimeout(t), reject(new Error('aborted'))), { once: true });
+      });
+    };
+    const { w, plan } = await pool({ 'work-decide': slow });
+    const logs: Record<string, unknown>[] = [];
+    const t0 = Date.now();
+    const out = await recall({ ...w.recallDeps, decideBudgetMs: 50, log: (f) => logs.push(f) }, { ...plan.intent, mode: 'instant' });
+    if (!out.ok) throw new Error('recall failed');
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    const byName = new Map([...(await w.listings.get(out.finalists.map((f) => f.listingId))).values()].map((r) => [r.listingId, r.pseudonym]));
+    // The plumber decided; the pipefitter's call was cancelled, so its token hit stands; the misses were never promoted.
+    expect(out.finalists.map((f) => [byName.get(f.listingId), f.gateTier, f.fit?.choice ?? null])).toEqual([
+      ['plumber', 1, 'fit'],
+      ['pipefitter', 1, null],
+    ]);
+    expect(out.calls.filter((c) => c.op === 'work-decide' && !c.ok)).toHaveLength(3);
+    expect(logs.some((l) => l.event === 'work_decide_budget')).toBe(true);
+  });
+
   it('keeps the gate’s tier where Clef fails, and runs no pass without the store', async () => {
     const { w, plan } = await pool({ 'work-decide': new Error('clef down') });
     const failed = await recall(w.recallDeps, { ...plan.intent, mode: 'instant' });

@@ -346,6 +346,15 @@ describe('the Work meter', () => {
     expect(deltas).toEqual([{ turns: 0, tokensIn: 360, tokensOut: 80, routerCalls: 0, estimatedMicroUsd: 293, model: LLAMA, modelMicroUsd: 293, at: NOW }]);
   });
 
+  it('writes one delta per model a request used, its calls summed, so fifty decision calls are one', () => {
+    const clef = (n: number) => Array.from({ length: n }, () => call({ tokensIn: 400, tokensOut: 0, neurons: null }, CLAIRIC));
+    const deltas = workUsageDeltas([call({ tokensIn: 360, tokensOut: 80, neurons: 26.68 }), ...clef(50), call({ tokensIn: 0, tokensOut: 0, neurons: null }, CLAIRIC)], NOW);
+    expect(deltas.map((d) => [d.model, d.tokensIn, d.estimatedMicroUsd])).toEqual([
+      [LLAMA, 360, 293],
+      [CLAIRIC, 20_000, 50 * callCostMicroUsd(call({ tokensIn: 400, tokensOut: 0, neurons: null }, CLAIRIC))],
+    ]);
+  });
+
   it('prices every Work op’s default model', () => {
     for (const op of ['work-classify', 'work-extract', 'work-extract-fallback'] as const) expect(MODEL_PRICES[OPS[op].model], op).toBeDefined();
     expect(MODEL_PRICES[CLAIRIC]).toEqual({ input: 0.1, output: 0 });

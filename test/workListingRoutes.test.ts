@@ -262,9 +262,8 @@ describe('PUT /v1/work/listing', () => {
     await settle();
     const embeds = a.calls.filter((c) => c.op === 'work-embed').length;
     expect(embeds).toBeGreaterThan(1);
-    expect(recorded).toHaveLength(embeds * 2);
-    expect(recorded.filter((r) => r.account === getAddress(fxAccount))).toHaveLength(embeds);
-    expect(recorded.filter((r) => r.account === 'global')).toHaveLength(embeds);
+    // Every embedding call is one model: one delta, the calls summed, to the account's row and the plane's.
+    expect(recorded.map((r) => r.account)).toEqual([getAddress(fxAccount), 'global']);
     for (const r of recorded) expect(r.delta).toMatchObject({ turns: 0, routerCalls: 0, model: BGE_M3, at: now });
   });
 
@@ -282,7 +281,9 @@ describe('PUT /v1/work/listing', () => {
     expect(await res.json()).toEqual({ ok: false, error: 'embedding_failed' });
     expect(a.listingIndex.vectors.size).toBe(0);
     await settle();
-    expect(recorded.filter((r) => r.account === 'global').length).toBe(a.calls.filter((c) => c.op === 'work-embed').length);
+    // The failed embedding is metered at its estimated input, inside the model's one delta.
+    expect(a.calls.filter((c) => c.op === 'work-embed').length).toBeGreaterThan(1);
+    expect(recorded.filter((r) => r.account === 'global').map((r) => r.delta.model)).toEqual([BGE_M3]);
   });
 
   it('meters the calls a store failure interrupted, and answers 503', async () => {

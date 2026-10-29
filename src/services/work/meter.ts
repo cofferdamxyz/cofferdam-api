@@ -30,13 +30,24 @@ export function callCostMicroUsd(call: WorkCall, log?: (fields: Record<string, u
   return modelCostMicroUsd(call.model, tokensIn, tokensOut, log);
 }
 
-/** The meter deltas for a request's calls, one per call that used anything. */
+/**
+ * The meter deltas for a request's calls: one per model that used anything, its calls' tokens and costs summed, so a
+ * hirer search's fifty decision calls are two meter writes, not a hundred (the store keeps sums, never a count of calls).
+ */
 export function workUsageDeltas(calls: readonly WorkCall[], at: number, log?: (fields: Record<string, unknown>) => void): ChatUsageDelta[] {
-  const deltas: ChatUsageDelta[] = [];
+  const byModel = new Map<string, ChatUsageDelta>();
   for (const call of calls) {
     const cost = callCostMicroUsd(call, log);
     if (!cost && !call.usage.tokensIn && !call.usage.tokensOut) continue;
-    deltas.push({
+    const d = byModel.get(call.model);
+    if (d) {
+      d.tokensIn += call.usage.tokensIn;
+      d.tokensOut += call.usage.tokensOut;
+      d.estimatedMicroUsd += cost;
+      d.modelMicroUsd += cost;
+      continue;
+    }
+    byModel.set(call.model, {
       turns: 0,
       tokensIn: call.usage.tokensIn,
       tokensOut: call.usage.tokensOut,
@@ -47,5 +58,5 @@ export function workUsageDeltas(calls: readonly WorkCall[], at: number, log?: (f
       at,
     });
   }
-  return deltas;
+  return [...byModel.values()];
 }
