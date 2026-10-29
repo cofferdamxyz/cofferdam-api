@@ -27,6 +27,7 @@ import {
   withSchemaInPrompt,
 } from './work-eval/localAi.js';
 import { answerOf, parsePhoneReaders, parsePhoneResults, phonePlan, phoneReport, scorePhoneRuns } from './work-eval/phoneBench.js';
+import { schemaRegex, withSchemaAsRegex } from './work-eval/schemaRegex.js';
 
 interface FixtureCv {
   id: string;
@@ -260,6 +261,8 @@ describe('local readers (the on-device candidates on the Mac)', () => {
       { label: 'b', url: 'http://x', model: 'm' },
     ]);
     expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"system"}]')).toThrow(/schema/);
+    expect(parseLocalReaders('[{"label":"a","answers":"/tmp/a.json","model":"m","schema":"regex"}]')).toEqual([{ label: 'a', answers: '/tmp/a.json', model: 'm', schema: 'regex' }]);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"regex"}]')).toThrow(/needs answers/);
     expect(parseLocalReaders('[{"label":"a","url":"http://x","model":"m","maxTokens":4000,"sampling":{"repeat_penalty":1.1},"pages":"each"}]')).toEqual([
       { label: 'a', url: 'http://x', model: 'm', maxTokens: 4000, sampling: { repeat_penalty: 1.1 }, pages: 'each' },
     ]);
@@ -303,6 +306,49 @@ describe('local readers (the on-device candidates on the Mac)', () => {
       messages: [{ role: 'system', content: `${SCHEMA_IN_PROMPT}{"a":1}` }, { role: 'user', content: 'x' }],
     });
     expect(withSchemaInPrompt({ messages: [], response_format: { type: 'json_object' } })).toEqual({ messages: [] });
+  });
+
+  it('sends the schema as one regex whose whitespace takes U+2581 when the reader asks (LiteRT-LM #3510)', () => {
+    const request = parseRequest('local:x', { kind: 'text', text: 'x' });
+    const body = localRequest({ label: 'a', answers: '/tmp/a.json', model: 'm', schema: 'regex' }, request) as any;
+    expect(body.response_format).toEqual({ type: 'regex', pattern: schemaRegex(PARSE_JSON_SCHEMA) });
+    expect(body.messages[0]).toEqual((request.messages as unknown[])[0]);
+    expect((request.response_format as any).json_schema.schema).toBe(PARSE_JSON_SCHEMA);
+    expect(withSchemaAsRegex({ messages: [], response_format: { type: 'json_object' } })).toEqual({ messages: [], response_format: { type: 'json_object' } });
+
+    // A synthetic answer in the parse schema: compact, indented, and as LiteRT-LM's token table spells it (U+2581 for a space).
+    const job = { title: 'Pipe Welder', employer: 'Acme Fabrication', location: 'Houston, TX', start: '2015-03', end: null, current: true, skills: ['TIG welding'] };
+    const cv = {
+      name: 'Ana Souza', email: null, phone: null, location: 'Houston, TX', headline_title: 'Pipe Welder', years_experience: 12,
+      experience: [job], education: [{ qualification: 'Welding certificate', institution: 'Lone Star College', end: '2013' }],
+      skills: ['MIG', 'TIG'], certificates: [{ name: 'AWS D1.1', expires: null }], languages: [{ name: 'English', level: 'fluent' }],
+    };
+    const re = new RegExp(`^(?:${schemaRegex(PARSE_JSON_SCHEMA)})$`);
+    const ok = (v: unknown) => re.test(typeof v === 'string' ? v : JSON.stringify(v));
+    expect(ok(cv)).toBe(true);
+    expect(ok(JSON.stringify(cv, null, 2))).toBe(true);
+    expect(ok(JSON.stringify(cv, null, 2).replace(/ /g, '▁'))).toBe(true);
+    expect(ok({ ...cv, experience: Array.from({ length: 20 }, () => job) })).toBe(true);
+    // What the schema refuses, the regex refuses: a missing or extra key, a 21st job, a range or enum broken, a raw line break.
+    expect(ok({ ...cv, phone: undefined })).toBe(false);
+    expect(ok({ ...cv, extra: 1 })).toBe(false);
+    expect(ok({ ...cv, experience: Array.from({ length: 21 }, () => job) })).toBe(false);
+    expect(ok({ ...cv, years_experience: 61 })).toBe(false);
+    expect(ok({ ...cv, languages: [{ name: 'English', level: 'native' }] })).toBe(false);
+    expect(ok(JSON.stringify(cv).replace('Pipe Welder', 'Pipe\nWelder'))).toBe(false);
+    // A string never holds '<', so a raw byte piece such as <0x0A> cannot land in one.
+    expect(ok({ ...cv, name: '<0x0A>' })).toBe(false);
+    expect(() => schemaRegex({ type: 'object', properties: { a: { type: 'string' } }, required: [], additionalProperties: false })).toThrow(/require every property/);
+    expect(() => schemaRegex({ type: 'number' })).toThrow(/unsupported/);
+    // What it cannot enforce it refuses, rather than admit more than the schema does.
+    const none = new RegExp(`^(?:${schemaRegex({ type: 'array', items: { type: 'string' }, maxItems: 0 })})$`);
+    expect([none.test('[]'), none.test('[ ]'), none.test('[""]')]).toEqual([true, true, false]);
+    expect(() => schemaRegex({ type: 'array', items: { type: 'string' }, minItems: 1 })).toThrow(/minItems/);
+    expect(() => schemaRegex({ type: 'string', pattern: 'x' })).toThrow(/pattern/);
+    expect(() => schemaRegex({ type: 'integer', minimum: 0, maximum: 1000 })).toThrow(/integer range/);
+    expect(() => schemaRegex({ type: 'integer', minimum: -5, maximum: 5 })).toThrow(/integer range/);
+    expect(() => schemaRegex({ type: 'integer', minimum: 0 })).toThrow(/integer range/);
+    expect(new RegExp(`^(?:${schemaRegex({ type: 'integer' })})$`).test('-12')).toBe(true);
   });
 
   it('turns thinking on with room for the reasoning when the reader asks', () => {

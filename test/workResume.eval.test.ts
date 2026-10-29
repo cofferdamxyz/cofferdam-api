@@ -67,6 +67,7 @@ import { createRestAi } from './chat-eval/restAi.js';
 import { memoryIndex } from './fixtures/work/fakes.js';
 import { createLocalAi, localAnswersPending, parseLocalReaders, type LocalReader } from './work-eval/localAi.js';
 import { ungroundedPaths } from './work-eval/grounding.js';
+import { schemaRegex } from './work-eval/schemaRegex.js';
 import { embedAll, loadReplica, ReplicaIndex } from './work-eval/replica.js';
 import {
   addScores,
@@ -204,7 +205,10 @@ function stableJson(v: unknown): string {
   return JSON.stringify(v ?? null);
 }
 
-/** What changes a local reader's answers; not its URL, since a server may move to another port. */
+/**
+ * What changes a local reader's answers; not its URL, since a server may move to another port. A regex reader's answers
+ * also follow the regex the schema becomes (`schemaRegex.ts`), which `PROMPT_TAG` does not see, so its hash is kept too.
+ */
 function readerSettings(r: LocalReader): Record<string, unknown> {
   return {
     model: r.model,
@@ -215,6 +219,7 @@ function readerSettings(r: LocalReader): Record<string, unknown> {
     sampling: r.sampling ?? {},
     pages: r.pages ?? 'all',
     textSource: r.textSource ?? 'pdf',
+    ...(r.schema === 'regex' ? { regex: createHash('sha256').update(schemaRegex(PARSE_JSON_SCHEMA)).digest('hex').slice(0, 8) } : {}),
   };
 }
 
@@ -893,11 +898,12 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     say('Cells: the share right, and in brackets the share wrong with no question to the worker. Questions per resume: the fields a resume would still ask its worker about.');
     say();
     const n = sample.length;
-    // The run's JSON takes its report's name, so a second run the same day keeps the first one's.
+    // The run's JSON takes its report's name, so a second run the same day keeps the first one's: a name is free only
+    // when neither the report nor the JSON exists (a report moved out of the repository leaves its JSON behind).
     const suffix = (() => {
       for (let i = 1; ; i++) {
         const s = i === 1 ? '' : `-${i}`;
-        if (!existsSync(join(__dirname, 'work-eval', `resumes-${date}-n${n}${s}.md`))) return s;
+        if (!existsSync(join(__dirname, 'work-eval', `resumes-${date}-n${n}${s}.md`)) && !existsSync(join(out, 'reports', `resumes-${date}-n${n}${s}.json`))) return s;
       }
     })();
     const reportPath = join(__dirname, 'work-eval', `resumes-${date}-n${n}${suffix}.md`);

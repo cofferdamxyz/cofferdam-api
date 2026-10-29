@@ -15,8 +15,9 @@ next run of the benchmark scores the answers. `litert-lm serve` drops what this 
 (LiteRT-LM's repetition guards, the answer's cap, a seed), which is why it runs in process.
 
 From the body: the system and user messages (text only: the text path), `max_tokens` (the
-answer's cap), `temperature` (0 is greedy: top-k 1), `response_format` (a JSON schema,
-decoded under llguidance) and thinking off (`chat_template_kwargs.enable_thinking`), and
+answer's cap), `temperature` (0 is greedy: top-k 1), `response_format` (a JSON schema, or
+`{"type": "regex", "pattern": ...}` from a reader's `schema: "regex"`, decoded under
+llguidance) and thinking off (`chat_template_kwargs.enable_thinking`), and
 the reader's `sampling` keys, which map to LiteRT-LM's own settings:
 `no_repeat_ngram_size` and `no_repeat_window`; `repetition_penalty`, `presence_penalty`,
 `frequency_penalty` and `repetition_window`; `top_k`, `top_p`, `seed`. From the command
@@ -28,12 +29,16 @@ line: the model file, the backend and multi-token prediction (MTP).
 `--repair` mends an answer that is not valid JSON (`json-repair`: a missing comma or
 quote, a raw line break in a string, text after the object) as a phone could before it
 reads it, and records it (`timing.repaired`). Gemma 4 E2B writes invalid JSON for most
-real resumes when nothing constrains it, under llama.cpp as under LiteRT-LM, and
-LiteRT-LM 0.18.1's own JSON-schema decoding writes whitespace instead (2026-10-29).
+real resumes when nothing constrains it, under llama.cpp as under LiteRT-LM. LiteRT-LM's
+own JSON-schema constraint gives the model no space token (issue #3510): 0.18.1 writes
+whitespace instead, and the nightly answers null wherever the schema allows it. The
+schema as a regex whose whitespace takes U+2581 (`test/work-eval/schemaRegex.ts`) reads
+(2026-10-29).
 
 Each answer carries `timing`: the milliseconds the call took, the first token, prefill and
 decode speeds and the process's peak memory footprint during it (macOS `phys_footprint`).
-`<answers>.runtime.json` keeps the run's settings, the footprint once the model is loaded
+`<answers>.runtime.json` keeps the run's settings (a later run that would add answers made
+with other settings to the same file is refused), the footprint once the model is loaded
 and the peak. Nothing leaves the Mac; it prints counts and timings, never a request's text.
 """
 
@@ -132,6 +137,14 @@ def schema_of(response_format):
   return inner
 
 
+def regex_of(response_format):
+  """The pattern of a `{"type": "regex", "pattern": ...}` response format, else None."""
+  if not isinstance(response_format, dict) or response_format.get("type") != "regex":
+    return None
+  pattern = response_format.get("pattern")
+  return pattern if isinstance(pattern, str) and pattern else None
+
+
 def mended(text: str) -> tuple[str, bool]:
   """The answer as valid JSON: as written when it parses (inside a Markdown fence or not), else repaired."""
   stripped = re.sub(r"\s*```\s*$", "", re.sub(r"^```(?:json)?\s*", "", text.strip()))
@@ -162,10 +175,17 @@ def answer_one(engine, body: dict, mtp, sampler: PeakSampler, repair: bool) -> d
   thinking = (body.get("chat_template_kwargs") or {}).get("enable_thinking")
   thinking_config = litert_lm.ThinkingConfig(enable_thinking=bool(thinking)) if thinking is not None else None
   schema = schema_of(body.get("response_format"))
+  pattern = regex_of(body.get("response_format"))
   constrained = (
       litert_lm.ConstrainedDecodingConfig(enable=True, provider=litert_lm.LiteRtLmConstraintProviderType.LL_GUIDANCE)
-      if schema is not None else None
+      if schema is not None or pattern is not None else None
   )
+  if schema is not None:
+    response_format = litert_lm.ResponseFormat.json(schema)
+  elif pattern is not None:
+    response_format = litert_lm.ResponseFormat.regex(pattern)
+  else:
+    response_format = None
   penalties = {k: body[k] for k in ("repetition_penalty", "presence_penalty", "frequency_penalty") if k in body}
   repetition = (
       litert_lm.RepetitionPenaltyConfig(**{k: float(v) for k, v in penalties.items()},
@@ -187,8 +207,7 @@ def answer_one(engine, body: dict, mtp, sampler: PeakSampler, repair: bool) -> d
     started = time.perf_counter()
     reply = conversation.send_message(
         user, repetition_penalty_config=repetition, no_repeat_ngram_config=ngram,
-        max_output_tokens=max_tokens,
-        response_format=litert_lm.ResponseFormat.json(schema) if schema is not None else None)
+        max_output_tokens=max_tokens, response_format=response_format)
     ms = (time.perf_counter() - started) * 1000
     bench = conversation.get_benchmark_info()
   finally:
@@ -252,6 +271,21 @@ def main() -> int:
     print(f"nothing pending ({len(known)} answers known)")
     return 0
 
+  # An answer's key is its request, not the runtime's settings: answers made with other settings (MTP, the backend,
+  # the model, the runtime's version, the repair) must not be mixed into one file and scored as one reader.
+  runtime_path = args.answers.with_name(args.answers.stem + ".runtime.json")
+  settings = {"litertLm": runtime_version(), "model": args.model.name, "backend": args.backend, "mtp": args.mtp,
+              "maxNumTokens": args.max_num_tokens, "repair": args.repair}
+  if known and runtime_path.exists():
+    prior = json.loads(runtime_path.read_text())
+    changed = sorted(k for k, v in settings.items() if prior.get(k) != v)
+    if changed:
+      print(f"{args.answers.name} holds answers made with other settings ("
+            + ", ".join(f"{k} {prior.get(k)!r}, now {settings[k]!r}" for k in changed)
+            + "); answer into a new file", file=sys.stderr)
+      return 2
+  save(runtime_path, settings)
+
   sampler = PeakSampler()
   before = footprint_mb()
   backend = litert_lm.Backend.GPU() if args.backend == "gpu" else litert_lm.Backend.CPU()
@@ -288,11 +322,10 @@ def main() -> int:
   left = {k: b for k, b in pending.items() if k not in known}
   pending_path.write_text("".join(json.dumps({"key": k, "body": b}) + "\n" for k, b in left.items()))
   runtime = {
-      "litertLm": runtime_version(), "model": args.model.name, "backend": args.backend, "mtp": args.mtp,
-      "maxNumTokens": args.max_num_tokens, "repair": args.repair, "loadSeconds": round(load_s, 1),
+      **settings, "loadSeconds": round(load_s, 1),
       "loadedFootprintMb": round(loaded), "peakFootprintMb": round(sampler.overall),
   }
-  save(args.answers.with_name(args.answers.stem + ".runtime.json"), runtime)
+  save(runtime_path, runtime)
   if timings:
     ms = [t["ms"] for t in timings]
     print(f"answered {len(timings)} ({sum(1 for t in timings if t.get('repaired'))} repaired), failed {failed}; "

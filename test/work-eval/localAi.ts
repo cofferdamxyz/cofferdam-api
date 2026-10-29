@@ -45,6 +45,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 
 import type { AiBinding } from '../../src/services/inference/index.js';
+import { withSchemaAsRegex } from './schemaRegex.js';
 
 export interface LocalReader {
   /** The name in the report ("MiniCPM-V 4.7 1B (llama.cpp)"). */
@@ -59,8 +60,12 @@ export interface LocalReader {
   paths?: ('image' | 'text')[];
   /** Thinking on (the template's `enable_thinking`); off when absent, as the phone runs it. */
   thinking?: boolean;
-  /** `prompt`: the schema in the system prompt and no `response_format`; the server's grammar when absent. */
-  schema?: 'prompt';
+  /**
+   * `prompt`: the schema in the system prompt and no `response_format`; `regex`: the schema as one regex whose whitespace
+   * takes SentencePiece's U+2581 (`schemaRegex.ts`; LiteRT-LM in process only, past its issue #3510); the server's
+   * grammar when absent.
+   */
+  schema?: 'prompt' | 'regex';
   /** The answer's cap in place of the parse's own (2,500 tokens). */
   maxTokens?: number;
   /** Sampling settings sent beside the request (llama-server: `repeat_penalty`, `dry_multiplier`, `frequency_penalty`, …). */
@@ -161,7 +166,8 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
       paths = [...new Set(o.paths as ('image' | 'text')[])];
     }
     if (o.thinking != null && typeof o.thinking !== 'boolean') throw new Error(`WORK_PARSE_LOCAL[${i}].thinking must be true or false`);
-    if (o.schema != null && o.schema !== 'prompt' && o.schema !== 'grammar') throw new Error(`WORK_PARSE_LOCAL[${i}].schema must be "prompt" or "grammar"`);
+    if (o.schema != null && o.schema !== 'prompt' && o.schema !== 'grammar' && o.schema !== 'regex') throw new Error(`WORK_PARSE_LOCAL[${i}].schema must be "prompt", "grammar" or "regex"`);
+    if (o.schema === 'regex' && !answers) throw new Error(`WORK_PARSE_LOCAL[${i}].schema "regex" is for LiteRT-LM answered in process and needs answers`);
     if (o.maxTokens != null && (!Number.isInteger(o.maxTokens) || (o.maxTokens as number) < 256 || (o.maxTokens as number) > 16_384)) {
       throw new Error(`WORK_PARSE_LOCAL[${i}].maxTokens must be a whole number from 256 to 16384`);
     }
@@ -184,7 +190,7 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
       model: field('model'),
       ...(paths ? { paths } : {}),
       ...(o.thinking === true ? { thinking: true } : {}),
-      ...(o.schema === 'prompt' ? { schema: 'prompt' as const } : {}),
+      ...(o.schema === 'prompt' || o.schema === 'regex' ? { schema: o.schema } : {}),
       ...(o.maxTokens != null ? { maxTokens: o.maxTokens as number } : {}),
       ...(o.sampling != null ? { sampling: o.sampling as Record<string, number> } : {}),
       ...(o.pages === 'each' ? { pages: 'each' as const } : {}),
@@ -206,7 +212,8 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
  * prompt instead of `response_format` when the reader sets `schema: "prompt"`.
  */
 export function localRequest(reader: LocalReader, parse: Record<string, unknown>): Record<string, unknown> {
-  const request = { ...(reader.schema === 'prompt' ? withSchemaInPrompt(parse) : parse), ...(reader.sampling ?? {}) };
+  const shaped = reader.schema === 'prompt' ? withSchemaInPrompt(parse) : reader.schema === 'regex' ? withSchemaAsRegex(parse) : parse;
+  const request = { ...shaped, ...(reader.sampling ?? {}) };
   const kwargs = (request.chat_template_kwargs ?? {}) as Record<string, unknown>;
   if (reader.thinking) {
     return { ...request, model: reader.model, stream: false, max_tokens: reader.maxTokens ?? THINKING_MAX_TOKENS, chat_template_kwargs: { ...kwargs, enable_thinking: true } };
