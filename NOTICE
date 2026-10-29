@@ -29,3 +29,16 @@ not contain:
   USDOL/ETA); test/onet.import.test.ts writes the list of every change.
   USDOL/ETA has not approved, endorsed, or tested these modifications.
   O*NET(R) is a trademark of USDOL/ETA.
+
+Third-party software
+
+- test/work-eval/grounding.ts, the real-resume benchmark's source
+  grounding, includes software from LangExtract
+  (https://github.com/google/langextract), Copyright 2025 Google LLC,
+  licensed under the Apache License, Version 2.0
+  (https://www.apache.org/licenses/LICENSE-2.0): the alignment of
+  langextract/resolver.py and the tokenizer of
+  langextract/core/tokenizer.py, at commit
+  3493510c234c82e217f683071b13562529b2bbdd (2026-10-28). Cofferdam Inc.
+  translated it to TypeScript and modified it; the file's header lists
+  the changes.
