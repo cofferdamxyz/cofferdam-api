@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const SPEC_PATH = join(here, '..', '..', 'infra', 'ai-gateways.json');
 const API = 'https://api.cloudflare.com/client/v4';
 
-/** The account id and a token with AI Gateway Edit (and Zero Trust DLP Read for the profiles); `AI_GATEWAY_API_TOKEN` first, else the deploy token. */
+/** The account id and a token with AI Gateway Edit (verify needs Read; the profiles need Zero Trust Read); `AI_GATEWAY_API_TOKEN` first, else the deploy token. A token with AI Gateway Run only cannot: Run sends requests through gateways and reads no configuration. */
 export function credentials() {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   const token = process.env.AI_GATEWAY_API_TOKEN ?? process.env.CLOUDFLARE_API_TOKEN;
@@ -65,8 +65,9 @@ export async function dlpProfiles(creds) {
 }
 
 /**
- * What a gateway must hold so that no user content can be stored in it, and
- * what it must hold by its class. Returns the violations, empty when it holds.
+ * What a gateway must hold so that no user content can be stored in it, what
+ * it must hold by its class, and its authentication. Returns the violations,
+ * empty when it holds.
  */
 export function violations(spec, live) {
   const out = [];
@@ -75,6 +76,7 @@ export function violations(spec, live) {
   };
   want('collect_logs', false, live.collect_logs);
   want('cache_ttl', 0, live.cache_ttl);
+  if (spec.authentication === true && live.authentication !== true) out.push('authentication: off (must be on: only a request authorized in the account may use the gateway; the binding is pre-authenticated)');
   if (live.logpush === true) out.push('logpush: true (must be off)');
   if (Array.isArray(live.otel) && live.otel.length) out.push(`otel: ${live.otel.length} exporter(s) (must be none)`);
   if (spec.dlp?.enabled) {

@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/env.js';
 import { clearTransparencyCache, configuredGateways, gatewayFacts, privacyRoutes, readAiGateways, transparencyAnswer } from '../src/routes/privacy.js';
 
-const strict = { id: 'cofferdam-strict', collect_logs: false, cache_ttl: 0, logpush: false, otel: [], dlp: { enabled: true, action: 'BLOCK', profiles: ['p1', 'p2'] } };
-const documents = { id: 'cofferdam-documents', collect_logs: false, cache_ttl: 0, dlp: { enabled: false } };
+const strict = { id: 'cofferdam-strict', collect_logs: false, cache_ttl: 0, logpush: false, otel: [], authentication: true, dlp: { enabled: true, action: 'BLOCK', profiles: ['p1', 'p2'] } };
+const documents = { id: 'cofferdam-documents', collect_logs: false, cache_ttl: 0, authentication: true, dlp: { enabled: false } };
 
 function env(over: Partial<Env> = {}): Env {
   return {
@@ -47,6 +47,7 @@ describe('the transparency answer', () => {
     ]);
     expect(calls.every((c) => c.auth === 'Bearer read-token')).toBe(true);
     expect(read.facts.map((f) => f.canStore)).toEqual([false, false]);
+    expect(read.facts.map((f) => f.authenticated)).toEqual([true, true]);
     expect(read.facts[0]!.dlp).toEqual({ enabled: true, action: 'BLOCK', profiles: 2 });
     expect(read.facts[1]!.dlp).toEqual({ enabled: false, action: null, profiles: 0 });
     const answer = transparencyAnswer(env(), read.facts, 0);
@@ -61,6 +62,12 @@ describe('the transparency answer', () => {
     expect(gatewayFacts('g', 'x', { ...documents, logpush: true }).canStore).toBe(true);
     expect(gatewayFacts('g', 'x', { ...documents, otel: [{ url: 'https://x' }] }).canStore).toBe(true);
     expect(gatewayFacts('g', 'x', documents).canStore).toBe(false);
+  });
+
+  it('reads whether a gateway accepts only requests authorized in the account', () => {
+    expect(gatewayFacts('g', 'x', documents).authenticated).toBe(true);
+    expect(gatewayFacts('g', 'x', { ...documents, authentication: false }).authenticated).toBe(false);
+    expect(gatewayFacts('g', 'x', { id: 'g' }).authenticated).toBe(false);
   });
 
   it('lists one gateway when both ids are the same, none when unset', () => {

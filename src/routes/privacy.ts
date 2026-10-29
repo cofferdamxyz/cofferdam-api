@@ -6,7 +6,8 @@
  * doc, Inference seam): `GET /v1/privacy/ai` reads the plane's AI Gateways
  * back from Cloudflare's API with a read-only token and says, from the live
  * settings and not from a policy page, whether any of them can store what a
- * user sends: logs, cache, Logpush or an OpenTelemetry exporter. It also
+ * user sends: logs, cache, Logpush or an OpenTelemetry exporter; and whether
+ * each accepts only requests authorized in the account. It also
  * names the plane's deployed version and Cloudflare's own commitments for
  * Workers AI. Public, cached five minutes in the isolate and at the edge;
  * nothing of the request is read beyond the path.
@@ -34,6 +35,8 @@ export interface GatewayFacts {
   logpush: boolean;
   otelExporters: number;
   dlp: { enabled: boolean; action: string | null; profiles: number };
+  /** True when the gateway refuses a request that no account authorization covers; the plane's binding calls are pre-authenticated in the account. */
+  authenticated: boolean;
   /** True when any setting could keep a request or an answer. */
   canStore: boolean;
 }
@@ -59,6 +62,7 @@ interface LiveGateway {
   cache_ttl?: unknown;
   logpush?: unknown;
   otel?: unknown;
+  authentication?: unknown;
   dlp?: { enabled?: unknown; action?: unknown; profiles?: unknown; policies?: { action?: unknown; profiles?: unknown }[] } | null;
 }
 
@@ -87,6 +91,7 @@ export function gatewayFacts(id: string, carries: string, live: LiveGateway): Ga
     logpush,
     otelExporters,
     dlp: { enabled: dlpEnabled, action: dlpEnabled ? action : null, profiles: dlpEnabled ? profiles : 0 },
+    authenticated: live.authentication === true,
     canStore: collectsLogs || cacheTtlSeconds > 0 || logpush || otelExporters > 0,
   };
 }

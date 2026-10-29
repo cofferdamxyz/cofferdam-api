@@ -3,9 +3,9 @@
 
 /**
  * Read the plane's AI Gateways back and fail on any setting that could store
- * user content, or that departs from the gateway's class (DLP Block on the
- * strict one, none on the documents one). Prints the proof table; exit 1 on
- * a violation or a missing gateway.
+ * user content, that departs from the gateway's class (DLP Block on the
+ * strict one, none on the documents one) or that leaves authentication off.
+ * Prints the proof table; exit 1 on a violation or a missing gateway.
  *
  *   cd cofferdam-api && direnv exec .. node scripts/ai-gateway/verify.mjs [--allow-no-dlp]
  *
@@ -34,5 +34,5 @@ for (const g of spec.gateways) {
   }
 }
 if (rows.length) console.log(table(rows));
-console.log(failed ? 'FAIL: a gateway could store, or is missing' : 'OK: no gateway can store user content');
+console.log(failed ? 'FAIL: a gateway could store, departs from the spec, or is missing' : 'OK: no gateway can store user content');
 process.exit(failed ? 1 : 0);

@@ -1,5 +1,5 @@
 {
-  "$comment": "The plane's AI Gateways (workspace decisions 0021 (f) and (h), 0037; docs/architecture/plane.md, Inference seam). Two gateways by data class, both unable to store: logs off (collect_logs), cache off (cache_ttl 0), no Logpush, no OpenTelemetry exporter. The strict one carries typed text after the phone's PII gate and blocks personal data with DLP; the documents one carries the whole-CV parse the user opted into, where the CV's own name and phone must pass, so it has no DLP (and DLP does not read images anyway). `authentication` stays off: the Workers AI binding cannot send a gateway authorization header. `dlp_profile_names` are Cloudflare One DLP profiles by name; scripts/ai-gateway/apply.mjs resolves them to ids. scripts/ai-gateway/verify.mjs fails on any setting that could store.",
+  "$comment": "The plane's AI Gateways (workspace decisions 0021 (f) and (h), 0037; docs/architecture/plane.md, Inference seam). Two gateways by data class, both unable to store: logs off (collect_logs), cache off (cache_ttl 0), no Logpush, no OpenTelemetry exporter. The strict one carries typed text after the phone's PII gate and blocks personal data with DLP; the documents one carries the whole-CV parse the user opted into, where the CV's own name and phone must pass, so it has no DLP (and DLP does not read images anyway). `authentication` is on (the founder, 2026-10-29): a request to a gateway's paths must be authorized in the account, and the plane's binding calls are pre-authenticated there (Cloudflare's AI Gateway authentication docs), so the plane holds no gateway token; a token with AI Gateway Run only sends requests through gateways and cannot create, read or edit them, which the scripts need (AI Gateway Edit and Read, Zero Trust Read for the profiles). `dlp_profile_names` are Cloudflare One DLP profiles by name; scripts/ai-gateway/apply.mjs resolves them to ids. scripts/ai-gateway/verify.mjs fails on any setting that could store.",
   "gateways": [
     {
       "id": "cofferdam-strict",
@@ -7,7 +7,7 @@
       "cache_ttl": 0,
       "cache_invalidate_on_update": true,
       "logpush": false,
-      "authentication": false,
+      "authentication": true,
       "rate_limiting_interval": 60,
       "rate_limiting_limit": 600,
       "rate_limiting_technique": "sliding",
@@ -20,7 +20,7 @@
       "cache_ttl": 0,
       "cache_invalidate_on_update": true,
       "logpush": false,
-      "authentication": false,
+      "authentication": true,
       "rate_limiting_interval": 60,
       "rate_limiting_limit": 120,
       "rate_limiting_technique": "sliding",
