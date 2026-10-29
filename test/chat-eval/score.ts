@@ -204,6 +204,8 @@ export interface TurnResult {
   error?: string;
   /** First attempts that failed and were retried on the way to an answer (router or reasoning); not errors. */
   retried?: string[];
+  /** The strict gateway's DLP held the turn back (route `blocked`, decision 0021 (h)); never a router decision. */
+  blocked: boolean;
   /** Scores. */
   routeOk: boolean;
   actionOk: boolean;
@@ -289,6 +291,7 @@ export function scoreTurn(prompt: EvalPrompt, obs: TurnObservation): TurnResult 
     language: prompt.language,
     expect: e,
     route,
+    blocked: route === 'blocked',
     action,
     confidence: num(routeEv?.confidence) ?? null,
     routerLanguage,
@@ -377,8 +380,10 @@ export interface Summary {
   wrongAction: number;
   /** A screen expected but the turn answered or refused. */
   missedAction: number;
-  /** A refusal expected but the turn did something else. */
+  /** A refusal expected but the turn did something else (a strict-gateway block is counted apart). */
   missedRefusal: number;
+  /** Turns the strict gateway's DLP held back: on a set with no card, account, ID or tax number, each is a false block. */
+  blocked: number;
   cost: { meanUsd: number | null; p50Usd: number | null; maxUsd: number | null; estimated: boolean; byRoute: Record<string, number | null> };
   latency: Record<'router' | 'first' | 'total', { p50: number | null; p95: number | null }>;
 }
@@ -434,7 +439,8 @@ export function summarize(results: TurnResult[]): Summary {
     retries: results.filter((r) => r.retried?.length).length,
     wrongAction: results.filter((r) => r.route === 'action' && r.action !== r.expect.action).length,
     missedAction: results.filter((r) => r.expect.route === 'action' && (r.route === 'answer' || r.route === 'answer_long' || r.route === 'refuse')).length,
-    missedRefusal: results.filter((r) => r.expect.route === 'refuse' && r.route !== 'refuse').length,
+    missedRefusal: results.filter((r) => r.expect.route === 'refuse' && r.route !== 'refuse' && !r.blocked).length,
+    blocked: results.filter((r) => r.blocked).length,
     cost: {
       meanUsd: costs.length ? costs.reduce((a, b) => a + b, 0) / costs.length : null,
       p50Usd: percentile(costs, 50),
@@ -519,7 +525,7 @@ export function summaryText(s: Summary): string {
   const lines = [
     `chat eval: ${s.n} prompts, route ${pct(s.overall.route, s.n)}, action ${pct(s.overall.action, s.n)}, one tap away ${pct(s.overall.soft, s.n)}`,
     `fields ${pct(s.fields.ok, s.fields.scored)}, candidates ${pct(s.candidates.ok, s.candidates.scored)}, router language ${pct(s.routerLanguage.ok, s.routerLanguage.n)}, reply language ${pct(s.replyLanguage.ok, s.replyLanguage.n)}`,
-    `wrong screen opened ${s.wrongAction}, screen missed ${s.missedAction}, refusal missed ${s.missedRefusal}, errors ${s.errors}, retried ${s.retries}`,
+    `wrong screen opened ${s.wrongAction}, screen missed ${s.missedAction}, refusal missed ${s.missedRefusal}, errors ${s.errors}, retried ${s.retries}, held back by the strict gateway ${s.blocked}`,
     `cost per turn mean ${usd(s.cost.meanUsd)}, p50 ${usd(s.cost.p50Usd)}, max ${usd(s.cost.maxUsd)}${s.cost.estimated ? ' (partly estimated)' : ''}`,
     `latency ms p50/p95: router ${msf(s.latency.router.p50)}/${msf(s.latency.router.p95)}, first text ${msf(s.latency.first.p50)}/${msf(s.latency.first.p95)}, total ${msf(s.latency.total.p50)}/${msf(s.latency.total.p95)}`,
   ];

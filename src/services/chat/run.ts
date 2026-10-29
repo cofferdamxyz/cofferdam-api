@@ -59,6 +59,12 @@ export type ChatEvent =
   | { type: 'text'; delta: string }
   | { type: 'action'; request: Record<string, unknown> }
   | { type: 'choices'; requests: Record<string, unknown>[] }
+  /**
+   * The plane speaking for itself, not a model; the text that follows is its
+   * notice. `strict_blocked`: the strict gateway's DLP held the turn back
+   * (decision 0021 (h)).
+   */
+  | { type: 'notice'; kind: 'strict_blocked' }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
@@ -128,6 +134,8 @@ export const FIXED_TEXT: Record<
     choose: string;
     empty: string;
     unavailable: string;
+    /** The strict gateway's DLP held the message back (decision 0021 (h)); never echoes the text. */
+    strictBlocked: string;
     ready: (label: string) => string;
     /** A planned screen (decision 0048): opened, but never called ready. */
     comingSoon: (label: string) => string;
@@ -139,6 +147,8 @@ export const FIXED_TEXT: Record<
     choose: 'Did you mean one of these? Tap one to open it, or ask me another way.',
     empty: "Sorry, I couldn't put an answer together. Try asking another way.",
     unavailable: 'The assistant is unavailable right now. Try again in a moment.',
+    strictBlocked:
+      'Cofferdam Cloud did not send that message: it looked like it held a card, account, ID or tax number. Remove the number and send it again.',
     ready: (label) => `${label} is ready. Check the details and confirm there.`,
     comingSoon: (label) => `${label} isn't available yet; it's coming. The app shows what it is waiting for.`,
   },
@@ -148,6 +158,8 @@ export const FIXED_TEXT: Record<
     choose: 'Você quis dizer uma destas? Toque em uma para abrir, ou pergunte de outro jeito.',
     empty: 'Desculpe, não consegui montar uma resposta. Tente perguntar de outro jeito.',
     unavailable: 'O assistente está fora do ar agora. Tente de novo daqui a pouco.',
+    strictBlocked:
+      'A Cofferdam Cloud não enviou essa mensagem: parecia ter um número de cartão, de conta, de documento ou fiscal. Tire o número e envie de novo.',
     ready: (label) => `${label} está pronto. Confira os detalhes e confirme lá.`,
     comingSoon: (label) => `${label} ainda não está disponível; está chegando. O app mostra o que falta.`,
   },
@@ -157,6 +169,8 @@ export const FIXED_TEXT: Record<
     choose: '¿Quisiste decir una de estas? Toca una para abrirla, o pregúntame de otra forma.',
     empty: 'Lo siento, no pude armar una respuesta. Intenta preguntarlo de otra forma.',
     unavailable: 'El asistente no está disponible ahora. Intenta de nuevo en un momento.',
+    strictBlocked:
+      'Cofferdam Cloud no envió ese mensaje: parecía tener un número de tarjeta, de cuenta, de identificación o fiscal. Quita el número y envíalo de nuevo.',
     ready: (label) => `${label} está listo. Revisa los detalles y confirma allí.`,
     comingSoon: (label) => `${label} todavía no está disponible; ya viene. La app muestra qué falta.`,
   },
@@ -324,6 +338,22 @@ function clefName(model: string): string {
 
 function reasonOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** The AI Gateway error code of a DLP block, the prefix of the binding error's message. */
+export const DLP_BLOCK_CODE = 2030;
+
+/**
+ * Whether a model call failed because the strict gateway's DLP held its text
+ * back (decision 0021 (h)). Seen through the Workers AI binding on
+ * 2026-10-29, with the gateway's policy on Block for requests: an
+ * `InferenceUpstreamError` named `AiGatewayError` whose message is
+ * `2030: Request content blocked due to DLP policy violations`, with no `code`
+ * or `status` field. Other gateway failures share the name, so the code
+ * decides.
+ */
+export function isStrictBlock(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AiGatewayError' && err.message.startsWith(`${DLP_BLOCK_CODE}:`);
 }
 
 /**
@@ -567,6 +597,23 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
       earlyAnswer.then((r) => (r instanceof ReadableStream ? r.cancel() : undefined)).catch(() => {});
       turn.early ??= 'dropped';
     };
+    // The fixed replies' language: the request's until the router has decided.
+    let language: ChatLanguage = opts.fallbackLanguage ?? 'en';
+    let routeSent = false;
+    /**
+     * The strict gateway's DLP held the turn's text back (decision 0021 (h)):
+     * the plane's notice and a fixed reply, never the text, which no log names.
+     * A `blocked` route goes first when the router had not decided yet. Not
+     * metered: the gateway stopped the call before any model ran.
+     */
+    const holdBack = async (stage: ChatRoute | 'router') => {
+      dropEarly();
+      opts.log?.({ event: 'chat_strict_blocked', route: stage });
+      if (!routeSent) await emit({ type: 'route', route: 'blocked', action: null, confidence: 0, tier, reasoning: 0 });
+      await emit({ type: 'notice', kind: 'strict_blocked' });
+      await emit({ type: 'text', delta: FIXED_TEXT[language].strictBlocked });
+      await emit({ type: 'done' });
+    };
 
     try {
       // The safety checks live in the router, so a turn never reaches a model
@@ -575,7 +622,8 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
       // refusal-worthy prompt answered after a router timeout under the old
       // "answer without it" fallback.)
       let routed = false;
-      for (let attempt = 1; attempt <= 2 && !routed; attempt++) {
+      let blocked = false;
+      for (let attempt = 1; attempt <= 2 && !routed && !blocked; attempt++) {
         try {
           const t0 = Date.now();
           router.called = true;
@@ -592,8 +640,14 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           timings.router = Date.now() - t0;
           routed = true;
         } catch (err) {
-          opts.log?.({ event: 'chat_router_failed', attempt, reason: reasonOf(err) });
+          // The gateway would hold the same text back again: no retry.
+          if (isStrictBlock(err)) blocked = true;
+          else opts.log?.({ event: 'chat_router_failed', attempt, reason: reasonOf(err) });
         }
+      }
+      if (blocked) {
+        await holdBack('router');
+        return;
       }
       if (!routed) {
         dropEarly();
@@ -615,11 +669,13 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         reasoning: decision.reasoning,
         ...(effort ? { effort } : {}),
       });
+      routeSent = true;
 
       // The fixed replies follow the router's language when it is sure, else the
       // language the request asked for; the amount rule keeps the router's.
       const replyLanguage = opts.fallbackLanguage && languageP < LANGUAGE_FLOOR ? opts.fallbackLanguage : decision.language;
       if (replyLanguage !== decision.language) turn.reply_language = replyLanguage;
+      language = replyLanguage;
       const fixed = FIXED_TEXT[replyLanguage];
       switch (decision.route) {
         case 'refuse':
@@ -704,9 +760,14 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         ...turn,
       });
     } catch (err) {
-      dropEarly();
-      opts.log?.({ event: 'chat_turn_failed', route: decision.route, reason: reasonOf(err) });
-      await emit({ type: 'error', message: FIXED_TEXT[opts.fallbackLanguage ?? 'en'].unavailable }).catch(() => {});
+      if (isStrictBlock(err)) {
+        // An answer or action model the gateway held back after the router passed.
+        await holdBack(decision.route).catch(() => {});
+      } else {
+        dropEarly();
+        opts.log?.({ event: 'chat_turn_failed', route: decision.route, reason: reasonOf(err) });
+        await emit({ type: 'error', message: FIXED_TEXT[opts.fallbackLanguage ?? 'en'].unavailable }).catch(() => {});
+      }
     } finally {
       await writer.close().catch(() => {});
     }

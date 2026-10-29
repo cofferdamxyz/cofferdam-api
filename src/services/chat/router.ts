@@ -14,7 +14,13 @@
  * the panel, where the user confirms (decision 0024).
  */
 
-export type ChatRoute = 'action' | 'answer' | 'answer_long' | 'refuse' | 'clarify';
+/**
+ * The routes a turn takes. `blocked` is never the router's own decision: the
+ * strict gateway's DLP held the turn's text back (decision 0021 (h)), and the
+ * plane answers with its notice instead, so evaluations and logs never count
+ * it as a refusal.
+ */
+export type ChatRoute = 'action' | 'answer' | 'answer_long' | 'refuse' | 'clarify' | 'blocked';
 
 /** Languages the fixed replies come in; the answer models follow the user's language on their own. */
 export type ChatLanguage = 'en' | 'pt' | 'es';

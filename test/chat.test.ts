@@ -11,6 +11,8 @@ import { actionTool, decideRoute, routerQuestions } from '../src/services/chat/r
 import {
   CHOOSE_TEXT,
   CLARIFY_TEXT,
+  FIXED_TEXT,
+  isStrictBlock,
   keepsAmount,
   mentionsOtherCurrency,
   REASONING_FIRST_TRY_MS,
@@ -463,6 +465,65 @@ describe('runChat', () => {
     const inference = fakeInference({ 'chat-router': clef('none', 0.8), 'chat-answer': new Error('boom') });
     const events = await collect(runChat({ inference, messages: user('hi') }));
     expect(events[events.length - 1]!.type).toBe('error');
+  });
+});
+
+/** The strict gateway's DLP block as the Workers AI binding threw it on 2026-10-29: an `InferenceUpstreamError` named `AiGatewayError`. */
+function dlpBlock(): Error {
+  const err = new Error('2030: Request content blocked due to DLP policy violations');
+  err.name = 'AiGatewayError';
+  return err;
+}
+
+describe('the strict gateway holding a turn back (decision 0021 (h))', () => {
+  it('answers a router the gateway blocked with the notice and a fixed reply, once, unmetered and unlogged', async () => {
+    const calls: Call[] = [];
+    const logs: Record<string, unknown>[] = [];
+    const turns: unknown[] = [];
+    const inference = fakeInference({ 'chat-router': dlpBlock(), 'chat-answer': dlpBlock() }, calls);
+    const events = await collect(
+      runChat({ inference, messages: user('card 4111 1111 1111 1111'), log: (f) => logs.push(f), onTurn: (u) => turns.push(u) }),
+    );
+    expect(events).toEqual([
+      { type: 'route', route: 'blocked', action: null, confidence: 0, tier: 'ordinary', reasoning: 0 },
+      { type: 'notice', kind: 'strict_blocked' },
+      { type: 'text', delta: FIXED_TEXT.en.strictBlocked },
+      { type: 'done' },
+    ]);
+    // The same text would be held back again: no retry, and the early answer is dropped.
+    expect(calls.filter((c) => c.op === 'chat-router')).toHaveLength(1);
+    expect(calls.find((c) => c.op === 'chat-answer')!.signal?.aborted).toBe(true);
+    expect(logs).toEqual([{ event: 'chat_strict_blocked', route: 'router' }]);
+    expect(JSON.stringify(logs)).not.toContain('4111');
+    expect(turns).toEqual([]);
+  });
+
+  it('says it in the request’s language, and keeps the Thinking tier the user chose', async () => {
+    const inference = fakeInference({ 'chat-router': dlpBlock() });
+    const events = await collect(runChat({ inference, messages: user('x'), tier: 'thinking', fallbackLanguage: 'es' }));
+    expect(events[0]).toMatchObject({ type: 'route', route: 'blocked', tier: 'thinking' });
+    expect(texts(events)).toBe(FIXED_TEXT.es.strictBlocked);
+  });
+
+  it('answers an answer the gateway blocked after the router passed, after its route', async () => {
+    const logs: Record<string, unknown>[] = [];
+    const inference = fakeInference({ 'chat-router': clef('none', 0.8), 'chat-answer': dlpBlock() });
+    const events = await collect(runChat({ inference, messages: user('hi'), log: (f) => logs.push(f) }));
+    expect(events.map((e) => e.type)).toEqual(['route', 'notice', 'text', 'done']);
+    expect(events[0]).toMatchObject({ type: 'route', route: 'answer' });
+    expect(texts(events)).toBe(FIXED_TEXT.en.strictBlocked);
+    expect(logs).toEqual([{ event: 'chat_strict_blocked', route: 'answer' }]);
+  });
+
+  it('knows the block by the gateway error and its code, not by any failure', () => {
+    expect(isStrictBlock(dlpBlock())).toBe(true);
+    const missing = new Error('2001: Gateway not found');
+    missing.name = 'AiGatewayError';
+    expect(isStrictBlock(missing)).toBe(false);
+    expect(isStrictBlock(new Error('2030: Request content blocked due to DLP policy violations'))).toBe(false);
+    expect(isStrictBlock(new InferenceTimeout('chat-router', 3_000))).toBe(false);
+    expect(isStrictBlock('2030: blocked')).toBe(false);
+    for (const lang of ['en', 'pt', 'es'] as const) expect(FIXED_TEXT[lang].strictBlocked).toMatch(/Cofferdam Cloud/);
   });
 });
 
