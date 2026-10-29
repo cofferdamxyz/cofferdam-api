@@ -12,8 +12,9 @@
  * Needs CLOUDFLARE_ACCOUNT_ID and a token with AI Gateway Edit; the strict
  * gateway's DLP profiles need Zero Trust DLP Read as well. `--list-profiles`
  * prints the account's DLP profiles (name and id) and exits; `--no-dlp`
- * applies the strict gateway without DLP when the account has none (the
- * verify then reports it); `--dry-run` shows what would change.
+ * applies the strict gateway without DLP when the account has none (this
+ * script's own check then skips the DLP rule; `verify.mjs` without
+ * `--allow-no-dlp` still reports it); `--dry-run` shows what would change.
  */
 
 import { credentials, dlpProfiles, getGateway, api, readSpec, summary, table, violations } from './common.mjs';
@@ -35,9 +36,11 @@ if (flag('--list-profiles')) {
 
 let failed = false;
 for (const g of spec.gateways) {
-  const { dlp_profile_names: names, ...fields } = g;
+  const { dlp_profile_names: names, dlp: wantDlp, ...fields } = g;
   const body = { ...fields };
-  if (body.dlp?.enabled) {
+  const live = await getGateway(creds, g.id);
+  let dlpOn = false;
+  if (wantDlp?.enabled) {
     const p = await dlpProfiles(creds);
     const ids = (names ?? []).map((n) => p.byName.get(n)).filter(Boolean);
     const missing = (names ?? []).filter((n) => !p.byName.get(n));
@@ -47,13 +50,21 @@ for (const g of spec.gateways) {
         failed = true;
         continue;
       }
-      body.dlp = { enabled: false };
     } else {
       if (missing.length) console.log(`${g.id}: DLP profiles not found, left out: ${missing.join(', ')}`);
-      body.dlp = { ...body.dlp, profiles: ids };
+      body.dlp = { action: wantDlp.action ?? 'BLOCK', enabled: true, profiles: ids };
+      dlpOn = true;
     }
   }
-  const live = await getGateway(creds, g.id);
+  // DLP off: the API refuses `{ enabled: false }` on its own (7001 on body.dlp, 2026-10-29), so a create leaves the
+  // field out, and an update that turns DLP off repeats the live shape with `enabled: false`.
+  if (!dlpOn) {
+    if (live?.dlp?.enabled === true) {
+      body.dlp = Array.isArray(live.dlp.policies) ? { enabled: false, policies: live.dlp.policies } : { action: live.dlp.action ?? 'BLOCK', enabled: false, profiles: live.dlp.profiles ?? [] };
+    } else {
+      delete body.dlp;
+    }
+  }
   console.log(`${g.id}: ${live ? 'exists' : 'absent'}${live ? `\n${table([summary(live)])}` : ''}`);
   if (flag('--dry-run')) {
     console.log(`would ${live ? 'PUT' : 'POST'} ${JSON.stringify(body)}`);
@@ -66,7 +77,7 @@ for (const g of spec.gateways) {
     continue;
   }
   const after = await getGateway(creds, g.id);
-  const bad = violations(g, after);
+  const bad = violations(g, after).filter((v) => !(flag('--no-dlp') && v.startsWith('dlp.')));
   console.log(`${g.id}: ${live ? 'updated' : 'created'}\n${table([summary(after)])}`);
   if (bad.length) {
     console.log(`${g.id}: violations:\n - ${bad.join('\n - ')}`);
