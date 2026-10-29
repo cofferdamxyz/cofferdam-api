@@ -46,6 +46,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -53,13 +54,13 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createInference, MODEL_PRICES, type AiBinding } from '../src/services/inference/index.js';
-import { clefInput, readChoice, readNoul } from '../src/services/work/clef.js';
+import { clefInput, OTHER_FLOOR, readChoice, readNoul } from '../src/services/work/clef.js';
 import { usageOf } from '../src/services/work/fields.js';
-import { MAX_PAGES, parseRequest, readParse, type ParsePage } from '../src/services/work/parse.js';
+import { MAX_PAGES, PARSE_JSON_SCHEMA, PARSE_SYSTEM, parseRequest, readParse, type ParsePage } from '../src/services/work/parse.js';
 import { planHire, type HireDeps, type HirePlan } from '../src/services/work/hire.js';
 import { claimKey, D1ListingStore, listingText, publishListing, type ClaimVectors, type ListingDraft, type PublishDeps } from '../src/services/work/listings.js';
 import { callCostMicroUsd } from '../src/services/work/meter.js';
-import { recall } from '../src/services/work/recall.js';
+import { recall, TIER2_FLOOR } from '../src/services/work/recall.js';
 import { EMBEDDINGGEMMA_2_GGUF, type RegistryDeps } from '../src/services/work/registry.js';
 import type { D1Database } from '@cloudflare/workers-types';
 import { createRestAi } from './chat-eval/restAi.js';
@@ -73,11 +74,11 @@ import {
   arbiterRequest,
   clefState,
   CLEF_STATE_MAX_CHARS,
+  consideredOf,
+  DECISION_RULES,
   disputeQuestions,
   dropAbsent,
-  gateMiss,
   GROUPS,
-  type GateMiss,
   hasContact,
   mergeReadings,
   pickSample,
@@ -86,9 +87,11 @@ import {
   readingOf,
   readPlan,
   readResumeCsv,
+  replayRule,
   resumeTruth,
   reviewRequest,
   scoreReading,
+  type ConsideredSearch,
   type Dispute,
   type Outcome,
   type Reading,
@@ -105,6 +108,8 @@ const ARBITER = '@cf/deepseek-ai/deepseek-v4.1-flash-1017';
 const DEFAULT_PLAN = 'CONSTRUCTION:15,AVIATION:10,AUTOMOBILE:10,AGRICULTURE:5,CHEF:10,ENGINEERING:25,INFORMATION-TECHNOLOGY:25';
 /** Workers AI bills $0.011 per 1,000 neurons: 11 micro-dollars a neuron. */
 const MICRO_USD_PER_NEURON = 11;
+/** The parse prompt and schema a reading was made with: a cache folder per tag, so a prompt change reads again. */
+const PROMPT_TAG = createHash('sha256').update(PARSE_SYSTEM + JSON.stringify(PARSE_JSON_SCHEMA)).digest('hex').slice(0, 8);
 
 /** One reader's reading of one resume, as cached: values stay outside the repository. */
 interface CachedReading {
@@ -145,6 +150,12 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 };
 const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}%` : '–');
+/** A quantile of times in milliseconds, in seconds. */
+const quantile = (ms: number[], p: number) => {
+  if (!ms.length) return '–';
+  const s = [...ms].sort((a, b) => a - b);
+  return (s[Math.min(s.length - 1, Math.floor(p * s.length))]! / 1000).toFixed(1);
+};
 
 async function parallel<T, R>(items: readonly T[], n: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
@@ -179,20 +190,31 @@ function readJson<T>(path: string): T | null {
 
 /** One reader on one resume, cached by reader and resume id. */
 async function readOnce(cacheDir: string, reader: string, id: string, run: () => Promise<{ result: unknown; model: string }>): Promise<CachedReading> {
-  const file = join(cacheDir, slug(reader), `${id}.json`);
+  const file = join(cacheDir, `${slug(reader)}-${PROMPT_TAG}`, `${id}.json`);
   const cached = readJson<CachedReading>(file);
   if (cached) return cached;
-  const t0 = Date.now();
-  let out: CachedReading;
-  try {
-    const { result, model } = await run();
-    out = { ok: true, failure: null, ms: Date.now() - t0, costMicroUsd: costOf(model, result), reading: readingOf(readParse(result)) };
-  } catch (err) {
-    out = { ok: false, failure: String((err as Error)?.message ?? err).slice(0, 200), ms: Date.now() - t0, costMicroUsd: null, reading: null };
+  let out: CachedReading | null = null;
+  // A rate limit (429) is waited out, up to four tries; any other failure is final for this run.
+  for (let attempt = 0; attempt < 4 && !out; attempt++) {
+    const t0 = Date.now();
+    try {
+      const { result, model } = await run();
+      out = { ok: true, failure: null, ms: Date.now() - t0, costMicroUsd: costOf(model, result), reading: readingOf(readParse(result)) };
+    } catch (err) {
+      const failure = String((err as Error)?.message ?? err).slice(0, 200);
+      if (/\b429\b|rate limit/i.test(failure) && attempt < 3) {
+        await sleep(15_000 * 2 ** attempt);
+        continue;
+      }
+      out = { ok: false, failure, ms: Date.now() - t0, costMicroUsd: null, reading: null };
+    }
   }
-  mkdirSync(join(cacheDir, slug(reader)), { recursive: true });
-  writeFileSync(file, JSON.stringify(out) + '\n');
-  return out;
+  // Only a reading is cached: a failed call is tried again on the next run.
+  if (out!.ok) {
+    mkdirSync(join(cacheDir, `${slug(reader)}-${PROMPT_TAG}`), { recursive: true });
+    writeFileSync(file, JSON.stringify(out) + '\n');
+  }
+  return out!;
 }
 
 /**
@@ -246,7 +268,7 @@ async function cloudPipeline(
 
   // What Clef settles at the floor.
   const settle = (r: Reading, extra: (d: Dispute) => { value?: string | null; present?: boolean } | null) => {
-    const out: Reading = { jobs: r.jobs.map((j) => ({ ...j })), schools: r.schools.map((s) => ({ ...s })), certificates: [...r.certificates] };
+    const out: Reading = { jobs: r.jobs.map((j) => ({ ...j })), schools: r.schools.map((s) => ({ ...s })), certificates: [...r.certificates], skills: r.skills };
     const open: string[] = [];
     const absent: string[] = [];
     for (const d of disputes) {
@@ -357,18 +379,37 @@ interface CwpResult {
   /** The labels' occupation tokens the variant's listing also holds. */
   kept: number;
   labelTokens: number;
-  /** The hirer's search, a sentence written from the resume's latest true title: its own listing among the finalists, and in tier 1. */
+  /** The hirer's search, a sentence written from the resume's latest true title: its own listing among the finalists, first, in the top five, in tier 1. */
   searched: number;
   found: number;
+  first: number;
+  top5: number;
   tier1: number;
-  /** Why the rest were not found, first cause first: the plan searched remote work; the listing ranked past the 50 the index returns; it holds none of the tokens the plan needs; anything else. */
+  /**
+   * Why the rest were not found, first cause first: no listing (nothing read, or the draft refused); the plan searched remote
+   * work; the decision pass saw it and called it other work, or left a token miss in tier 2 (no fit, which an Instant search
+   * drops); it lacks a token the plan requires (a certificate, a language: the benchmark's listings hold no certificate); else
+   * past the vector's 50, under the cosine floor, or not among the fifty the gate passed on.
+   */
+  missUnpublished: number;
   missRemote: number;
-  missRank: number;
-  missGate: number;
   missOther: number;
-  /** The token-gate misses by cause (`gateMiss`). */
-  gateCauses: Partial<Record<GateMiss, number>>;
+  missRelated: number;
+  missRequired: number;
+  missRank: number;
+  missFloor: number;
+  missCut: number;
+  /** Decision-pass calls that failed (the gate's tier stood). */
+  decideFailed: number;
   costMicroUsd: number;
+  /** Each search's wall time on the Mac (the replica's stores are local; Clef's calls are the real ones), its Clef calls, and the searches' cost. */
+  searchMs: number[];
+  decideCalls: number[];
+  searchCostMicroUsd: number;
+  /** Each rule of `DECISION_RULES` replayed on this variant's decisions; the built rule's row repeats the search's own counts. */
+  replay: Record<string, { found: number; first: number; top5: number; kept: number; asked: number }>;
+  /** Every finalist the pass considered, per search: numbers only, for the run's JSON outside the repository. */
+  decisions: ConsideredSearch[];
 }
 
 const dot = (a: readonly number[], b: readonly number[]) => a.reduce((s, x, i) => s + x * b[i]!, 0);
@@ -396,7 +437,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     const parallelN = Number(process.env.RESUME_PARALLEL ?? 4);
     const floor = Number(process.env.RESUME_CLEF_FLOOR ?? 0.6);
     const review = process.env.RESUME_REVIEW === '1';
-    if (cloudReaders.length && cloudReaders.length !== 2) throw new Error('RESUME_CLOUD names two readers, or none');
+    if (cloudReaders.length > 2) throw new Error('RESUME_CLOUD names one or two readers, or none');
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const token = process.env.CLOUDFLARE_API_TOKEN;
     if (cloudReaders.length && (!accountId || !token)) throw new Error('the cloud pipeline needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
@@ -436,7 +477,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
 
     // The cloud: both readers per resume in parallel, then the pipeline.
     const ai = cloudReaders.length ? createRestAi({ accountId: accountId!, token: token! }) : null;
-    const cloud = new Map<string, { a: CachedReading; b: CachedReading; trace: PipelineTrace | null }>();
+    const cloud = new Map<string, { a: CachedReading; b: CachedReading | null; trace: PipelineTrace | null }>();
     if (ai) {
       await parallel(sample, parallelN, async (r, i) => {
         const pages = pagesOf(r.id);
@@ -446,11 +487,11 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
           ),
         );
         let trace: PipelineTrace | null = null;
-        if (a!.reading && b!.reading) {
-          const file = join(cacheDir, `pipeline-${slug(cloudReaders.join('+'))}-floor${floor}${review ? '-review' : ''}`, `${r.id}.json`);
+        if (b && a!.reading && b.reading) {
+          const file = join(cacheDir, `pipeline-${slug(cloudReaders.join('+'))}-floor${floor}${review ? '-review' : ''}-${PROMPT_TAG}`, `${r.id}.json`);
           trace = readJson<PipelineTrace>(file);
           if (!trace) {
-            trace = await cloudPipeline(ai, a!.reading, b!.reading, pages, textOf(r.id), floor);
+            trace = await cloudPipeline(ai, a!.reading, b.reading, pages, textOf(r.id), floor);
             if (review) {
               const t0 = Date.now();
               try {
@@ -465,8 +506,8 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
             writeFileSync(file, JSON.stringify(trace) + '\n');
           }
         }
-        cloud.set(r.id, { a: a!, b: b!, trace });
-        process.stdout.write(`cloud ${i + 1}/${sample.length}: ${a!.ok ? 'ok' : 'FAIL'} ${b!.ok ? 'ok' : 'FAIL'}, ${trace ? `${trace.disputes.length} disputes, ${trace.afterArbiter.open.length} open` : 'no pipeline'}\n`);
+        cloud.set(r.id, { a: a!, b: b ?? null, trace });
+        process.stdout.write(`cloud ${i + 1}/${sample.length}: ${[a, b].filter(Boolean).map((x) => (x!.ok ? 'ok' : `FAIL ${x!.failure}`)).join(' ')}, ${trace ? `${trace.disputes.length} disputes, ${trace.afterArbiter.open.length} open` : 'no pipeline'}\n`);
         await sleep(200);
       });
     }
@@ -499,8 +540,9 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     const cloudCacheReaders = cloudReaders.length ? cloudReaders : [];
     for (const r of sample) {
       const c = cloud.get(r.id);
-      if (c) {
-        addPath(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.reading ? readingGaps(c.a.reading) : [], c.a.ms, c.a.costMicroUsd);
+      // The second reader and the pipeline only when there are two; the local readers below are scored either way.
+      if (c) addPath(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.reading ? readingGaps(c.a.reading) : [], c.a.ms, c.a.costMicroUsd);
+      if (c?.b) {
         addPath(`${short(cloudCacheReaders[1]!)} alone`, r, c.b.reading, c.b.reading ? readingGaps(c.b.reading) : [], c.b.ms, c.b.costMicroUsd);
         const both = (c.a.costMicroUsd ?? 0) + (c.b.costMicroUsd ?? 0);
         const readMs = Math.max(c.a.ms, c.b.ms);
@@ -528,38 +570,42 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       }
     }
 
-    // The work profiles (RESUME_CWP=1): each variant's job titles published as a listing on a replica of its own, snapped as the
-    // plane snaps them (exact labels, the phone's EmbeddingGemma 2 vectors, clef-flash in the band), and a hirer's sentence written
-    // from the resume's latest true title searched over each variant's listings. Nothing is written to the live D1 or Vectorize.
+    // The work profiles (RESUME_CWP=1): each variant's job titles and skills published as a listing on a replica of its own,
+    // snapped as the plane snaps them (exact labels, the phone's EmbeddingGemma 2 vectors, clef-flash in the band), and a hirer's
+    // sentence written from the resume's latest true title searched over each variant's listings, the decision pass on (Clef, not
+    // flash: decision 0069). Nothing is written to the live D1 or Vectorize.
     const cwp: CwpResult[] = [];
     if (process.env.RESUME_CWP === '1') {
       if (!ai) throw new Error('RESUME_CWP needs the cloud credentials: the plane\'s Clef, pivot and hirer models run on Workers AI');
       const escoSql = home(process.env.ESCO_SQL ?? '~/Development/esco/import/cofferdam-import');
       const usSql = home(process.env.US_SQL ?? '~/Development/us-layer-data/cofferdam-import');
       const v3Dir = home(process.env.V3_DIR ?? '~/Development/esco/import/registry-embeddinggemma-2');
+      const skillsPer = Number(process.env.RESUME_CWP_SKILLS ?? 10);
       const norm = (t: string) => t.replace(/\s+/g, ' ').trim();
       const titlesOf = (r: Reading | null) => [...new Set((r?.jobs ?? []).map((j) => norm(j.title ?? '').slice(0, 120)).filter(Boolean))].slice(0, 5);
-      const labelReading = (t: ResumeTruth): Reading => ({ jobs: t.jobs.map((j) => ({ ...j })), schools: [], certificates: [] });
+      const skillsOf = (r: Reading | null) => (r?.skills ?? []).map(norm).filter((x) => x && x.length <= 120).slice(0, skillsPer);
+      const labelReading = (t: ResumeTruth): Reading => ({ jobs: t.jobs.map((j) => ({ ...j })), schools: [], certificates: [], skills: t.skills });
       const variants: { key: string; name: string; reading: (id: string) => Reading | null }[] = [{ key: 'labels', name: 'The labels (the ceiling)', reading: (id) => labelReading(truthOf.get(id)!) }];
       if (cloud.size) {
-        variants.push({ key: 'cloud', name: 'Cloud pipeline', reading: (id) => { const t = cloud.get(id)?.trace; return t ? (t.review?.reading ?? t.afterArbiter.reading) : null; } });
+        if (cloudCacheReaders.length === 2) variants.push({ key: 'cloud', name: 'Cloud pipeline', reading: (id) => { const t = cloud.get(id)?.trace; return t ? (t.review?.reading ?? t.afterArbiter.reading) : null; } });
         variants.push({ key: 'reader-a', name: `${short(cloudCacheReaders[0]!)} alone`, reading: (id) => cloud.get(id)?.a.reading ?? null });
-        variants.push({ key: 'reader-b', name: `${short(cloudCacheReaders[1]!)} alone`, reading: (id) => cloud.get(id)?.b.reading ?? null });
+        if (cloudCacheReaders.length === 2) variants.push({ key: 'reader-b', name: `${short(cloudCacheReaders[1]!)} alone`, reading: (id) => cloud.get(id)?.b?.reading ?? null });
       }
       [...local.entries()].forEach(([label, byId], i) => variants.push({ key: `local-${i + 1}`, name: `${label} (on device)`, reading: (id) => byId.get(id)?.reading ?? null }));
       const only = (process.env.RESUME_CWP_ONLY ?? '').split(',').map((k) => k.trim()).filter(Boolean);
       if (only.length) variants.splice(0, variants.length, ...variants.filter((v) => only.includes(v.key)));
-      const draftOf = (key: string, id: string, titles: string[]): ListingDraft => ({ pseudonym: `${key}-${id}`, profileId: 'p1', region: 'us-tx', scope: 'onsite', tier: 1, lang: 'en', titles, skills: [], certificates: [], languages: ['en'] });
+      const draftOf = (key: string, id: string, r: Reading | null): ListingDraft => ({ pseudonym: `${key}-${id}`, profileId: 'p1', region: 'us-tx', scope: 'onsite', tier: 1, lang: 'en', titles: titlesOf(r), skills: skillsOf(r), certificates: [], languages: ['en'] });
       const drafts = new Map<string, ListingDraft>();
-      for (const v of variants) for (const r of sample) drafts.set(`${v.key}:${r.id}`, draftOf(v.key, r.id, titlesOf(v.reading(r.id))));
+      for (const v of variants) for (const r of sample) drafts.set(`${v.key}:${r.id}`, draftOf(v.key, r.id, v.reading(r.id)));
       const sentenceOf = new Map<string, string>();
       for (const r of sample) {
         const t = titlesOf(labelReading(truthOf.get(r.id)!))[0];
         if (t) sentenceOf.set(r.id, `We need an experienced ${t} for a project in Houston, Texas.`);
       }
-      const titles = [...drafts.values()].flatMap((d) => d.titles);
-      const docs = embedAll([...[...drafts.values()].filter((d) => d.titles.length).map((d) => listingText(d, [])), ...titles], 'document');
-      const queries = embedAll([...titles, ...sentenceOf.values()], 'query');
+      const claimsText = [...drafts.values()].flatMap((d) => [...d.titles, ...d.skills]);
+      const listingTexts = [...drafts.values()].filter((d) => d.titles.length || d.skills.length).map((d) => listingText(d, []));
+      const docs = embedAll([...listingTexts, ...claimsText], 'document');
+      const queries = embedAll([...claimsText, ...sentenceOf.values()], 'query');
       const plans = new Map<string, HirePlan>();
       let planCost = 0;
       let labelTokens = new Map<string, string[]>();
@@ -572,7 +618,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         const listings = new D1ListingStore(replica.db.d1);
         serialBatches(replica.db.d1);
         const jobsIndex = memoryIndex();
-        const recallDeps = { inference: seam, index: jobsIndex, listings };
+        const recallDeps = { inference: seam, index: jobsIndex, listings, store: replica.store };
         // The hirer's plans once, on the first replica: a plan reads the registry and never writes to it.
         if (vi === 0) {
           const hire: HireDeps = { registry, recall: recallDeps };
@@ -588,36 +634,32 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         const publish: PublishDeps = { inference: seam, registry, listings, index: jobsIndex };
         const tokensOf = new Map<string, string[]>();
         const listingOf = new Map<string, string>();
+        const heldBy = new Map<string, string[]>();
         let cost = 0;
         await parallel(sample, parallelN, async (r) => {
           const d = drafts.get(`${v.key}:${r.id}`)!;
-          if (!d.titles.length) return;
+          if (!d.titles.length && !d.skills.length) return;
           const claims = new Map<string, ClaimVectors>();
-          for (const t of d.titles) {
-            const q = queries.get(norm(t));
-            const doc = docs.get(norm(t));
-            if (q && doc) claims.set(claimKey('pos', t), { query: q, document: doc });
-          }
+          const add = (kind: 'pos' | 'skill', texts: string[]) => {
+            for (const t of texts) {
+              const q = queries.get(norm(t));
+              const doc = docs.get(norm(t));
+              if (q && doc) claims.set(claimKey(kind, t), { query: q, document: doc });
+            }
+          };
+          add('pos', d.titles);
+          add('skill', d.skills);
           const out = await publishListing(publish, d, { listing: docs.get(norm(listingText(d, []))), claims });
           cost += out.calls.reduce((s, c) => s + callCostMicroUsd(c), 0);
           if (out.ok) {
             tokensOf.set(r.id, out.tokens.filter((t) => t.startsWith('pos:')).sort());
             listingOf.set(r.id, out.listingId);
+            heldBy.set(out.listingId, out.tokens);
           }
         });
         if (vi === 0) labelTokens = tokensOf;
-        const res: CwpResult = { variant: v.name, resumes: sample.length, published: tokensOf.size, same: 0, compared: 0, kept: 0, labelTokens: 0, searched: 0, found: 0, tier1: 0, missRemote: 0, missRank: 0, missGate: 0, missOther: 0, gateCauses: {}, costMicroUsd: cost };
-        const allTokensOf = new Map<string, string[]>();
-        const records = await listings.get([...listingOf.values()]);
-        for (const r of sample) {
-          const id = listingOf.get(r.id);
-          if (id) allTokensOf.set(r.id, records.get(id)?.tokens ?? []);
-        }
-        const details: { id: string; needs: string[]; allOf: string[]; anyOf: string[]; listing: string[]; found: boolean }[] = [];
-        const listingVector = (id: string) => {
-          const d = drafts.get(`${v.key}:${id}`)!;
-          return d.titles.length ? docs.get(norm(listingText(d, []))) : undefined;
-        };
+        const res: CwpResult = { variant: v.name, resumes: sample.length, published: tokensOf.size, same: 0, compared: 0, kept: 0, labelTokens: 0, searched: 0, found: 0, first: 0, top5: 0, tier1: 0, missUnpublished: 0, missRemote: 0, missOther: 0, missRelated: 0, missRequired: 0, missRank: 0, missFloor: 0, missCut: 0, decideFailed: 0, costMicroUsd: cost, searchMs: [], decideCalls: [], searchCostMicroUsd: 0, replay: {}, decisions: [] };
+        const listingVector = (id: string) => (listingOf.has(id) ? docs.get(norm(listingText(drafts.get(`${v.key}:${id}`)!, []))) : undefined);
         for (const r of sample) {
           const mine = tokensOf.get(r.id);
           const truth = labelTokens.get(r.id);
@@ -632,45 +674,47 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
           const plan = plans.get(r.id);
           if (!plan) continue;
           res.searched++;
-          const detail = { id: r.id, needs: plan.needs.map((n) => n.token), allOf: plan.intent.allOf, anyOf: plan.intent.anyOf, listing: allTokensOf.get(r.id) ?? [], found: false };
-          details.push(detail);
+          const tSearch = Date.now();
           const found = await recall(recallDeps, plan.intent);
-          res.costMicroUsd += found.calls.reduce((s, c) => s + callCostMicroUsd(c), 0);
-          const own = found.ok ? found.finalists.find((f) => f.listingId === listingOf.get(r.id)) : undefined;
-          if (own) {
+          res.searchMs.push(Date.now() - tSearch);
+          res.decideCalls.push(found.calls.filter((c) => c.op === 'work-decide').length);
+          const searchCost = found.calls.reduce((s, c) => s + callCostMicroUsd(c), 0);
+          res.searchCostMicroUsd += searchCost;
+          res.costMicroUsd += searchCost;
+          if (found.ok) {
+            const considered = [...found.finalists, ...(found.dropped ?? [])];
+            res.decideFailed += considered.filter((f) => f.fit && f.fit.choice === null).length;
+            res.decisions.push({ mode: plan.intent.mode, considered: consideredOf(considered, plan.intent, (id) => heldBy.get(id) ?? [], listingOf.get(r.id)) });
+          }
+          const at = found.ok ? found.finalists.findIndex((f) => f.listingId === listingOf.get(r.id)) : -1;
+          if (at >= 0) {
             res.found++;
-            if (own.gateTier === 1) res.tier1++;
-            detail.found = true;
+            if (at === 0) res.first++;
+            if (at < 5) res.top5++;
+            if (found.ok && found.finalists[at]!.gateTier === 1) res.tier1++;
             continue;
           }
-          // The first cause of a miss: the plan's scope, the vector rank among this variant's listings, the token gate.
+          // The first cause of a miss: no listing, the plan's scope, what the decision pass did with it when it saw it, a token the
+          // plan requires that the listing lacks, else the vector's 50, the cosine floor or the cut to fifty. A token hit holding every
+          // required token passes the gate at any cosine, so only the pass drops one.
+          const ownId = listingOf.get(r.id);
+          const left = found.ok ? (found.dropped ?? []).find((f) => f.listingId === ownId) : undefined;
           const q = plan.intent.vector;
           const mineVec = listingVector(r.id);
           const rank = q && mineVec ? sample.filter((o) => { const ov = listingVector(o.id); return ov && dot(ov, q) > dot(mineVec, q); }).length : Infinity;
-          const held = allTokensOf.get(r.id) ?? [];
-          const gatePass = plan.intent.allOf.every((t) => held.includes(t)) && (!plan.intent.anyOf.length || plan.intent.anyOf.some((t) => held.includes(t)));
-          if (plan.scope === 'remote') res.missRemote++;
-          else if (!listingOf.get(r.id) || rank >= 50) res.missRank++;
-          else if (!gatePass) res.missGate++;
-          else res.missOther++;
+          if (!ownId) res.missUnpublished++;
+          else if (plan.scope === 'remote') res.missRemote++;
+          else if (left) {
+            if ((left.fit?.pOther ?? 0) >= OTHER_FLOOR) res.missOther++;
+            else res.missRelated++;
+          } else if (plan.intent.allOf.some((t) => !(heldBy.get(ownId) ?? []).includes(t))) res.missRequired++;
+          else if (rank >= 50) res.missRank++;
+          else if (q && mineVec && dot(mineVec, q) < TIER2_FLOOR) res.missFloor++;
+          else res.missCut++;
         }
-        const named = await replica.store.tokens([...new Set(details.flatMap((d) => [...d.needs, ...d.anyOf, ...d.allOf, ...d.listing]))]);
-        for (const d of details) {
-          const plan = plans.get(d.id);
-          if (d.found || !plan || plan.scope === 'remote' || !listingOf.get(d.id)) continue;
-          const held = d.listing;
-          const gatePass = plan.intent.allOf.every((t) => held.includes(t)) && (!plan.intent.anyOf.length || plan.intent.anyOf.some((t) => held.includes(t)));
-          if (gatePass) continue;
-          const cause = gateMiss(plan.intent, held, (t) => named.get(t)?.iscoCode ?? null);
-          res.gateCauses[cause] = (res.gateCauses[cause] ?? 0) + 1;
-        }
+        res.replay = Object.fromEntries(Object.entries(DECISION_RULES).map(([name, rule]) => [name, replayRule(res.decisions, rule)]));
         cwp.push(res);
-        mkdirSync(join(out, 'reports'), { recursive: true });
-        writeFileSync(
-          join(out, 'reports', `cwp-${new Date().toISOString().slice(0, 10)}-${v.key}.json`),
-          JSON.stringify({ variant: v.name, details, tokens: Object.fromEntries([...named].map(([t, row]) => [t, { label: row.labelEn, isco: row.iscoCode }])) }, null, 1) + '\n',
-        );
-        process.stdout.write(`work profiles, ${v.name}: ${res.published} published, ${res.found} of ${res.searched} found, ${((Date.now() - t0) / 1000).toFixed(0)} s\n`);
+        process.stdout.write(`work profiles, ${v.name}: ${res.published} published, ${res.found} of ${res.searched} found (${res.first} first), ${((Date.now() - t0) / 1000).toFixed(0)} s\n`);
       }
       process.stdout.write(`hirer plans: ${plans.size} of ${sentenceOf.size}, $${(planCost / 1e6).toFixed(4)}\n`);
     }
@@ -682,7 +726,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     say(`# Real-resume benchmark, ${date}`);
     say();
     say(
-      `Generated by \`test/workResume.eval.test.ts\` (RESUME_EVAL=1; workspace decision 0021, the founder's exception of 2026-10-28) on ${sample.length} resumes of Kaggle's public LiveCareer dataset, seed ${seed}, outside every repository; ${excluded} of ${records.length} resumes carry an email or a phone number and are never sampled. Pages as the phone sends them (JPEG, long side 1,600 px). Each field is scored against the labels in the resume's own HTML: right (counting those the worker would also be asked about), or wrong, and a wrong field nobody would ask about is silent. Months: a job's length, a current job running to the resume's latest date, right within one month. Certificates: the keywords the certifications section names (OSHA, CDL, forklift, …). Counts only; no resume's text, title or date is in this file. ${Math.round((Date.now() - started) / 60_000)} min in all.`,
+      `Generated by \`test/workResume.eval.test.ts\` (RESUME_EVAL=1; workspace decision 0021, the founder's exception of 2026-10-28) on ${sample.length} resumes of Kaggle's public LiveCareer dataset, seed ${seed}, outside every repository; ${excluded} of ${records.length} resumes carry an email or a phone number and are never sampled. Pages as the phone sends them (JPEG, long side 1,600 px). Each field is scored against the labels in the resume's own HTML: right (counting those the worker would also be asked about), or wrong, and a wrong field nobody would ask about is silent. Readings made with the parse prompt tagged \`${PROMPT_TAG}\`. Months: a job's length, a current job running to the resume's latest date, right within one month. Certificates: the keywords the certifications section names (OSHA, CDL, forklift, …). Counts only; no resume's text, title or date is in this file. ${Math.round((Date.now() - started) / 60_000)} min in all.`,
     );
     say();
     say('## All resumes');
@@ -695,8 +739,10 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       for (const l of summaryRows(paths, (r) => GROUPS[r.category] === group)) say(l);
       say();
     }
-    if (cloud.size) {
-      const traces = [...cloud.values()].map((c) => c.trace).filter((t): t is PipelineTrace => !!t);
+    // The pipeline's section only when two cloud readers made one.
+    const pipelineTraces = [...cloud.values()].map((c) => c.trace).filter((t): t is PipelineTrace => !!t);
+    if (pipelineTraces.length) {
+      const traces = pipelineTraces;
       const disputes = traces.flatMap((t) => t.disputes);
       const byClef = traces.reduce((s, t) => s + t.settledByClef, 0);
       const byArbiter = traces.reduce((s, t) => s + t.settledByArbiter, 0);
@@ -710,27 +756,30 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         const rv = traces.map((t) => t.review!).filter(Boolean);
         say(`- The full check changed ${rv.reduce((s, x) => s + x.corrections, 0)} fields and added ${rv.reduce((s, x) => s + x.added, 0)} jobs on ${rv.length} resumes${rv.some((x) => x.failure) ? ` (${rv.filter((x) => x.failure).length} calls failed)` : ''}.`);
       }
-      const failures = [...cloud.values()].flatMap((c) => [c.a, c.b]).filter((x) => !x.ok);
+      const failures = [...cloud.values()].flatMap((c) => [c.a, c.b]).filter((x): x is CachedReading => !!x && !x.ok);
       if (failures.length) say(`- Failed cloud reads: ${failures.length}.`);
       say();
     }
     if (cwp.length) {
       say('## Work profiles and the hirer\'s search');
       say();
-      say('Each variant\'s job titles (up to five, latest first) published as a listing on a fresh replica of the registry (ESCO, the US layer, the certificate seed; the phone\'s EmbeddingGemma 2 vectors; clef-flash in the band), and a hirer\'s sentence written from the resume\'s latest true title ("We need an experienced … for a project in Houston, Texas.") searched over each variant\'s listings with one plan per resume. The labels\' own listings are the ceiling.');
+      say(`Each variant's job titles (up to five, latest first) and skills (up to ${process.env.RESUME_CWP_SKILLS ?? 10}) published as a listing on a fresh replica of the registry (ESCO, the US layer, the certificate seed; the phone's EmbeddingGemma 2 vectors; clef-flash in the band), and a hirer's sentence written from the resume's latest true title ("We need an experienced … for a project in Houston, Texas.") searched over each variant's listings with one plan per resume and the decision pass on: Clef (not flash) classifying each finalist against the job (decision 0069). The labels' own listings are the ceiling.`);
       say();
-      say('| Variant | Listings | Same occupations as the labels | Labels\' occupations kept | Found by the hirer | In tier 1 | Missed: remote scope | Missed: past the vector\'s 50 | Missed: token gate | Missed: other | Cost |');
-      say('|---|---|---|---|---|---|---|---|---|---|---|');
+      say('| Variant | Listings | Same occupations as the labels | Labels\' occupations kept | Found | First | Top 5 | Tier 1 | Missed: no listing | Missed: remote | Missed: Clef, other work | Missed: Clef, a token miss not promoted | Missed: a required token it lacks | Missed: past the vector\'s 50 | Missed: under the cosine floor | Missed: not among the gate\'s fifty | Decisions failed | Search s, median / p90 | Clef calls a search | Cost a search | Cost |');
+      say('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
       for (const c of cwp) {
-        say(`| ${c.variant} | ${c.published}/${c.resumes} | ${c.compared ? `${c.same}/${c.compared} (${pct(c.same, c.compared)})` : '–'} | ${pct(c.kept, c.labelTokens)} | ${c.found}/${c.searched} (${pct(c.found, c.searched)}) | ${c.tier1}/${c.searched} | ${c.missRemote} | ${c.missRank} | ${c.missGate} | ${c.missOther} | $${(c.costMicroUsd / 1e6).toFixed(4)} |`);
+        say(`| ${c.variant} | ${c.published}/${c.resumes} | ${c.compared ? `${c.same}/${c.compared} (${pct(c.same, c.compared)})` : '–'} | ${pct(c.kept, c.labelTokens)} | ${c.found}/${c.searched} (${pct(c.found, c.searched)}) | ${c.first} | ${c.top5} | ${c.tier1} | ${c.missUnpublished} | ${c.missRemote} | ${c.missOther} | ${c.missRelated} | ${c.missRequired} | ${c.missRank} | ${c.missFloor} | ${c.missCut} | ${c.decideFailed} | ${quantile(c.searchMs, 0.5)} / ${quantile(c.searchMs, 0.9)} | ${median(c.decideCalls)} | $${(c.searchCostMicroUsd / Math.max(1, c.searchMs.length) / 1e6).toFixed(4)} | $${(c.costMicroUsd / 1e6).toFixed(4)} |`);
       }
       say();
-      say('Token-gate misses by cause (the first that applies): a required token the listing lacks; a plan whose needs name no occupation (the test\'s listings hold job titles only, no skills); the listing\'s occupations against the plan\'s by ISCO unit group, then minor group.');
+      say('### The decision rule, replayed');
       say();
-      const causes: GateMiss[] = ['required token missing', 'plan needs skills only', 'listing holds no occupation', 'same ISCO unit, another token', 'neighbouring ISCO group', 'another occupation'];
-      say(`| Variant | ${causes.join(' | ')} |`);
-      say(`|---|${causes.map(() => '---').join('|')}|`);
-      for (const c of cwp) say(`| ${c.variant} | ${causes.map((k) => c.gateCauses[k] ?? 0).join(' | ')} |`);
+      say(`Every finalist the decision pass considered in the searches above (kept or left out: the gate's tier 1 and the vector-strong misses, with Clef's probabilities) replayed under other rules, with no new model call. A cell: the resume's own listing found, first, in the top five; then the finalists kept and the Clef calls made per search. The second row is the rule as built.`);
+      say();
+      say(`| Rule | ${cwp.map((c) => c.variant).join(' | ')} |`);
+      say(`|---|${cwp.map(() => '---|').join('')}`);
+      for (const name of Object.keys(DECISION_RULES)) {
+        say(`| ${name} | ${cwp.map((c) => { const x = c.replay[name]!; const per = (n: number) => (n / Math.max(1, c.decisions.length)).toFixed(1); return `${x.found} / ${x.first} / ${x.top5} · ${per(x.kept)} kept · ${per(x.asked)} calls`; }).join(' | ')} |`);
+      }
       say();
     }
     say('Cells: the share right, and in brackets the share wrong with no question to the worker. Questions per resume: the fields a resume would still ask its worker about.');

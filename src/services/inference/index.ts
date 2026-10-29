@@ -33,7 +33,8 @@ export type InferenceOp =
   | 'work-intent'
   | 'work-embed'
   | 'work-adjudicate'
-  | 'work-pivot';
+  | 'work-pivot'
+  | 'work-decide';
 
 export type InferenceModelVar =
   | 'CHAT_ROUTER_MODEL'
@@ -47,7 +48,8 @@ export type InferenceModelVar =
   | 'WORK_INTENT_MODEL'
   | 'WORK_EMBED_MODEL'
   | 'WORK_ADJUDICATE_MODEL'
-  | 'WORK_PIVOT_MODEL';
+  | 'WORK_PIVOT_MODEL'
+  | 'WORK_DECIDE_MODEL';
 
 export interface OpSpec {
   /** The model when neither KV nor the environment pins one. */
@@ -96,6 +98,8 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   'work-embed': { model: '@cf/baai/bge-m3', envVar: 'WORK_EMBED_MODEL', timeoutMs: 10_000 },
   'work-adjudicate': { model: '@cf/cloudflare/clef-flash', envVar: 'WORK_ADJUDICATE_MODEL', timeoutMs: 6_000 },
   'work-pivot': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 15_000 },
+  // The finalist decision (S8, workspace decision 0069): Clef, not flash, as the founder ruled on 2026-10-28.
+  'work-decide': { model: '@cf/cloudflare/clef', envVar: 'WORK_DECIDE_MODEL', timeoutMs: 8_000 },
 };
 
 /**

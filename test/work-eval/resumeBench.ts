@@ -22,8 +22,9 @@
  */
 
 import { parseCvDate, type CvDate } from '../../src/services/work/cv.js';
-import type { ClefQuestion } from '../../src/services/work/clef.js';
+import { FIT_FLOOR, OTHER_FLOOR, type ClefQuestion } from '../../src/services/work/clef.js';
 import type { ParsedCv, ParsePage } from '../../src/services/work/parse.js';
+import { COSINE_WEIGHT, RELATED_WEIGHT, SKILL_WEIGHT, type Finalist } from '../../src/services/work/recall.js';
 
 // ── The dataset ─────────────────────────────────────────────────────────────
 
@@ -130,14 +131,17 @@ export interface ResumeTruth {
   certificates: string[];
   /** The resume's latest date: the "Current" a job runs to, since the resume's own date is not in the data. */
   anchor: CvDate | null;
+  /** The skills section's items, split on commas, semicolons, bullets and line breaks: free text, for the Work Profile only. */
+  skills: string[];
 }
 
 /** The section of the HTML whose id starts `SECTION_<code>`, up to the next section, or empty. */
 export function sectionHtml(html: string, code: string): string {
-  const start = html.search(new RegExp(`id="SECTION_${code}`));
-  if (start < 0) return '';
-  const rest = html.slice(start);
-  const next = rest.slice(1).search(/id="SECTION_[A-Z]+/);
+  const at = html.search(new RegExp(`id="SECTION_${code}`));
+  if (at < 0) return '';
+  // Whole tags at both ends: the section's own opening tag, and nothing of the next one's.
+  const rest = html.slice(Math.max(0, html.lastIndexOf('<', at)));
+  const next = rest.slice(1).search(/<[^<>]*\bid="SECTION_[A-Z]+/);
   return next < 0 ? rest : rest.slice(0, next + 1);
 }
 
@@ -216,7 +220,13 @@ export function resumeTruth(html: string): ResumeTruth {
     schools.push(school);
     anchor = laterDate(anchor, school.end);
   }
-  return { jobs, schools, certificates: certificateKeywords(htmlText(sectionHtml(html, 'CERT'))), anchor };
+  const skillsHtml = sectionHtml(html, 'SKLL').replace(/<\/(li|p|div|span)>/gi, ',').replace(/<br\s*\/?>/gi, ',');
+  const skillItems = htmlText(skillsHtml)
+    .replace(/^\s*skills\s*/i, '')
+    .split(/[,;•|·]|\s{2,}/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2 && x.length <= 60);
+  return { jobs, schools, certificates: certificateKeywords(htmlText(sectionHtml(html, 'CERT'))), anchor, skills: distinctSkills(skillItems) };
 }
 
 // ── Sampling ────────────────────────────────────────────────────────────────
@@ -302,11 +312,28 @@ export interface ReadingSchool {
   end: CvDate | null;
 }
 
-/** What the benchmark scores of a parse: jobs, schools and certificate names. */
+/** What the benchmark scores of a parse: jobs, schools and certificate names; and the skills a Work Profile publishes. */
 export interface Reading {
   jobs: ReadingJob[];
   schools: ReadingSchool[];
   certificates: string[];
+  /** The CV's skills and its jobs' skills, as written, first seen first; not scored (the labels hold them only as free text). */
+  skills?: string[];
+}
+
+/** Distinct skills, first seen first, by `normText`. */
+export function distinctSkills(all: readonly (string | null | undefined)[], max = 30): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of all) {
+    const t = (raw ?? '').replace(/\s+/g, ' ').trim();
+    const k = normText(t);
+    if (!k || k.length < 2 || t.length > 120 || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function readingOf(p: ParsedCv): Reading {
@@ -314,6 +341,7 @@ export function readingOf(p: ParsedCv): Reading {
     jobs: p.claimed.experience.map((e) => ({ title: e.title?.raw ?? null, start: e.start, end: e.end, current: e.current })),
     schools: p.claimed.education.map((e) => ({ institution: e.institution, qualification: e.qualification, end: e.end })),
     certificates: p.claimed.certificates.map((c) => c.raw),
+    skills: distinctSkills([...p.claimed.skills.map((c) => c.raw), ...p.claimed.experience.flatMap((e) => e.skills.map((c) => c.raw))]),
   };
 }
 
@@ -470,7 +498,7 @@ export function mergeReadings(a: Reading, b: Reading): Merged {
     certificates.push(cb);
     add({ kind: 'presence', path: `certificates.${k}`, a: null, b: cb, subject: `the certificate "${cb}"` });
   });
-  return { reading: { jobs, schools, certificates }, disputes };
+  return { reading: { jobs, schools, certificates, skills: distinctSkills([...(a.skills ?? []), ...(b.skills ?? [])]) }, disputes };
 }
 
 /** Fields a reading leaves open by the code's own checks: a job with no start, a past job with no end, an end before its start. */
@@ -629,7 +657,7 @@ function dateOf(value: string | null): CvDate | null {
 export function dropAbsent(r: Reading, absent: readonly string[]): Reading {
   const drop = (list: string) => new Set(absent.filter((p) => p.startsWith(`${list}.`)).map((p) => Number(p.split('.')[1])));
   const [j, s, c] = [drop('jobs'), drop('schools'), drop('certificates')];
-  return { jobs: r.jobs.filter((_, i) => !j.has(i)), schools: r.schools.filter((_, i) => !s.has(i)), certificates: r.certificates.filter((_, i) => !c.has(i)) };
+  return { jobs: r.jobs.filter((_, i) => !j.has(i)), schools: r.schools.filter((_, i) => !s.has(i)), certificates: r.certificates.filter((_, i) => !c.has(i)), skills: r.skills };
 }
 
 // ── The full check (the founder's last step) ────────────────────────────────
@@ -699,7 +727,7 @@ export function reviewRequest(pages: readonly ParsePage[], r: Reading): Record<s
 
 /** The reading after the full check's corrections, and how many it made. */
 export function applyReview(r: Reading, result: unknown): { reading: Reading; corrections: number; added: number } {
-  const out: Reading = { jobs: r.jobs.map((j) => ({ ...j })), schools: r.schools.map((s) => ({ ...s })), certificates: [...r.certificates] };
+  const out: Reading = { jobs: r.jobs.map((j) => ({ ...j })), schools: r.schools.map((s) => ({ ...s })), certificates: [...r.certificates], skills: r.skills };
   const o = answerObject(result);
   let corrections = 0;
   let added = 0;
@@ -826,26 +854,106 @@ export function addScores(scores: readonly ResumeScore[]): ResumeScore {
   return total;
 }
 
-// ── Why a hirer's search missed a listing ───────────────────────────────────
+// ── The decision pass, replayed ─────────────────────────────────────────────
 
-export type GateMiss = 'required token missing' | 'plan needs skills only' | 'same ISCO unit, another token' | 'neighbouring ISCO group' | 'listing holds no occupation' | 'another occupation';
+/** One finalist the decision pass considered for one search, kept or not: numbers only. */
+export interface Considered {
+  /** The resume's own listing, the one the search is for. */
+  right: boolean;
+  /** The token gate's tier, before Clef. */
+  gateTier: 1 | 2;
+  /** It matched one of the plan's occupations or their ISCO unit groups; a skill alone is not one, nor an occupation kept under Clef's floor. */
+  occupationHit: boolean;
+  /** Every hard requirement (`allOf`) held exactly. */
+  meetsAllOf: boolean;
+  score: number;
+  /** Clef's choice, or null when the call failed. */
+  choice: 'fit' | 'related' | 'other' | null;
+  pFit: number;
+  pRelated: number;
+  pOther: number;
+  /** The share of the job's needed skills the listing holds. */
+  skillShare: number;
+}
 
-/**
- * The first reason a listing fails the token gate of a plan: a required
- * token (`allOf`) it lacks; a plan whose needs name no occupation; or the
- * listing's occupations against the plan's, by ISCO unit group (four digits)
- * and minor group (three).
- */
-export function gateMiss(plan: { allOf: readonly string[]; anyOf: readonly string[] }, listing: readonly string[], isco: (token: string) => string | null): GateMiss {
-  const held = new Set(listing);
-  if (plan.allOf.some((t) => !held.has(t))) return 'required token missing';
-  const needs = plan.anyOf.filter((t) => t.startsWith('pos:'));
-  if (!needs.length) return 'plan needs skills only';
-  const mine = listing.filter((t) => t.startsWith('pos:'));
-  if (!mine.length) return 'listing holds no occupation';
-  const codes = (ts: readonly string[]) => ts.map(isco).filter((c): c is string => !!c);
-  const [n, m] = [codes(needs), codes(mine)];
-  if (n.some((c) => m.includes(c))) return 'same ISCO unit, another token';
-  if (n.some((c) => m.some((x) => x.slice(0, 3) === c.slice(0, 3)))) return 'neighbouring ISCO group';
-  return 'another occupation';
+export interface ConsideredSearch {
+  mode: 'instant' | 'curated';
+  considered: Considered[];
+}
+
+/** What recall's finalists, kept and left out, say of one search. */
+export function consideredOf(
+  finalists: readonly Finalist[],
+  intent: { allOf: readonly string[]; anyOf: readonly string[]; keptOccupation?: string },
+  held: (listingId: string) => readonly string[],
+  rightId: string | undefined,
+): Considered[] {
+  const needed = intent.anyOf.filter((t) => t.startsWith('skill:')).length;
+  return finalists.map((f) => {
+    const tokens = held(f.listingId);
+    return {
+      right: f.listingId === rightId,
+      gateTier: f.fit?.promoted ? 2 : f.gateTier,
+      occupationHit: !intent.keptOccupation && f.matched.some((t) => t.startsWith('pos:') || t.startsWith('isco:')),
+      meetsAllOf: intent.allOf.every((t) => tokens.includes(t)),
+      score: f.score,
+      choice: f.fit?.choice ?? null,
+      pFit: f.fit?.pFit ?? 0,
+      pRelated: f.fit?.pRelated ?? 0,
+      pOther: f.fit?.pOther ?? 0,
+      skillShare: (f.fit?.skillsHeld ?? 0) / Math.max(1, needed),
+    };
+  });
+}
+
+/** A rule over one considered finalist: kept or not, its tier, its rank within the tier (higher first), and whether Clef is asked at all (default yes). */
+export type DecisionRule = (c: Considered, mode: 'instant' | 'curated') => { keep: boolean; tier: 1 | 2; rank: number; asked?: boolean };
+
+const builtRank = (c: Considered) => c.pFit + RELATED_WEIGHT * c.pRelated + SKILL_WEIGHT * c.skillShare + COSINE_WEIGHT * c.score;
+
+/** The built rule with one part changed: what drops a finalist, the fit that promotes a miss, or the rank. */
+function ruleWith(drops: (c: Considered) => boolean, fitFloor = FIT_FLOOR, rank: (c: Considered) => number = builtRank): DecisionRule {
+  return (c, mode) => {
+    const tier: 1 | 2 = c.gateTier === 1 || (c.choice !== null && c.pFit >= fitFloor && c.meetsAllOf) ? 1 : 2;
+    return { keep: !(c.choice !== null && drops(c)) && (mode === 'curated' || tier === 1), tier, rank: rank(c) };
+  };
+}
+
+const built = ruleWith((c) => c.pOther >= OTHER_FLOOR);
+/** EmbeddingGemma 2's tier-2 floor, measured on its own scale (2026-10-27); recall's is still bge-m3's 0.5. */
+export const GEMMA_TIER2_FLOOR = 0.65;
+
+/** The rules the benchmark replays on the same decisions; the second is `recall.ts` as built. */
+export const DECISION_RULES: Record<string, DecisionRule> = {
+  'The gate alone, by cosine': (c, mode) => ({ keep: mode === 'curated' || c.gateTier === 1, tier: c.gateTier, rank: c.score, asked: false }),
+  [`As built: other at ${OTHER_FLOOR} drops, a fit at ${FIT_FLOOR} promotes`]: built,
+  [`As built, misses from cosine ${GEMMA_TIER2_FLOOR} (EmbeddingGemma 2's floor)`]: (c, mode) =>
+    c.gateTier === 2 && c.score < GEMMA_TIER2_FLOOR ? { keep: false, tier: 2, rank: 0, asked: false } : built(c, mode),
+  'Other drops at 0.7': ruleWith((c) => c.pOther >= 0.7),
+  'Other drops at 0.9': ruleWith((c) => c.pOther >= 0.9),
+  'Other drops only a finalist with no occupation hit': ruleWith((c) => !c.occupationHit && c.pOther >= OTHER_FLOOR),
+  'Nothing dropped; a fit promotes': ruleWith(() => false),
+  'A fit at 0.4 promotes': ruleWith((c) => c.pOther >= OTHER_FLOOR, 0.4),
+  'As built, ranked by cosine within a tier': ruleWith((c) => c.pOther >= OTHER_FLOOR, FIT_FLOOR, (c) => c.score),
+};
+
+/** A rule replayed over searches: the right listing found, first, in the top five; the finalists kept and the Clef calls made, in all. */
+export function replayRule(searches: readonly ConsideredSearch[], rule: DecisionRule): { found: number; first: number; top5: number; kept: number; asked: number } {
+  let found = 0;
+  let first = 0;
+  let top5 = 0;
+  let kept = 0;
+  let asked = 0;
+  for (const s of searches) {
+    const all = s.considered.map((c) => ({ c, ...rule(c, s.mode) }));
+    asked += all.filter((x) => x.asked !== false).length;
+    const out = all.filter((x) => x.keep).sort((a, b) => a.tier - b.tier || b.rank - a.rank);
+    kept += out.length;
+    const at = out.findIndex((x) => x.c.right);
+    if (at < 0) continue;
+    found++;
+    if (at === 0) first++;
+    if (at < 5) top5++;
+  }
+  return { found, first, top5, kept, asked };
 }

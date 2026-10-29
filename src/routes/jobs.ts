@@ -4,7 +4,7 @@
 /**
  * /v1/jobs — the hirer's side of Cofferdam Work (workspace
  * `docs/product/work-wallet.md`, Matching and award; `docs/product/engine.md`,
- * Pipeline, S5 to S7).
+ * Pipeline, S5 to S8).
  *
  *   POST /v1/jobs/intent  { account, sentence, lang, regions }
  *        → { ok, plan, finalists: { count, byGateTier: { 1, 2 }, byPersonhood: { 0, 1, 2 } } }
@@ -28,7 +28,8 @@
  * eight, never a position.
  *
  * The finalists come back as counts only: how many, by gate tier (1 passed
- * the Bloom gate; 2 a vector-strong token miss, Curated only) and by the
+ * the Bloom gate, or a miss Clef's fit promoted; 2 a vector-strong token
+ * miss, shown when the hirer curates; workspace decision 0069) and by the
  * workers' personhood tier ("pinging 8 workers, 7 verified"). Nothing per
  * finalist reaches the hirer before funding: no listing id, score, token list
  * or card, since any of them would let answers be joined to follow a worker
@@ -141,6 +142,8 @@ export function createJobsRoutes(deps: JobsRouteDeps = defaultWorkRouteDeps) {
       listings: stores.listings,
       remoteCountries: parseRemoteCountries(c.env.WORK_REMOTE_COUNTRIES),
       excludePseudonym: key ? await workPseudonym(key, account) : undefined,
+      // The decision pass (S8, decision 0069) reads the registry's names for each finalist's tokens.
+      store: registry.store,
       now,
       log: workLog,
     };

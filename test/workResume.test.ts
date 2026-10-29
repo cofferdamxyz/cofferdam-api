@@ -9,13 +9,15 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { Finalist } from '../src/services/work/recall.js';
 import {
   applyReview,
   applyValue,
   arbiterRequest,
+  consideredOf,
+  DECISION_RULES,
   disputeQuestions,
   dropAbsent,
-  gateMiss,
   hasContact,
   jobMonths,
   labelDate,
@@ -26,9 +28,12 @@ import {
   readingGaps,
   readPlan,
   readResumeCsv,
+  replayRule,
   resumeTruth,
   sameSchool,
   scoreReading,
+  type Considered,
+  type ConsideredSearch,
   type Reading,
   type ResumeRecord,
 } from './work-eval/resumeBench.js';
@@ -46,6 +51,8 @@ const HTML = [
   '<div class="section" id="SECTION_EDUC1"><div class="paragraph" id="PARAGRAPH_2_1"><span class="degree" id="1DGRE1">Associate of Applied Science</span>',
   '<span class="programline" id="1STUY1">Construction Management</span><span class="jobdates" id="1GRYR1">2010</span>',
   '<span class="companyname companyname_educ" id="1SCHO1">Example Community College</span></div></div>',
+  '<div class="section" id="SECTION_SKLL611042353" style="padding-top:0px;"><div class="heading"><div class="sectiontitle">Skills</div></div>',
+  '<div class="paragraph"><div class="field singlecolumn">Framing, blueprint reading; crew scheduling</div></div></div>',
   '<div class="section" id="SECTION_CERT1"><div class="paragraph"><ul><li>OSHA 30-Hour Construction</li><li>Forklift operator</li></ul></div></div></div>',
 ].join('');
 
@@ -65,7 +72,7 @@ describe('the dataset', () => {
     expect(hasContact('Ran a crew of six for 18 months in 2019.')).toBe(false);
   });
 
-  it('reads the labels: jobs in order, dates in each format, current, school, certificates, anchor', () => {
+  it('reads the labels: jobs in order, dates in each format, current, school, skills, certificates, anchor', () => {
     const t = resumeTruth(HTML);
     expect(t.jobs).toEqual([
       { title: 'Site Supervisor', start: '2016-03', end: null, current: true },
@@ -74,6 +81,8 @@ describe('the dataset', () => {
     expect(t.schools).toEqual([{ school: 'Example Community College', degree: 'Associate of Applied Science Construction Management', end: '2010' }]);
     expect(t.certificates).toEqual(['OSHA', 'forklift']);
     expect(t.anchor).toBe('2016-03');
+    // Neither the section's own tag nor the next section's leaks in as a skill.
+    expect(t.skills).toEqual(['Framing', 'blueprint reading', 'crew scheduling']);
   });
 
   it('reads label dates through the parse’s own reader', () => {
@@ -121,7 +130,13 @@ describe('merging two readings', () => {
   it('keeps what both read alike, with no dispute', () => {
     const m = mergeReadings(a, structuredClone(a));
     expect(m.disputes).toEqual([]);
-    expect(m.reading).toEqual(a);
+    expect(m.reading).toEqual({ ...a, skills: [] });
+  });
+
+  it('takes the union of both readers’ skills, first seen first, without a dispute', () => {
+    const m = mergeReadings({ ...a, skills: ['Blueprint reading', 'OSHA safety'] }, { ...structuredClone(a), skills: ['blueprint  reading', 'Scheduling'] });
+    expect(m.reading.skills).toEqual(['Blueprint reading', 'OSHA safety', 'Scheduling']);
+    expect(m.disputes).toEqual([]);
   });
 
   it('turns a different value into a value dispute and an item one reader missed into a presence dispute', () => {
@@ -246,14 +261,52 @@ describe('scoring against the labels', () => {
   });
 });
 
-describe('why a search missed a listing', () => {
-  const isco = (t: string) => ({ 'pos:chef': '3434', 'pos:head-chef': '3434', 'pos:cook': '5120', 'pos:baker': '7512', 'pos:pastry-chef': '3435' })[t] ?? null;
-  it('names the first cause', () => {
-    expect(gateMiss({ allOf: ['cert:servsafe'], anyOf: ['pos:chef'] }, ['pos:chef'], isco)).toBe('required token missing');
-    expect(gateMiss({ allOf: [], anyOf: ['skill:work-according-to-recipe'] }, ['pos:chef'], isco)).toBe('plan needs skills only');
-    expect(gateMiss({ allOf: [], anyOf: ['pos:chef'] }, ['skill:x'], isco)).toBe('listing holds no occupation');
-    expect(gateMiss({ allOf: [], anyOf: ['pos:chef'] }, ['pos:head-chef'], isco)).toBe('same ISCO unit, another token');
-    expect(gateMiss({ allOf: [], anyOf: ['pos:chef'] }, ['pos:pastry-chef'], isco)).toBe('neighbouring ISCO group');
-    expect(gateMiss({ allOf: [], anyOf: ['pos:chef'] }, ['pos:baker'], isco)).toBe('another occupation');
+describe('the decision pass, replayed', () => {
+  const c = (over: Partial<Considered>): Considered => ({ right: false, gateTier: 1, occupationHit: false, meetsAllOf: true, score: 0.7, choice: 'related', pFit: 0.2, pRelated: 0.6, pOther: 0.2, skillShare: 0, ...over });
+  const search: ConsideredSearch = {
+    mode: 'instant',
+    considered: [
+      c({ right: true, gateTier: 2, choice: 'fit', pFit: 0.6, pRelated: 0.3, pOther: 0.1 }),
+      c({ occupationHit: true, score: 0.8, choice: 'other', pFit: 0.1, pRelated: 0.1, pOther: 0.8 }),
+      c({ score: 0.75, pFit: 0.3 }),
+    ],
+  };
+  const built = Object.values(DECISION_RULES)[1]!;
+
+  it('replays recall as built: a fit promotes a miss, other work drops even a token hit', () => {
+    expect(replayRule([search], built)).toEqual({ found: 1, first: 1, top5: 1, kept: 2, asked: 3 });
+    expect(replayRule([search], DECISION_RULES['The gate alone, by cosine']!)).toEqual({ found: 0, first: 0, top5: 0, kept: 2, asked: 0 });
+    expect(replayRule([search], DECISION_RULES['Other drops only a finalist with no occupation hit']!)).toEqual({ found: 1, first: 1, top5: 1, kept: 3, asked: 3 });
+    // EmbeddingGemma 2's floor: the right miss at 0.7 is still asked; one at 0.6 would not be.
+    const floor = Object.values(DECISION_RULES)[2]!;
+    expect(replayRule([search], floor)).toEqual({ found: 1, first: 1, top5: 1, kept: 2, asked: 3 });
+    expect(replayRule([{ ...search, considered: [{ ...search.considered[0]!, score: 0.6 }, ...search.considered.slice(1)] }], floor)).toEqual({ found: 0, first: 0, top5: 0, kept: 1, asked: 2 });
+  });
+
+  it('never promotes a finalist that lacks a hard requirement, and never drops one whose call failed', () => {
+    const lacking: ConsideredSearch = { mode: 'instant', considered: [c({ right: true, gateTier: 2, choice: 'fit', pFit: 0.9, meetsAllOf: false })] };
+    expect(replayRule([lacking], built).found).toBe(0);
+    expect(replayRule([{ ...lacking, mode: 'curated' }], built).found).toBe(1);
+    expect(replayRule([{ mode: 'instant', considered: [c({ right: true, choice: null, pOther: 0 })] }], built).found).toBe(1);
+  });
+
+  it('reads recall’s finalists: the gate’s tier before a promotion, an occupation hit, the hard requirements, the share of needed skills', () => {
+    const f = (over: Partial<Finalist>): Finalist => ({ listingId: 'a', score: 0.7, gateTier: 1, personhood: 1, matched: [], namespace: 'us-tx:onsite', ...over });
+    const out = consideredOf(
+      [
+        f({ listingId: 'a', matched: ['isco:7126'], fit: { choice: 'fit', pFit: 0.9, pRelated: 0.05, pOther: 0.05, skillsHeld: 1, promoted: false } }),
+        f({ listingId: 'b', fit: { choice: 'fit', pFit: 0.8, pRelated: 0.1, pOther: 0.1, skillsHeld: 0, promoted: true } }),
+      ],
+      { allOf: ['lang:en'], anyOf: ['pos:plumber', 'isco:7126', 'skill:leak-repair', 'skill:pipe-welding'] },
+      (id) => (id === 'a' ? ['isco:7126', 'lang:en', 'pos:pipefitter'] : []),
+      'b',
+    );
+    expect(out.map((x) => [x.right, x.gateTier, x.occupationHit, x.meetsAllOf, x.skillShare])).toEqual([
+      [false, 1, true, true, 0.5],
+      [true, 2, false, false, 0],
+    ]);
+    // An occupation kept under Clef's floor is no occupation hit, as recall ranks it at the cut.
+    const kept = consideredOf([f({ listingId: 'a', matched: ['pos:plumber'] })], { allOf: [], anyOf: ['pos:plumber', 'skill:leak-repair'], keptOccupation: 'pos:plumber' }, () => [], undefined);
+    expect(kept[0]!.occupationHit).toBe(false);
   });
 });

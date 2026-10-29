@@ -313,6 +313,11 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
       }
     }
   }
+  // The occupations' ISCO-08 unit groups (`isco:7126`): a plan that needs a close occupation matches the group (decision 0069).
+  const occupations = [...tokens].filter((t) => t.startsWith('pos:'));
+  if (occupations.length) {
+    for (const row of (await deps.registry.store.tokens(occupations)).values()) if (row.iscoCode && /^\d{4}$/.test(row.iscoCode)) tokens.add(`isco:${row.iscoCode}`);
+  }
   for (const code of draft.languages) tokens.add(`lang:${code}`);
   const list = [...tokens].sort();
 

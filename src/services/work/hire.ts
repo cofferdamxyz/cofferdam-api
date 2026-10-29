@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * One hirer query, from the sentence to the finalists (S5 to S7; workspace
+ * One hirer query, from the sentence to the finalists (S5 to S8; workspace
  * `docs/product/engine.md`, Pipeline, and `docs/product/work-wallet.md`,
  * Matching and award). The sentence is typed text that passed the phone's
  * privacy gate; the phone also sends the coarse region and, when the radius
@@ -23,24 +23,33 @@
  *     stops here (the assistant suggests batching).
  *  3. The registry's nearest occupations and skills to the task, and a
  *     second Clef call: a yes or no per token on whether the job needs it.
- *     Those tokens are the gate's `anyOf`; a call that answers none of them
- *     stops the plan (fail closed).
+ *     Those that pass the floor are the job's needs; a call that answers none
+ *     of them stops the plan (fail closed). When a skill passes but no
+ *     occupation does, the occupation Clef rated highest is kept at
+ *     `NEED_OCCUPATION_FLOOR` or more (decision 0069), and the needed
+ *     occupations bring their ISCO-08 unit groups (`isco:7126`): together the
+ *     gate's `anyOf`. The kept occupation only widens the gate: its hits rank
+ *     as a skill's at the cut, and the mode, the query text and the decision
+ *     pass's job read the needs that passed the floor. With no need over the
+ *     floor nothing is kept, and the gate stays open (every recalled listing
+ *     passes it) for a Curated job.
  *  4. The credential snaps to a `cert:` token without minting, in the job's
  *     region (`licensed electrician` in `us-tx` is the Texas licence), with
  *     the level and modules it names as facet tokens, and the language maps
  *     to its `lang:` code: the gate's `allOf`. The job is
  *     Instant only when every requirement the hirer stated is gated and an
- *     occupation or a skill gates it: a credential (matched or not: a person
- *     confirms a licence, E10), a language the lexicon cannot name, either
- *     one stated but dropped by the validation, or no needed token make it
- *     Curated.
- *  5. `recall` over the intent's namespaces.
+ *     occupation or a skill that passed the floor gates it: a credential
+ *     (matched or not: a person confirms a licence, E10), a language the
+ *     lexicon cannot name, either one stated but dropped by the validation,
+ *     or no need over the floor make it Curated.
+ *  5. `recall` over the intent's namespaces, with the decision pass (S8)
+ *     when it has the registry's store.
  *
  * Nothing here mints a token, writes an intent record or pings anyone: the
  * confirm card, funding and the waves come around it.
  */
 
-import { clefInput, NEED_FLOOR, needQuestions, readNoul, readRequest, requestQuestions, requestState, type NeedCandidate } from './clef.js';
+import { clefInput, NEED_FLOOR, NEED_OCCUPATION_FLOOR, needQuestions, readNoul, readRequest, requestQuestions, requestState, type NeedCandidate } from './clef.js';
 import { BLOCK_LANGS, scanText, type BlockLang, type BlockRefusal } from './blocks.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
@@ -80,8 +89,8 @@ export interface HirePlan {
   fields: IntentFields;
   scope: Scope;
   scopeP: number;
-  /** The registry tokens Clef said the job needs, with its probability. */
-  needs: { token: string; label: string; p: number }[];
+  /** The registry tokens Clef said the job needs, with its probability: those over the floor, then an occupation kept below it when only skills passed, marked `kept` (decision 0069). */
+  needs: { token: string; label: string; p: number; kept?: true }[];
   certificate: string | null;
   language: string | null;
   intent: RecallIntent;
@@ -190,9 +199,19 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
     unanswered();
     return { ok: false, error: 'classification_failed', calls };
   }
-  const needs = read
-    .filter((n): n is { token: string; label: string; p: number } => n.p != null && n.p >= NEED_FLOOR)
-    .sort((a, b) => b.p - a.p);
+  const rated = read.filter((n): n is { token: string; label: string; p: number } => n.p != null);
+  const isOccupation = (n: { token: string }) => n.token.startsWith('pos:');
+  const passed = rated.filter((n) => n.p >= NEED_FLOOR).sort((a, b) => b.p - a.p);
+  // An occupation is kept (decision 0069): the best Clef rated, when a skill passed the floor and no occupation did. It widens
+  // the gate only; with nothing over the floor the gate stays open, as it always was.
+  const kept =
+    passed.length && !passed.some(isOccupation) ? rated.filter((n) => isOccupation(n) && n.p >= NEED_OCCUPATION_FLOOR).sort((a, b) => b.p - a.p)[0] : undefined;
+  const needs: HirePlan['needs'] = kept ? [...passed, { ...kept, kept: true }] : passed;
+  // The needed occupations' ISCO-08 unit groups: a listing in the same group passes the gate (decision 0069).
+  const occupations = needs.filter(isOccupation).map((n) => n.token);
+  const groups = occupations.length
+    ? [...(await deps.registry.store.tokens(occupations)).values()].map((t) => t.iscoCode).filter((c): c is string => !!c && /^\d{4}$/.test(c))
+    : [];
 
   // The credential and the language: what every finalist must hold. A licence phrase means the licence of the
   // job's region (the hirer's own, first), and a level or module it names is required too.
@@ -206,16 +225,20 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
   }
   const language = fields.languageCode ? `lang:${fields.languageCode}` : null;
   const allOf = [...certificateTokens, ...(language ? [language] : [])];
-  const anyOf = needs.map((n) => n.token);
-  // Instant only when every stated requirement is gated and a needed token gates it (step 4). A credential or a
-  // language the validation dropped (not a span, too long) was still stated: it counts as one the gate cannot hold.
+  const anyOf = [...new Set([...needs.map((n) => n.token), ...groups.map((c) => `isco:${c}`)])];
+  // Instant only when every stated requirement is gated and a need over the floor gates it (step 4): a kept occupation
+  // never makes a job Instant. A credential or a language the validation dropped (not a span, too long) was still
+  // stated: it counts as one the gate cannot hold.
   const dropped = parsed.violations.some((v) => v.field === 'credential' || v.field === 'language');
-  const curated = fields.credential != null || (fields.language != null && language == null) || dropped || anyOf.length === 0;
+  const curated = fields.credential != null || (fields.language != null && language == null) || dropped || passed.length === 0;
   const intent: RecallIntent = {
     scope,
     regions: [...new Set(req.regions)],
-    queryText: [task, ...needs.map((n) => n.label)].join('; '),
+    queryText: [task, ...passed.map((n) => n.label)].join('; '),
     ...(req.vector ? { vector: req.vector } : {}),
+    task,
+    needLabels: passed.map((n) => n.label),
+    ...(kept ? { keptOccupation: kept.token } : {}),
     allOf,
     anyOf,
     mode: curated ? 'curated' : 'instant',

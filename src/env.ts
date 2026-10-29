@@ -138,6 +138,7 @@ export interface Env {
   WORK_EMBED_MODEL?: string;
   WORK_ADJUDICATE_MODEL?: string;
   WORK_PIVOT_MODEL?: string;
+  WORK_DECIDE_MODEL?: string;
   /**
    * τ for retrieve-then-choose, cosine in (0, 1]: at or above `WORK_TAU_AUTO`
    * the best candidate snaps without a model; down to `WORK_TAU_LOW` Clef

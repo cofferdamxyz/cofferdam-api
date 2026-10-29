@@ -246,6 +246,15 @@ export const SCOPE_FLOOR = 0.5;
 export const UNSAFE_FLOOR = 0.5;
 /** A registry token the task needs counts at or above this. */
 export const NEED_FLOOR = 0.5;
+/**
+ * A plan keeps an occupation (workspace decision 0069): when a skill passed
+ * `NEED_FLOOR` and no occupation did, the occupation Clef rated highest is
+ * kept at or above this. It widens the gate, so a listing of that trade
+ * passes beside the skill holders (on 100 real resumes, 35 of 52 misses were
+ * plans of skills only); its hits rank as a skill's at the cut, and it never
+ * sets the mode, the query text or the decision pass's job.
+ */
+export const NEED_OCCUPATION_FLOOR = 0.2;
 
 /**
  * The first call on a hirer's sentence, before anything is extracted: the
@@ -303,4 +312,55 @@ export function needQuestions(candidates: readonly NeedCandidate[]): Record<stri
 
 export function requestState(sentence: string, lang: string): string {
   return `A hirer wrote this request, in ${lang}:\n${sentence}`;
+}
+
+// ── The finalist decision (S8; workspace decision 0069) ─────────────────────
+
+/**
+ * Whether a worker's published profile does the work a hirer asked for. Clef
+ * (not flash, the founder's ruling of 2026-10-28) answers one `choice` per
+ * finalist over a state of English names only: the job as the plan read it,
+ * and the profile's occupations, skills and certificates by their registry
+ * names. A listing holds no name, place or contact, so neither does the state.
+ */
+export const FIT_CRITERIA = {
+  fit: 'The worker does this kind of work: the same occupation or a close one, or the main skills the job needs.',
+  related: 'Related work, not the same: a neighbouring occupation in the same field, or only a few of the skills the job needs.',
+  other: 'Different work: the worker’s occupations and skills do not match this job.',
+} as const;
+export type FitKey = keyof typeof FIT_CRITERIA;
+export const FIT_KEYS = Object.keys(FIT_CRITERIA) as FitKey[];
+/** A fit at or above this probability promotes a finalist the token gate missed to tier 1. */
+export const FIT_FLOOR = 0.5;
+/** Other work at or above this probability drops a finalist, token hit or not. */
+export const OTHER_FLOOR = 0.5;
+/** The profile's lists are cut to this many names each, so a state stays short. */
+export const FIT_STATE_MAX_ITEMS = 15;
+
+export function fitQuestions(): Record<string, ClefQuestion> {
+  return { fit: { type: 'choice', instructions: 'Can this worker do the job the hirer asked for?', criteria: { ...FIT_CRITERIA } } };
+}
+
+export interface FitJob {
+  /** The task as the plan read it. */
+  task: string;
+  /** The English names of what the job needs (occupations and skills). */
+  needs: readonly string[];
+  /** The English names of the certificates every finalist holds. */
+  certificates: readonly string[];
+}
+
+export interface FitProfile {
+  occupations: readonly string[];
+  skills: readonly string[];
+  certificates: readonly string[];
+}
+
+export function fitState(job: FitJob, profile: FitProfile): string {
+  const list = (xs: readonly string[]) => (xs.length ? xs.slice(0, FIT_STATE_MAX_ITEMS).join('; ') : 'none');
+  return [
+    `The job: ${job.task}`,
+    `It needs: ${list(job.needs)}.${job.certificates.length ? ` Certificates: ${list(job.certificates)}.` : ''}`,
+    `The worker's profile. Occupations: ${list(profile.occupations)}. Skills: ${list(profile.skills)}. Certificates: ${list(profile.certificates)}.`,
+  ].join('\n');
 }

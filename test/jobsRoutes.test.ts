@@ -112,6 +112,15 @@ describe('POST /v1/jobs/intent', () => {
     for (const hidden of [...ids, 'p-plumber', 'p-electrician', 'us-tx:onsite', fxAccount.slice(2).toLowerCase()]) expect(text.toLowerCase()).not.toContain(hidden.toLowerCase());
   });
 
+  it('runs the decision pass: a plumber Clef calls other work leaves the count', async () => {
+    const other = { answers: { fit: { choice: 'other', probabilities: { other: 0.9, related: 0.05, fit: 0.05 } } }, usage: { input_tokens: 200 } };
+    const a = await app(STAGING, {}, { 'work-decide': other });
+    await a.publish(draft({ pseudonym: 'p-plumber' }));
+    const body = (await (await a.post(REQUEST)).json()) as { finalists: { count: number } };
+    expect(body.finalists.count).toBe(0);
+    expect(a.calls.filter((c) => c.op === 'work-decide')).toHaveLength(1);
+  });
+
   it('answers counts only before funding: nothing per finalist that two answers could join', async () => {
     const a = await app(STAGING, {}, { 'work-intent': intentAnswer(), 'work-classify': clefSays(/plumber|leak/) });
     for (const [pseudonym, tier] of [['p1', 1], ['p2', 1], ['p3', 0]] as const) await a.publish(draft({ pseudonym, tier }));
