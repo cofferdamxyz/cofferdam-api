@@ -81,6 +81,22 @@ export interface Env {
   AI_PINS?: KVNamespace;
   /** The strict AI Gateway every inference call goes through; unset: direct to Workers AI. */
   AI_GATEWAY_ID?: string;
+  /**
+   * The documents gateway, for the ops that carry a whole document the user
+   * opted to send (`DOCUMENT_OPS` in `services/inference`): the same no-log,
+   * no-cache settings and no DLP (infra/ai-gateways.json). Unset: those ops
+   * take the strict gateway, whose DLP would refuse the document.
+   */
+  AI_GATEWAY_DOCUMENTS_ID?: string;
+  /**
+   * `GET /v1/privacy/ai` (secrets): a Cloudflare API token with AI Gateway
+   * Read only, and the account id it reads, so the route can show the live
+   * gateway settings. Never a var: the account id stays out of wrangler.jsonc.
+   */
+  AI_GATEWAY_READ_TOKEN?: string;
+  AI_GATEWAY_ACCOUNT_ID?: string;
+  /** The deployed version (wrangler.jsonc `version_metadata`), shown by `GET /v1/privacy/ai`. */
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
   /** Model pins by variable; each falls back to the op's default in `services/inference`. */
   CHAT_ROUTER_MODEL?: string;
   CHAT_ACTION_MODEL?: string;

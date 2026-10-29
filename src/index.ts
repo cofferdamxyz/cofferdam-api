@@ -28,6 +28,7 @@ import { attesterRoutes } from './routes/attester.js';
 import { ceremonyRoutes } from './routes/ceremony.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { healthRoutes } from './routes/health.js';
+import { privacyRoutes } from './routes/privacy.js';
 import { localeRoutes } from './routes/locale.js';
 import { aaRoutes } from './routes/aa.js';
 import { selfRoutes } from './routes/self.js';
@@ -94,6 +95,7 @@ app.get('/', (c) => {
       { method: 'PUT', path: '/v1/work/listing' },
       { method: 'DELETE', path: '/v1/work/listing' },
       { method: 'POST', path: '/v1/jobs/intent' },
+      { method: 'GET', path: '/v1/privacy/ai' },
     ],
     docs: 'https://github.com/cofferdamxyz/cofferdam-api/blob/main/README.md',
   });
@@ -101,6 +103,7 @@ app.get('/', (c) => {
 
 // ── Sub-routers ────────────────────────────────────────────────────
 app.route('/health', healthRoutes);
+app.route('/v1/privacy', privacyRoutes);
 app.route('/sepolia', sepoliaRoutes);
 app.route('/v1/attester', attesterRoutes);
 app.route('/v1/self', selfRoutes);

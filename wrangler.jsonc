@@ -76,7 +76,18 @@
     // built, cloud document extraction) in a UTC month, in US dollars, as the
     // usage meter estimates it (founder, 2026-10-20). Remove for no brake.
     "AI_MONTHLY_BUDGET_USD": "500"
+    // The AI Gateways (infra/ai-gateways.json; decisions 0021 (f) and (h),
+    // 0037): the strict one carries typed text and blocks personal data, the
+    // documents one carries the whole-CV parse. Set both only after
+    // `node scripts/ai-gateway/apply.mjs` has created them and
+    // `scripts/ai-gateway/verify.mjs` says no gateway can store, else every
+    // inference call fails on a missing gateway (runbook: AI Gateways).
+    // "AI_GATEWAY_ID": "cofferdam-strict",
+    // "AI_GATEWAY_DOCUMENTS_ID": "cofferdam-documents"
   },
+
+  // The deployed version id, shown by GET /v1/privacy/ai beside the live gateway settings.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
 
   // ─────────────────────────────────────────────────────────────────
   // Service bindings — cross-Worker calls (private, no public ingress).
@@ -121,7 +132,8 @@
   // Workers AI, reached only through src/services/inference (decision 0037).
   // Model pins: the AI_PINS KV namespace (model:<op>) once created, else the
   // CHAT_*_MODEL vars, else the defaults in the seam. AI_GATEWAY_ID (a var)
-  // sends every call through the strict AI Gateway once it exists.
+  // sends every call through the strict AI Gateway once it exists, and
+  // AI_GATEWAY_DOCUMENTS_ID the whole-CV parse through the documents one.
   "ai": { "binding": "AI" },
 
   "migrations": [

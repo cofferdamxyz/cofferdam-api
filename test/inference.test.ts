@@ -9,11 +9,14 @@ import {
   aiOptions,
   clearPinCache,
   createInference,
+  DOCUMENT_OPS,
+  gatewayFor,
   InferenceTimeout,
   OPS,
   resolveModel,
   type AiBinding,
   type InferenceEnv,
+  type InferenceOp,
 } from '../src/services/inference/index.js';
 
 function kv(values: Record<string, string>, reads: string[] = []): KVNamespace {
@@ -77,6 +80,25 @@ describe('aiOptions', () => {
       tags: ['cofferdam-api', 'op:chat-long'],
       gateway: { id: 'cofferdam-strict', skipCache: true, collectLog: false, metadata: { op: 'chat-long' } },
     });
+  });
+
+  it('sends a document op through the documents gateway when set, and every op through a gateway that keeps no log and no cache', () => {
+    const signal = new AbortController().signal;
+    const env = { AI_GATEWAY_ID: 'cofferdam-strict', AI_GATEWAY_DOCUMENTS_ID: 'cofferdam-documents' };
+    expect(gatewayFor(env, 'work-parse')).toBe('cofferdam-documents');
+    expect(gatewayFor(env, 'chat-answer')).toBe('cofferdam-strict');
+    expect(gatewayFor({ AI_GATEWAY_ID: 'cofferdam-strict' }, 'work-parse')).toBe('cofferdam-strict');
+    expect(gatewayFor({}, 'work-parse')).toBeNull();
+    expect(DOCUMENT_OPS.has('work-parse')).toBe(true);
+    expect(DOCUMENT_OPS.has('work-extract')).toBe(false);
+    for (const op of Object.keys(OPS) as InferenceOp[]) {
+      const options = aiOptions(env, op, signal) as { gateway: { id: string; skipCache: boolean; collectLog: boolean; metadata: Record<string, unknown> } };
+      expect(options.gateway.id).toBe(DOCUMENT_OPS.has(op) ? 'cofferdam-documents' : 'cofferdam-strict');
+      expect(options.gateway.skipCache).toBe(true);
+      expect(options.gateway.collectLog).toBe(false);
+      // The metadata names the op only: never an account, a pseudonym or any text.
+      expect(Object.keys(options.gateway.metadata)).toEqual(['op']);
+    }
   });
 
   it('uses only characters Workers AI allows in tags', () => {

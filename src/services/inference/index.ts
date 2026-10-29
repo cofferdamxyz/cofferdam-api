@@ -15,7 +15,12 @@
  * Every call carries the op as a Workers AI tag, which splits usage per op in
  * the dashboard. With `AI_GATEWAY_ID` set, calls go through that gateway with
  * its cache skipped and no gateway log kept (`collectLog: false`), because
- * these ops see user text (the strict gateway). A timeout covers each call
+ * these ops see user text (the strict gateway, DLP in Block mode). The ops
+ * that carry a whole document the user opted to send (`DOCUMENT_OPS`) go
+ * through `AI_GATEWAY_DOCUMENTS_ID` instead when it is set, a gateway with the
+ * same no-log, no-cache settings and no DLP, since the document's own name
+ * and phone must reach the model (decision 0021 (h), amended 2026-10-29;
+ * infra/ai-gateways.json). A timeout covers each call
  * until the model answers, or until a stream starts; the caller's signal
  * cancels it at any time, stream included.
  */
@@ -34,7 +39,8 @@ export type InferenceOp =
   | 'work-embed'
   | 'work-adjudicate'
   | 'work-pivot'
-  | 'work-decide';
+  | 'work-decide'
+  | 'work-parse';
 
 export type InferenceModelVar =
   | 'CHAT_ROUTER_MODEL'
@@ -49,6 +55,7 @@ export type InferenceModelVar =
   | 'WORK_EMBED_MODEL'
   | 'WORK_ADJUDICATE_MODEL'
   | 'WORK_PIVOT_MODEL'
+  | 'WORK_PARSE_MODEL'
   | 'WORK_DECIDE_MODEL';
 
 export interface OpSpec {
@@ -100,6 +107,8 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   'work-pivot': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 15_000 },
   // The finalist decision (S8, workspace decision 0069): Clef, not flash, as the founder ruled on 2026-10-28.
   'work-decide': { model: '@cf/cloudflare/clef', envVar: 'WORK_DECIDE_MODEL', timeoutMs: 8_000 },
+  // The whole-CV parse (decision 0021, the founder's ruling of 2026-10-28; the pin proposed by the real-resume benchmark, to confirm).
+  'work-parse': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_PARSE_MODEL', timeoutMs: 60_000 },
 };
 
 /**
@@ -171,6 +180,17 @@ export interface InferenceEnv extends Partial<Record<InferenceModelVar, string>>
   AI_PINS?: KVNamespace;
   /** The strict AI Gateway; unset, calls go straight to Workers AI. */
   AI_GATEWAY_ID?: string;
+  /** The documents gateway for `DOCUMENT_OPS`; unset, they take the strict one. */
+  AI_GATEWAY_DOCUMENTS_ID?: string;
+}
+
+/** Ops that carry a whole document the user opted to send, which DLP must not read. */
+export const DOCUMENT_OPS: ReadonlySet<InferenceOp> = new Set<InferenceOp>(['work-parse']);
+
+/** The gateway an op's call goes through, or null for a direct call. */
+export function gatewayFor(env: Pick<InferenceEnv, 'AI_GATEWAY_ID' | 'AI_GATEWAY_DOCUMENTS_ID'>, op: InferenceOp): string | null {
+  if (DOCUMENT_OPS.has(op) && env.AI_GATEWAY_DOCUMENTS_ID) return env.AI_GATEWAY_DOCUMENTS_ID;
+  return env.AI_GATEWAY_ID ?? null;
 }
 
 export interface InferenceCall {
@@ -228,8 +248,9 @@ export async function resolveModel(env: InferenceEnv, op: InferenceOp, now = Dat
 /** The per-call options: the op tag, the gateway when set, and the cancel signal. */
 export function aiOptions(env: InferenceEnv, op: InferenceOp, signal: AbortSignal): Record<string, unknown> {
   const options: Record<string, unknown> = { tags: ['cofferdam-api', `op:${op}`], signal };
-  if (env.AI_GATEWAY_ID) {
-    options.gateway = { id: env.AI_GATEWAY_ID, skipCache: true, collectLog: false, metadata: { op } };
+  const gateway = gatewayFor(env, op);
+  if (gateway) {
+    options.gateway = { id: gateway, skipCache: true, collectLog: false, metadata: { op } };
   }
   return options;
 }
