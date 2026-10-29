@@ -24,7 +24,7 @@
  * Needs macOS (`say`, `afconvert`, `afinfo`) with the voices Luciana, Paulina, Samantha and Eddy.
  */
 
-/* global fetch, AbortSignal -- Node 24's own */
+/* global AbortSignal -- Node 24's own; `fetch` comes from eslint.config.mjs's scripts globals */
 
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
