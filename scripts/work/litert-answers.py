@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["litert-lm==0.18.1"]
+# dependencies = ["litert-lm==0.18.1", "json-repair==0.52.0"]
 # ///
 """Answer the parse requests a benchmark run left pending, with LiteRT-LM in process.
 
@@ -23,7 +23,13 @@ the reader's `sampling` keys, which map to LiteRT-LM's own settings:
 line: the model file, the backend and multi-token prediction (MTP).
 
   uv run scripts/work/litert-answers.py <answers.json> --model <file.litertlm>
-      [--backend gpu|cpu] [--mtp on|off|model] [--max-num-tokens 16384]
+      [--backend gpu|cpu] [--mtp on|off|model] [--max-num-tokens 16384] [--repair]
+
+`--repair` mends an answer that is not valid JSON (`json-repair`: a missing comma or
+quote, a raw line break in a string, text after the object) as a phone could before it
+reads it, and records it (`timing.repaired`). Gemma 4 E2B writes invalid JSON for most
+real resumes when nothing constrains it, under llama.cpp as under LiteRT-LM, and
+LiteRT-LM 0.18.1's own JSON-schema decoding writes whitespace instead (2026-10-29).
 
 Each answer carries `timing`: the milliseconds the call took, the first token, prefill and
 decode speeds and the process's peak memory footprint during it (macOS `phys_footprint`).
@@ -37,11 +43,13 @@ import ctypes.util
 import json
 import os
 import pathlib
+import re
 import statistics
 import sys
 import threading
 import time
 
+import json_repair
 import litert_lm
 
 
@@ -123,7 +131,21 @@ def schema_of(response_format):
   return inner
 
 
-def answer_one(engine, body: dict, mtp, sampler: PeakSampler) -> dict:
+def mended(text: str) -> tuple[str, bool]:
+  """The answer as valid JSON: as written when it parses (inside a Markdown fence or not), else repaired."""
+  stripped = re.sub(r"\s*```\s*$", "", re.sub(r"^```(?:json)?\s*", "", text.strip()))
+  try:
+    json.loads(stripped)
+    return text, False
+  except json.JSONDecodeError:
+    pass
+  fixed = json_repair.repair_json(stripped, return_objects=True)
+  if isinstance(fixed, dict) and fixed:
+    return json.dumps(fixed, ensure_ascii=False), True
+  return text, False
+
+
+def answer_one(engine, body: dict, mtp, sampler: PeakSampler, repair: bool) -> dict:
   messages = body.get("messages") or []
   system = next((text_of(m.get("content")) for m in messages if m.get("role") == "system"), None)
   user = next((text_of(m.get("content")) for m in reversed(messages) if m.get("role") == "user"), None)
@@ -171,10 +193,11 @@ def answer_one(engine, body: dict, mtp, sampler: PeakSampler) -> dict:
   finally:
     conversation.close()
   decode_tokens = int(bench.last_decode_token_count)
+  content, repaired = mended(reply_text(reply)) if repair else (reply_text(reply), False)
   return {
       "choices": [{
           "index": 0,
-          "message": {"role": "assistant", "content": reply_text(reply)},
+          "message": {"role": "assistant", "content": content},
           "finish_reason": "length" if max_tokens and decode_tokens >= max_tokens else "stop",
       }],
       "usage": {"prompt_tokens": int(bench.last_prefill_token_count), "completion_tokens": decode_tokens},
@@ -184,6 +207,7 @@ def answer_one(engine, body: dict, mtp, sampler: PeakSampler) -> dict:
           "prefillTps": round(bench.last_prefill_tokens_per_second, 1),
           "decodeTps": round(bench.last_decode_tokens_per_second, 1),
           "peakFootprintMb": round(sampler.peak),
+          "repaired": repaired,
       },
   }
 
@@ -201,6 +225,7 @@ def main() -> int:
   parser.add_argument("--backend", choices=("gpu", "cpu"), default="gpu")
   parser.add_argument("--mtp", choices=("on", "off", "model"), default="on")
   parser.add_argument("--max-num-tokens", type=int, default=16384)
+  parser.add_argument("--repair", action="store_true", help="mend an answer that is not valid JSON, and record it")
   args = parser.parse_args()
 
   pending_path = args.answers.with_name(args.answers.name + ".pending.jsonl")
@@ -234,7 +259,7 @@ def main() -> int:
   try:
     for i, (key, body) in enumerate(todo, 1):
       try:
-        answer = answer_one(engine, body, mtp, sampler)
+        answer = answer_one(engine, body, mtp, sampler, args.repair)
         t = answer["timing"]
         timings.append(t)
         print(f"{i}/{len(todo)}: {t['ms'] / 1000:.1f} s, {answer['usage']['completion_tokens']} tokens, "
@@ -253,13 +278,14 @@ def main() -> int:
   pending_path.write_text("".join(json.dumps({"key": k, "body": b}) + "\n" for k, b in left.items()))
   runtime = {
       "litertLm": "0.18.1", "model": args.model.name, "backend": args.backend, "mtp": args.mtp,
-      "maxNumTokens": args.max_num_tokens, "loadSeconds": round(load_s, 1),
+      "maxNumTokens": args.max_num_tokens, "repair": args.repair, "loadSeconds": round(load_s, 1),
       "loadedFootprintMb": round(loaded), "peakFootprintMb": round(sampler.overall),
   }
   save(args.answers.with_name(args.answers.stem + ".runtime.json"), runtime)
   if timings:
     ms = [t["ms"] for t in timings]
-    print(f"answered {len(timings)}, failed {failed}; median {statistics.median(ms) / 1000:.1f} s, "
+    print(f"answered {len(timings)} ({sum(1 for t in timings if t.get('repaired'))} repaired), failed {failed}; "
+          f"median {statistics.median(ms) / 1000:.1f} s, "
           f"median decode {statistics.median(t['decodeTps'] for t in timings):.1f} tok/s; "
           f"peak footprint {sampler.overall:.0f} MB (loaded {loaded:.0f} MB)")
   else:
