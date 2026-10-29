@@ -8,7 +8,7 @@ import tseslint from 'typescript-eslint';
 const MAC_LANES = ['src/routes/chat.ts', 'src/services/chat/**', 'src/services/inference/**'];
 
 export default tseslint.config(
-  { ignores: ['node_modules/**', '.wrangler/**', 'dist/**'] },
+  { ignores: ['node_modules/**', '**/.wrangler/**', 'dist/**'] },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {
