@@ -37,7 +37,7 @@ import { candidatesFor, embedTexts } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 import documents from './fixtures/work/documents.json';
 import { FIXTURE_CVS, HIRER_PROMPTS } from './fixtures/work/index.js';
-import { localClefSlug, parseLocalClef, withLocalClef } from './work-eval/localClef.js';
+import { localClefPending, localClefSlug, parseLocalClef, withLocalClef } from './work-eval/localClef.js';
 import { seededRegistry } from './work-eval/seed.js';
 
 const LIVE = process.env.WORK_EVAL === '1';
@@ -173,6 +173,9 @@ describe.skipIf(!LIVE)('Clef classification patterns (live, Workers AI)', () => 
       ...needs.map((n) => `| ${n.id} | ${n.expected} | ${n.probabilities.map((x) => `${x.token === n.expected ? '**' : ''}${x.token}${x.token === n.expected ? '**' : ''} ${x.p.toFixed(2)}`).join('; ')} |`),
       '',
     ].join('\n');
+    // A local model answered from a file with requests still listed has not been measured: no report.
+    const listed = localClef ? localClefPending(localClef) : 0;
+    if (listed) throw new Error(`${listed} requests for ${localClef!.label} are listed in ${localClef!.answers}.pending.jsonl: answer them (uv run scripts/work/laya-answers.py ${localClef!.answers}) and run again`);
     writeFileSync(join(__dirname, 'work-eval', `clef-${date}${localClef ? `-${localClefSlug(localClef)}` : ''}.md`), md);
     expect(typed).toHaveLength(docs.length);
   }, 1_800_000);

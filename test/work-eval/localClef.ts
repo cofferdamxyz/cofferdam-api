@@ -16,7 +16,18 @@
  * Each local call is recorded like a Workers AI one under the model name
  * `local:<label>`, so a report names the model that answered and prices it at
  * nothing. Nothing a Clef call carries leaves the Mac.
+ *
+ * A model that runs in process rather than behind a server (Convai's Laya,
+ * `scripts/work/laya-answers.py`) answers from a file instead: `answers`
+ * names a JSON file of answers by request key. A request the file lacks is
+ * written to `<answers>.pending.jsonl` and given a neutral stand-in answer, so
+ * the run goes on and lists every request; an evaluation then refuses to
+ * write its report (`localClefPending`). The script answers the list and the
+ * next run reads the answers.
  */
+
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 
 import type { AiBinding } from '../../src/services/inference/index.js';
 import type { RecordedCall } from '../chat-eval/restAi.js';
@@ -24,25 +35,48 @@ import type { RecordedCall } from '../chat-eval/restAi.js';
 export interface LocalClef {
   /** The name in the report ("d1-2B Q4_K_M (llama.cpp)"). */
   label: string;
-  /** The server's base URL, without `/v1` ("http://127.0.0.1:8090"). */
-  url: string;
+  /** The server's base URL, without `/v1` ("http://127.0.0.1:8090"); or, for a model run in process, `answers`. */
+  url?: string;
+  /** A JSON file of answers by request key (`localClefKey`), written by `scripts/work/laya-answers.py`. */
+  answers?: string;
 }
 
-/** Reads `{label, url}` from an environment variable's value; null when it is unset. */
+/** Reads `{label, url}` or `{label, answers}` from an environment variable's value; null when it is unset. */
 export function parseLocalClef(raw: string | undefined, name: string): LocalClef | null {
   if (!raw?.trim()) return null;
   let o: unknown;
   try {
     o = JSON.parse(raw);
   } catch {
-    throw new Error(`${name} must be a JSON object {label, url}`);
+    throw new Error(`${name} must be a JSON object {label, url} or {label, answers}`);
   }
   const r = (o && typeof o === 'object' ? o : {}) as Record<string, unknown>;
   const label = typeof r.label === 'string' ? r.label.trim() : '';
-  const url = typeof r.url === 'string' ? r.url.trim().replace(/\/+$/, '').replace(/\/v1(\/systemone)?$/, '') : '';
   if (!label) throw new Error(`${name}.label must be a non-empty string`);
-  if (!/^https?:\/\//.test(url)) throw new Error(`${name}.url must start with http:// or https://`);
+  if (typeof r.answers === 'string' && r.answers.trim()) return { label, answers: r.answers.trim() };
+  const url = typeof r.url === 'string' ? r.url.trim().replace(/\/+$/, '').replace(/\/v1(\/systemone)?$/, '') : '';
+  if (!/^https?:\/\//.test(url)) throw new Error(`${name}.url must start with http:// or https:// (or name an answers file)`);
   return { label, url };
+}
+
+/** A request's key in an answers file: SHA-256 of the body a server would get. */
+export const localClefKey = (body: string): string => createHash('sha256').update(body).digest('hex');
+
+/** Requests listed in this process per answers file: a run with any is not a measurement. */
+const pendingByFile = new Map<string, number>();
+export const localClefPending = (clef: LocalClef): number => (clef.answers ? (pendingByFile.get(clef.answers) ?? 0) : 0);
+
+/** An answer that says nothing: every choice even, every yes-or-no at a half, every score at its lowest level. */
+function standIn(questions: unknown): { answers: Record<string, unknown> } {
+  const answers: Record<string, unknown> = {};
+  for (const [id, q] of Object.entries((questions ?? {}) as Record<string, { type?: string; criteria?: unknown }>)) {
+    if (q?.type === 'choice' && q.criteria && typeof q.criteria === 'object') {
+      const keys = Object.keys(q.criteria);
+      answers[id] = { type: 'choice', choice: keys[0] ?? null, probabilities: Object.fromEntries(keys.map((k) => [k, 1 / Math.max(1, keys.length)])) };
+    } else if (q?.type === 'score') answers[id] = { type: 'score', score: 0 };
+    else answers[id] = { type: 'noul', noul: 0.5 };
+  }
+  return { answers };
 }
 
 /** The model name a local Clef's calls are recorded under. */
@@ -61,7 +95,7 @@ const CLEF_MODEL = /^@cf\/cloudflare\/clef(-|$)/;
 export class LocalClefError extends Error {
   constructor(
     readonly label: string,
-    readonly status: number | 'network',
+    readonly status: number | 'network' | 'pending',
     detail: string,
   ) {
     super(`${label} answered ${status}${detail ? `: ${detail}` : ''}`);
@@ -80,6 +114,9 @@ export function withLocalClef(
   const doFetch = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
   const inner = (ai as unknown as { run: Run }).run;
+  const file = clef.answers;
+  const known: Record<string, unknown> = file && existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {};
+  const listed = new Set<string>();
   const run: Run = async (model, input, options) => {
     if (!CLEF_MODEL.test(model)) return inner(model, input, options);
     // Clef's body names its model; the local server serves one and takes the rest as is.
@@ -88,9 +125,23 @@ export function withLocalClef(
     const t0 = now();
     const record = (fields: Partial<RecordedCall>) =>
       opts.onCall?.({ model: localClefModel(clef), stream: false, inputChars: body.length, ms: now() - t0, status: 0, aborted: false, outputChars: 0, ...fields });
+    if (file) {
+      // A model run in process: its answer is in the file, or the request is listed for it and fails this run.
+      const key = localClefKey(body);
+      if (key in known) {
+        record({ status: 200, result: known[key] });
+        return known[key];
+      }
+      if (!listed.has(key)) {
+        listed.add(key);
+        appendFileSync(`${file}.pending.jsonl`, JSON.stringify({ key, ...(JSON.parse(body) as object) }) + '\n');
+        pendingByFile.set(file, (pendingByFile.get(file) ?? 0) + 1);
+      }
+      return standIn((JSON.parse(body) as { questions?: unknown }).questions);
+    }
     let res: Response;
     try {
-      res = await doFetch(`${clef.url}/v1/systemone`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: options?.signal });
+      res = await doFetch(`${clef.url!}/v1/systemone`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: options?.signal });
     } catch (err) {
       const aborted = options?.signal?.aborted === true;
       record({ status: aborted ? 'aborted' : 'network', aborted });

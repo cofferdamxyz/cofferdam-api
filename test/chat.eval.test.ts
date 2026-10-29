@@ -37,7 +37,7 @@ import { createInference, type InferenceEnv, type InferenceOp } from '../src/ser
 import prompts from './chat-eval/prompts.json';
 import { createRestAi, type RecordedCall } from './chat-eval/restAi.js';
 import { reportMarkdown, scoreTurn, summarize, summaryText, validatePrompts, type EvalPrompt, type TurnResult } from './chat-eval/score.js';
-import { localClefModel, localClefSlug, parseLocalClef, withLocalClef } from './work-eval/localClef.js';
+import { localClefModel, localClefPending, localClefSlug, parseLocalClef, withLocalClef } from './work-eval/localClef.js';
 
 const LIVE = process.env.CHAT_EVAL === '1';
 /** The action model's "today", so month expectations hold on any day. */
@@ -111,6 +111,9 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const suffix = [localClef ? localClefSlug(localClef) : '', process.env.CHAT_EVAL_LABEL ? slug(process.env.CHAT_EVAL_LABEL) : ''].filter(Boolean);
     const name = `report-${date}${suffix.map((s) => `-${s}`).join('')}`;
+    // A local model answered from a file with requests still listed has not been measured: no report.
+    const listed = localClef ? localClefPending(localClef) : 0;
+    if (listed) throw new Error(`${listed} requests for ${localClef!.label} are listed in ${localClef!.answers}.pending.jsonl: answer them (uv run scripts/work/laya-answers.py ${localClef!.answers}) and run again`);
     writeFileSync(join(dir, `${name}.md`), reportMarkdown(results, meta));
     writeFileSync(join(dir, `${name}.json`), JSON.stringify({ meta, summary, results }, null, 2) + '\n');
     expect(results).toHaveLength(selected.length);
