@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["litert-lm==0.18.1", "json-repair==0.52.0"]
+# dependencies = ["litert-lm-api-nightly==0.19.0.dev20261028", "json-repair==0.52.0"]
 # ///
 """Answer the parse requests a benchmark run left pending, with LiteRT-LM in process.
 
@@ -40,6 +40,7 @@ and the peak. Nothing leaves the Mac; it prints counts and timings, never a requ
 import argparse
 import ctypes
 import ctypes.util
+import importlib.metadata
 import json
 import os
 import pathlib
@@ -212,6 +213,16 @@ def answer_one(engine, body: dict, mtp, sampler: PeakSampler, repair: bool) -> d
   }
 
 
+def runtime_version() -> str:
+  """The LiteRT-LM runtime this run used: a release (`litert-lm-api`) or a nightly (`litert-lm-api-nightly`)."""
+  for dist in ("litert-lm-api-nightly", "litert-lm-api"):
+    try:
+      return f"{dist} {importlib.metadata.version(dist)}"
+    except importlib.metadata.PackageNotFoundError:
+      continue
+  return "unknown"
+
+
 def save(path: pathlib.Path, data) -> None:
   tmp = path.with_name(path.name + ".tmp")
   tmp.write_text(json.dumps(data, indent=1) + "\n")
@@ -252,7 +263,7 @@ def main() -> int:
   load_s = time.perf_counter() - loading
   loaded = footprint_mb()
   mtp = {"on": True, "off": False, "model": None}[args.mtp]
-  print(f"loaded {args.model.name} on {args.backend} in {load_s:.1f} s; footprint {before:.0f} -> {loaded:.0f} MB; "
+  print(f"{runtime_version()}: loaded {args.model.name} on {args.backend} in {load_s:.1f} s; footprint {before:.0f} -> {loaded:.0f} MB; "
         f"{len(todo)} pending, {len(known)} known")
 
   timings, failed = [], 0
@@ -277,7 +288,7 @@ def main() -> int:
   left = {k: b for k, b in pending.items() if k not in known}
   pending_path.write_text("".join(json.dumps({"key": k, "body": b}) + "\n" for k, b in left.items()))
   runtime = {
-      "litertLm": "0.18.1", "model": args.model.name, "backend": args.backend, "mtp": args.mtp,
+      "litertLm": runtime_version(), "model": args.model.name, "backend": args.backend, "mtp": args.mtp,
       "maxNumTokens": args.max_num_tokens, "repair": args.repair, "loadSeconds": round(load_s, 1),
       "loadedFootprintMb": round(loaded), "peakFootprintMb": round(sampler.overall),
   }
