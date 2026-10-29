@@ -76,8 +76,10 @@ for (const g of spec.gateways) {
       body.dlp = { action: wantDlp.action ?? 'BLOCK', enabled: true, profiles: ids };
       dlpOn = true;
       // The detectors. Cloudflare ships a predefined profile with every entry off (2026-10-29), so a profile on the
-      // gateway detects nothing until its entries are enabled: PUT /dlp/profiles/predefined/<id> with
-      // `enabled_entries` (Zero Trust Edit), set to the spec's list exactly.
+      // gateway detects nothing until its entries are enabled: PUT /dlp/profiles/predefined/<id> (Zero Trust Edit)
+      // with every entry's `enabled`, so the profile is set to the spec's list exactly. The documented
+      // `enabled_entries` field is accepted and ignored (200 and nothing changes, 2026-10-29); the deprecated
+      // `entries` form is the one that works.
       for (const name of names) {
         const id = p.byName.get(name);
         if (!id) continue;
@@ -97,10 +99,12 @@ for (const g of spec.gateways) {
           continue;
         }
         if (flag('--dry-run')) {
-          console.log(`${g.id}: would PUT /dlp/profiles/predefined/${id} enabled_entries, ${wanted.length} detector(s): ${(wantProfiles[name] ?? []).join(', ')}`);
+          console.log(`${g.id}: would PUT /dlp/profiles/predefined/${id} entries, ${wanted.length} detector(s) on: ${(wantProfiles[name] ?? []).join(', ')}`);
           continue;
         }
-        const r = await api(creds, 'PUT', `/dlp/profiles/predefined/${encodeURIComponent(id)}`, { enabled_entries: wanted });
+        const wantSet = new Set(wanted);
+        const entries = (d.profile.entries ?? []).map((e) => ({ id: e.id, enabled: wantSet.has(e.id) }));
+        const r = await api(creds, 'PUT', `/dlp/profiles/predefined/${encodeURIComponent(id)}`, { entries });
         if (!r.ok) {
           console.log(`${g.id}: enabling detectors in "${name}" failed: HTTP ${r.status} ${r.codes}${r.status === 403 ? ' (the token needs Zero Trust Edit)' : ''}`);
           failed = true;
