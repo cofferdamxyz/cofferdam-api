@@ -20,6 +20,7 @@ import {
   dropAbsent,
   hasContact,
   jobMonths,
+  joinPageReadings,
   labelDate,
   mergeReadings,
   monthIndex,
@@ -308,5 +309,63 @@ describe('the decision pass, replayed', () => {
     // An occupation kept under Clef's floor is no occupation hit, as recall ranks it at the cut.
     const kept = consideredOf([f({ listingId: 'a', matched: ['pos:plumber'] })], { allOf: [], anyOf: ['pos:plumber', 'skill:leak-repair'], keptOccupation: 'pos:plumber' }, () => [], undefined);
     expect(kept[0]!.occupationHit).toBe(false);
+  });
+});
+
+describe('a resume read one page a call', () => {
+  it('joins the pages in order: a job split across the break is one job, schools by institution, the rest as a union', () => {
+    const page1 = reading({
+      jobs: [
+        { title: 'Site Supervisor', start: '2016-03', end: null, current: true },
+        { title: 'Carpenter', start: '2011-06', end: null, current: false },
+      ],
+      certificates: ['OSHA 30'],
+      skills: ['Framing'],
+    });
+    const page2 = reading({
+      jobs: [
+        { title: 'carpenter', start: null, end: '2016-02', current: false },
+        { title: 'Laborer', start: '2009-01', end: '2011-05', current: false },
+      ],
+      schools: [{ institution: 'Example Community College', qualification: null, end: '2010' }],
+      certificates: ['osha 30', 'Forklift'],
+      skills: ['framing', 'Scheduling'],
+    });
+    expect(joinPageReadings([page1, page2])).toEqual({
+      jobs: [
+        { title: 'Site Supervisor', start: '2016-03', end: null, current: true },
+        { title: 'Carpenter', start: '2011-06', end: '2016-02', current: false },
+        { title: 'Laborer', start: '2009-01', end: '2011-05', current: false },
+      ],
+      schools: [{ institution: 'Example Community College', qualification: null, end: '2010' }],
+      certificates: ['OSHA 30', 'Forklift'],
+      skills: ['Framing', 'Scheduling'],
+    });
+  });
+
+  it('keeps two jobs of one title apart when their dates disagree', () => {
+    const a = reading({ jobs: [{ title: 'Cook', start: '2015-01', end: '2016-01', current: false }] });
+    const b = reading({ jobs: [{ title: 'Cook', start: '2018-01', end: '2019-01', current: false }] });
+    expect(joinPageReadings([a, b]).jobs).toHaveLength(2);
+  });
+
+  it('joins only across pages: a job a page repeats stays two, and a later page joins an earlier job once', () => {
+    const cook = { title: 'Cook', start: '2015-01', end: '2016-01', current: false };
+    expect(joinPageReadings([reading({ jobs: [cook, { ...cook }, { ...cook }] })]).jobs).toHaveLength(3);
+    expect(joinPageReadings([reading({ jobs: [cook] }), reading({ jobs: [{ ...cook }, { ...cook }] })]).jobs).toHaveLength(2);
+  });
+
+  it('never joins a current job to a past one of the same title', () => {
+    const current = { title: 'Cashier', start: '2019-01', end: null, current: true };
+    const past = { title: 'Cashier', start: null, end: '2015-06', current: false };
+    expect(joinPageReadings([reading({ jobs: [current] }), reading({ jobs: [past] })]).jobs).toEqual([current, past]);
+    expect(joinPageReadings([reading({ jobs: [past] }), reading({ jobs: [current] })]).jobs).toEqual([past, current]);
+  });
+
+  it('keeps two degrees of one institution apart, and joins a school continued on the next page', () => {
+    const bs = { institution: 'State University', qualification: 'BS', end: '2008' };
+    const ms = { institution: 'State University', qualification: 'MS', end: '2010' };
+    expect(joinPageReadings([reading({ schools: [bs] }), reading({ schools: [ms] })]).schools).toEqual([bs, ms]);
+    expect(joinPageReadings([reading({ schools: [{ ...bs, end: null }] }), reading({ schools: [{ institution: 'state university', qualification: null, end: '2008' }] })]).schools).toEqual([bs]);
   });
 });

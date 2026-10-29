@@ -249,6 +249,30 @@ describe('local readers (the on-device candidates on the Mac)', () => {
       { label: 'b', url: 'http://x', model: 'm' },
     ]);
     expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","schema":"system"}]')).toThrow(/schema/);
+    expect(parseLocalReaders('[{"label":"a","url":"http://x","model":"m","maxTokens":4000,"sampling":{"repeat_penalty":1.1},"pages":"each"}]')).toEqual([
+      { label: 'a', url: 'http://x', model: 'm', maxTokens: 4000, sampling: { repeat_penalty: 1.1 }, pages: 'each' },
+    ]);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","maxTokens":100}]')).toThrow(/maxTokens/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","sampling":{"repeat_penalty":"high"}}]')).toThrow(/sampling/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","pages":"all"}]')).toThrow(/pages/);
+    expect(parseLocalReaders('[{"label":"a","url":"http://x","model":"m","paths":["text"],"textSource":"ocr"},{"label":"b","url":"http://x","model":"m","paths":["text"],"textSource":"pdf"}]')).toEqual([
+      { label: 'a', url: 'http://x', model: 'm', paths: ['text'], textSource: 'ocr' },
+      { label: 'b', url: 'http://x', model: 'm', paths: ['text'] },
+    ]);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","paths":["text"],"textSource":"scan"}]')).toThrow(/textSource/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","textSource":"ocr"}]')).toThrow(/text path/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","paths":["image","text"],"textSource":"ocr"}]')).toThrow(/text path alone/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","paths":["text"],"pages":"each"}]')).toThrow(/image path/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","sampling":{"max_tokens":64}}]')).toThrow(/max_tokens/);
+    expect(() => parseLocalReaders('[{"label":"a","url":"http://x","model":"m","sampling":{"temperature":0.7,"top_k":40}}]')).toThrow(/temperature/);
+    expect(parseLocalReaders('[{"label":"a","url":"http://x","model":"m","sampling":{"top_k":40}}]')).toEqual([{ label: 'a', url: 'http://x', model: 'm', sampling: { top_k: 40 } }]);
+  });
+
+  it('sends a reader\'s own cap and sampling settings beside the parse request', () => {
+    const request = parseRequest('local:x', { kind: 'image', pages: [{ mime: 'image/png', base64: 'AAAA' }] });
+    const body = localRequest({ ...reader, maxTokens: 4000, sampling: { repeat_penalty: 1.1, dry_multiplier: 0.8 } }, request) as any;
+    expect(body).toMatchObject({ max_tokens: 4000, repeat_penalty: 1.1, dry_multiplier: 0.8, temperature: 0 });
+    expect(localRequest(reader, request)).toMatchObject({ max_tokens: request.max_tokens });
   });
 
   it('writes the schema into the system prompt, in the LiteRT-LM test app\'s words, when the reader asks', () => {

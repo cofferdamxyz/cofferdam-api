@@ -322,6 +322,61 @@ export interface Reading {
   skills?: string[];
 }
 
+/**
+ * One reading from a resume's pages read one at a time, in page order. A job read on two pages (the same title, its dates
+ * not in conflict, a current job's end being "current") is one job with the fields each page read; a school likewise by
+ * institution, its qualification and end not in conflict; certificates and skills as a union, first seen first. Only an
+ * entry of an earlier page is joined, at most once a page: two entries on one page stay two, as in a reading of the whole
+ * document, so a job a page repeats still counts as spurious.
+ */
+export function joinPageReadings(pages: readonly Reading[]): Reading {
+  const jobs: ReadingJob[] = [];
+  const schools: ReadingSchool[] = [];
+  const fits = <T>(a: T | null, b: T | null) => a == null || b == null || a === b;
+  const fitsText = (a: string | null, b: string | null) => a == null || b == null || normText(a) === normText(b);
+  const endOf = (j: ReadingJob) => (j.current ? 'current' : j.end);
+  for (const page of pages) {
+    const earlierJobs = jobs.slice();
+    const earlierSchools = schools.slice();
+    const joined = new Set<ReadingJob | ReadingSchool>();
+    for (const j of page.jobs) {
+      const same = earlierJobs.find(
+        (x) => !joined.has(x) && x.title && j.title && normText(x.title) === normText(j.title) && fits(x.start, j.start) && fits(endOf(x), endOf(j)),
+      );
+      if (same) {
+        joined.add(same);
+        same.start ??= j.start;
+        same.end ??= j.end;
+        same.current ||= j.current;
+      } else jobs.push({ ...j });
+    }
+    for (const sc of page.schools) {
+      const same = earlierSchools.find(
+        (x) =>
+          !joined.has(x) &&
+          x.institution &&
+          sc.institution &&
+          normText(x.institution) === normText(sc.institution) &&
+          fitsText(x.qualification, sc.qualification) &&
+          fits(x.end, sc.end),
+      );
+      if (same) {
+        joined.add(same);
+        same.qualification ??= sc.qualification;
+        same.end ??= sc.end;
+      } else schools.push({ ...sc });
+    }
+  }
+  const certificates: string[] = [];
+  const seen = new Set<string>();
+  for (const c of pages.flatMap((p) => p.certificates)) {
+    if (seen.has(normText(c))) continue;
+    seen.add(normText(c));
+    certificates.push(c);
+  }
+  return { jobs, schools, certificates, skills: distinctSkills(pages.flatMap((p) => p.skills ?? [])) };
+}
+
 /** Distinct skills, first seen first, by `normText`. */
 export function distinctSkills(all: readonly (string | null | undefined)[], max = 30): string[] {
   const seen = new Set<string>();

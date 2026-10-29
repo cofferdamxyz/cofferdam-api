@@ -48,6 +48,18 @@ export interface LocalReader {
   thinking?: boolean;
   /** `prompt`: the schema in the system prompt and no `response_format`; the server's grammar when absent. */
   schema?: 'prompt';
+  /** The answer's cap in place of the parse's own (2,500 tokens). */
+  maxTokens?: number;
+  /** Sampling settings sent beside the request (llama-server: `repeat_penalty`, `dry_multiplier`, `frequency_penalty`, …). */
+  sampling?: Record<string, number>;
+  /** `each`: one page a call, the readings joined in page order (the real-resume benchmark); every page in one call when absent. */
+  pages?: 'each';
+  /**
+   * `ocr`: the real-resume benchmark's text path reads the lines Apple's Vision recognises on the page images
+   * (`scripts/work/ocr-pages.swift`), as an iPhone's text recognition would give them; the PDF's own text layer
+   * when absent (`pdf`). The parse benchmark's fixtures carry their own OCR text and ignore it.
+   */
+  textSource?: 'ocr';
 }
 
 /** The answer's cap with thinking on: the reasoning block and the JSON after it (LFM3-VL's card allows 16,384). */
@@ -98,6 +110,9 @@ export class LocalAiError extends Error {
   }
 }
 
+/** The request keys `localRequest` and the parse set; a reader's `sampling` may not replace them. */
+const REQUEST_KEYS = new Set(['model', 'messages', 'stream', 'max_tokens', 'max_completion_tokens', 'temperature', 'response_format', 'reasoning_effort', 'chat_template_kwargs']);
+
 /** Reads `WORK_PARSE_LOCAL`: a JSON array of readers. Throws on anything else, naming what is wrong. */
 export function parseLocalReaders(raw: string | undefined): LocalReader[] {
   if (!raw?.trim()) return [];
@@ -105,7 +120,7 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url, model, paths?, thinking?, schema?}');
+    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url, model, paths?, thinking?, schema?, maxTokens?, sampling?, pages?, textSource?}');
   }
   if (!Array.isArray(parsed)) throw new Error('WORK_PARSE_LOCAL must be a JSON array');
   const readers = parsed.map((r, i): LocalReader => {
@@ -127,6 +142,21 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
     }
     if (o.thinking != null && typeof o.thinking !== 'boolean') throw new Error(`WORK_PARSE_LOCAL[${i}].thinking must be true or false`);
     if (o.schema != null && o.schema !== 'prompt' && o.schema !== 'grammar') throw new Error(`WORK_PARSE_LOCAL[${i}].schema must be "prompt" or "grammar"`);
+    if (o.maxTokens != null && (!Number.isInteger(o.maxTokens) || (o.maxTokens as number) < 256 || (o.maxTokens as number) > 16_384)) {
+      throw new Error(`WORK_PARSE_LOCAL[${i}].maxTokens must be a whole number from 256 to 16384`);
+    }
+    if (o.sampling != null && (typeof o.sampling !== 'object' || Array.isArray(o.sampling) || Object.values(o.sampling).some((v) => typeof v !== 'number' || !Number.isFinite(v)))) {
+      throw new Error(`WORK_PARSE_LOCAL[${i}].sampling must be an object of numbers`);
+    }
+    if (o.sampling != null) {
+      // The request's own settings stay the parse's: `maxTokens` sets the cap, and the temperature is 0.
+      const own = Object.keys(o.sampling).filter((k) => REQUEST_KEYS.has(k));
+      if (own.length) throw new Error(`WORK_PARSE_LOCAL[${i}].sampling must not set ${own.join(', ')}, which the request sets (use maxTokens for the cap)`);
+    }
+    if (o.pages != null && o.pages !== 'each') throw new Error(`WORK_PARSE_LOCAL[${i}].pages must be "each"`);
+    if (o.pages === 'each' && paths && !paths.includes('image')) throw new Error(`WORK_PARSE_LOCAL[${i}].pages "each" reads page images and needs the image path`);
+    if (o.textSource != null && o.textSource !== 'pdf' && o.textSource !== 'ocr') throw new Error(`WORK_PARSE_LOCAL[${i}].textSource must be "pdf" or "ocr"`);
+    if (o.textSource === 'ocr' && !(paths?.length === 1 && paths[0] === 'text')) throw new Error(`WORK_PARSE_LOCAL[${i}].textSource "ocr" needs paths ["text"], the text path alone`);
     return {
       label: field('label'),
       url,
@@ -134,6 +164,10 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
       ...(paths ? { paths } : {}),
       ...(o.thinking === true ? { thinking: true } : {}),
       ...(o.schema === 'prompt' ? { schema: 'prompt' as const } : {}),
+      ...(o.maxTokens != null ? { maxTokens: o.maxTokens as number } : {}),
+      ...(o.sampling != null ? { sampling: o.sampling as Record<string, number> } : {}),
+      ...(o.pages === 'each' ? { pages: 'each' as const } : {}),
+      ...(o.textSource === 'ocr' ? { textSource: 'ocr' as const } : {}),
     };
   });
   // The report groups runs by label, so two readers must not share one.
@@ -151,15 +185,16 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
  * prompt instead of `response_format` when the reader sets `schema: "prompt"`.
  */
 export function localRequest(reader: LocalReader, parse: Record<string, unknown>): Record<string, unknown> {
-  const request = reader.schema === 'prompt' ? withSchemaInPrompt(parse) : parse;
+  const request = { ...(reader.schema === 'prompt' ? withSchemaInPrompt(parse) : parse), ...(reader.sampling ?? {}) };
   const kwargs = (request.chat_template_kwargs ?? {}) as Record<string, unknown>;
   if (reader.thinking) {
-    return { ...request, model: reader.model, stream: false, max_tokens: THINKING_MAX_TOKENS, chat_template_kwargs: { ...kwargs, enable_thinking: true } };
+    return { ...request, model: reader.model, stream: false, max_tokens: reader.maxTokens ?? THINKING_MAX_TOKENS, chat_template_kwargs: { ...kwargs, enable_thinking: true } };
   }
   return {
     ...request,
     model: reader.model,
     stream: false,
+    ...(reader.maxTokens ? { max_tokens: reader.maxTokens } : {}),
     reasoning_effort: 'none',
     chat_template_kwargs: { ...kwargs, enable_thinking: false },
   };

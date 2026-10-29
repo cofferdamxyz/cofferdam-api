@@ -81,6 +81,7 @@ import {
   dropAbsent,
   GROUPS,
   hasContact,
+  joinPageReadings,
   mergeReadings,
   pickSample,
   readArbiter,
@@ -186,6 +187,51 @@ function readJson<T>(path: string): T | null {
     return JSON.parse(readFileSync(path, 'utf8')) as T;
   } catch {
     return null;
+  }
+}
+
+/** JSON with every object's keys sorted, so two equal settings compare equal whatever order they were written in. */
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
+/** What changes a local reader's answers; not its URL, since a server may move to another port. */
+function readerSettings(r: LocalReader): Record<string, unknown> {
+  return {
+    model: r.model,
+    paths: r.paths ?? ['image'],
+    thinking: r.thinking ?? false,
+    schema: r.schema ?? 'grammar',
+    maxTokens: r.maxTokens ?? null,
+    sampling: r.sampling ?? {},
+    pages: r.pages ?? 'all',
+    textSource: r.textSource ?? 'pdf',
+  };
+}
+
+/**
+ * A reader's readings are cached under its label, so the settings that made them are kept beside them (`reader.json`)
+ * and a run that brings the same label with other settings is refused: it would score the old readings as the new ones.
+ */
+function guardReaderCache(cacheDir: string, reader: string, settings: Record<string, unknown>): void {
+  const dir = join(cacheDir, `${slug(reader)}-${PROMPT_TAG}`);
+  const file = join(dir, 'reader.json');
+  const want = stableJson(settings);
+  const had = readJson<unknown>(file);
+  if (had != null && stableJson(had) !== want) {
+    throw new Error(`the readings cached as ${JSON.stringify(reader)} were made with other settings (${stableJson(had)}); give this reader a new label`);
+  }
+  if (had == null) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, want + '\n');
   }
 }
 
@@ -435,6 +481,9 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     const seed = Number(process.env.RESUME_SEED ?? 1);
     const cloudReaders = (process.env.RESUME_CLOUD ?? '@cf/google/gemma-4-26b-a4b-it,@cf/deepseek-ai/deepseek-v4.1-flash-1017').split(',').map((s) => s.trim()).filter(Boolean);
     const localReaders: LocalReader[] = parseLocalReaders(process.env.RESUME_LOCAL);
+    // Two labels that slug alike ("Gemma, OCR" and "Gemma: OCR") would share one cache folder.
+    const cacheNames = localReaders.map((r) => slug(`local-${r.label}`));
+    if (new Set(cacheNames).size !== cacheNames.length) throw new Error('two RESUME_LOCAL labels share a cache folder; make them differ in their letters or digits');
     const parallelN = Number(process.env.RESUME_PARALLEL ?? 4);
     const floor = Number(process.env.RESUME_CLEF_FLOOR ?? 0.6);
     const review = process.env.RESUME_REVIEW === '1';
@@ -475,6 +524,15 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         .sort((x, y) => Number(x.slice(1, -4)) - Number(y.slice(1, -4)))
         .map((f) => ({ mime: 'image/jpeg' as const, base64: readFileSync(join(pagesDir, id, f)).toString('base64') }));
     const textOf = (id: string) => readFileSync(join(pagesDir, id, 'text.txt'), 'utf8');
+    // The lines Apple's Vision recognises on the pages, for a reader with `textSource: "ocr"`, written once per resume.
+    if (localReaders.some((x) => x.textSource === 'ocr')) {
+      const ocr = spawnSync('swift', [join(__dirname, '..', 'scripts', 'work', 'ocr-pages.swift'), pagesDir, ...sample.map((r) => r.id)], { encoding: 'utf8', maxBuffer: 1 << 24 });
+      if (ocr.status !== 0) throw new Error(`ocr-pages.swift exited ${ocr.status}: ${(ocr.stderr ?? '').split('\n').slice(-4).join(' ')}`);
+      process.stdout.write(`${ocr.stdout.trim()}\n`);
+      const missing = sample.filter((r) => !existsSync(join(pagesDir, r.id, 'ocr.txt'))).length;
+      if (missing) throw new Error(`ocr-pages.swift recognised no text for ${missing} sampled resumes: ${(ocr.stderr ?? '').trim().split('\n').slice(-3).join('; ')}`);
+    }
+    const ocrOf = (id: string) => readFileSync(join(pagesDir, id, 'ocr.txt'), 'utf8');
 
     // The cloud: both readers per resume in parallel, then the pipeline.
     const ai = cloudReaders.length ? createRestAi({ accountId: accountId!, token: token! }) : null;
@@ -518,11 +576,30 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     for (const reader of localReaders) {
       const lai = createLocalAi(reader);
       const byId = new Map<string, CachedReading>();
-      for (const [i, r] of sample.entries()) {
-        const reading = await readOnce(cacheDir, `local-${reader.label}`, r.id, async () => ({
+      // The text path reads the PDF's text layer (a digital PDF's own text), or with `textSource: ocr` the lines Apple's
+      // Vision recognises on the pages (a photo's or a scan's); `pages: each` reads one page a call, each page cached on its
+      // own, and joins them when every page read.
+      const textOnly = reader.paths?.length === 1 && reader.paths[0] === 'text';
+      guardReaderCache(cacheDir, `local-${reader.label}`, readerSettings(reader));
+      const readParseOf = (key: string, input: Parameters<typeof parseRequest>[1]) =>
+        readOnce(cacheDir, `local-${reader.label}`, key, async () => ({
           model: 'local',
-          result: await lai.run('local' as never, parseRequest(`local:${reader.label}`, { kind: 'image', pages: pagesOf(r.id) }) as never, { signal: AbortSignal.timeout(900_000) } as never),
+          result: await lai.run('local' as never, parseRequest(`local:${reader.label}`, input) as never, { signal: AbortSignal.timeout(900_000) } as never),
         }));
+      for (const [i, r] of sample.entries()) {
+        let reading: CachedReading;
+        if (textOnly) reading = await readParseOf(r.id, { kind: 'text', text: reader.textSource === 'ocr' ? ocrOf(r.id) : textOf(r.id) });
+        else if (reader.pages === 'each') {
+          const parts: CachedReading[] = [];
+          for (const [n, page] of pagesOf(r.id).entries()) parts.push(await readParseOf(`${r.id}-p${n + 1}`, { kind: 'image', pages: [page] }));
+          const read = parts.filter((x) => x.ok && x.reading);
+          const ms = parts.reduce((sum, x) => sum + x.ms, 0);
+          // A resume reads only when every page does, as a reading of the whole document reads or fails.
+          reading =
+            parts.length && read.length === parts.length
+              ? { ok: true, failure: null, ms, costMicroUsd: null, reading: joinPageReadings(read.map((x) => x.reading!)) }
+              : { ok: false, failure: `${parts.length - read.length} of ${parts.length} pages failed: ${parts.find((x) => !x.ok)?.failure ?? 'no page'}`, ms, costMicroUsd: null, reading: null };
+        } else reading = await readParseOf(r.id, { kind: 'image', pages: pagesOf(r.id) });
         byId.set(r.id, reading);
         process.stdout.write(`${reader.label} ${i + 1}/${sample.length}: ${reading.ok ? 'ok' : `FAIL ${reading.failure}`} ${(reading.ms / 1000).toFixed(1)} s\n`);
       }
@@ -786,15 +863,17 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     say('Cells: the share right, and in brackets the share wrong with no question to the worker. Questions per resume: the fields a resume would still ask its worker about.');
     say();
     const n = sample.length;
-    const reportPath = (() => {
+    // The run's JSON takes its report's name, so a second run the same day keeps the first one's.
+    const suffix = (() => {
       for (let i = 1; ; i++) {
-        const p = join(__dirname, 'work-eval', `resumes-${date}-n${n}${i === 1 ? '' : `-${i}`}.md`);
-        if (!existsSync(p)) return p;
+        const s = i === 1 ? '' : `-${i}`;
+        if (!existsSync(join(__dirname, 'work-eval', `resumes-${date}-n${n}${s}.md`))) return s;
       }
     })();
+    const reportPath = join(__dirname, 'work-eval', `resumes-${date}-n${n}${suffix}.md`);
     writeFileSync(reportPath, lines.join('\n'));
     mkdirSync(join(out, 'reports'), { recursive: true });
-    writeFileSync(join(out, 'reports', `resumes-${date}-n${n}.json`), JSON.stringify({ date, seed, plan, sample: sample.map((r) => r.id), paths: Object.fromEntries(paths), cwp }, null, 1) + '\n');
+    writeFileSync(join(out, 'reports', `resumes-${date}-n${n}${suffix}.json`), JSON.stringify({ date, seed, plan, sample: sample.map((r) => r.id), paths: Object.fromEntries(paths), cwp }, null, 1) + '\n');
     process.stdout.write(`report: ${reportPath}\n`);
     expect(sample.length).toBeGreaterThan(0);
   }, 12 * 3_600_000);
