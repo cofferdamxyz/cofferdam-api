@@ -16,7 +16,12 @@
  *
  *    WORK_PARSE_PHONE_RUNS sets the reads in a row per reader and CV (5), and
  *    WORK_PARSE_PHONE_READERS the readers (a JSON array of `{label, model,
- *    imageMaxTokens?, schema?}`; `DEFAULT_READERS` below when absent).
+ *    imageMaxTokens?, schema?, input?, litert?}`; `DEFAULT_READERS` below when
+ *    absent). A reader with `input: "text"` reads the CV's OCR lines through
+ *    the parse's text path, which the plan then carries (`text`); one with
+ *    `litert: {file, backend, mtp}` and `schema: "regex"` reads them through
+ *    LiteRT-LM with the schema as a regex, as the Mac's in-process reader does,
+ *    its `.litertlm` file copied beside the plan.
  *
  * 2. Score: the phone's `results.json`, fetched with `devicectl device copy from`:
  *
@@ -58,6 +63,8 @@ interface FixtureCv {
   locale: string;
   layout: string;
   image: string;
+  /** The CV's OCR lines, read by text readers through the parse's text path. */
+  ocr: string[];
   truth: ParseTruth;
 }
 

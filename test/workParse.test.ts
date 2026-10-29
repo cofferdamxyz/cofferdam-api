@@ -443,7 +443,37 @@ describe('the phone benchmark (the app reads, the Mac scores)', () => {
     expect(() => phonePlan(CVS, readers, 0, 'test')).toThrow(/runs/);
   });
 
+  it('plans the text path for text readers, as the Mac\'s in-process LiteRT-LM reader gets it', () => {
+    const litert = { label: 'Gemma 4 E2B, LiteRT-LM, Metal, MTP', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'regex' as const, input: 'text' as const, litert: { file: 'gemma-4-E2B-it.litertlm', backend: 'gpu' as const, mtp: true } };
+    expect(phonePlan(CVS, readers, 5, 'test').text).toBeNull();
+    const plan = phonePlan(CVS, [litert], 3, 'test');
+    // The Mac's reader: `WORK_PARSE_LOCAL` with `schema: "regex"` and `maxTokens: 4000` on the text path.
+    const mac = (cv: FixtureCv) =>
+      localRequest({ label: 'mac', model: 'gemma-4-e2b-litert', answers: '/tmp/a.json', paths: ['text'], schema: 'regex', maxTokens: 4000 }, parseRequest('local:x', { kind: 'text', text: cv.ocr.join('\n') }));
+    const first = mac(CVS[0]!);
+    expect(plan.text).toMatchObject({ system: PARSE_SYSTEM, maxTokens: first.max_tokens, temperature: first.temperature });
+    expect(plan.text!.regex).toBe((first.response_format as { pattern: string }).pattern);
+    expect(plan.text!.users).toEqual(CVS.map((cv) => ({ id: cv.id, user: ((mac(cv).messages as { content: string }[])[1]!).content })));
+    expect(() => phonePlan([{ id: 'x', image: 'x.png' }], [litert], 1, 'test')).toThrow(/no OCR lines/);
+  });
+
   it('reads WORK_PARSE_PHONE_READERS and refuses what the app cannot run', () => {
+    expect(
+      parsePhoneReaders(
+        '[{"label":"l","model":"gemma-4-e2b","schema":"regex","input":"text","litert":{"file":"g.litertlm","backend":"gpu","mtp":true}},{"label":"t","model":"gemma-4-e2b","schema":"json","input":"text"}]',
+      ),
+    ).toEqual([
+      { label: 'l', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'regex', input: 'text', litert: { file: 'g.litertlm', backend: 'gpu', mtp: true } },
+      { label: 't', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'json', input: 'text' },
+    ]);
+    const lit = (o: Record<string, unknown>) => JSON.stringify([{ label: 'l', model: 'm', schema: 'regex', input: 'text', litert: { file: 'g.litertlm', backend: 'gpu', mtp: true, ...o } }]);
+    expect(() => parsePhoneReaders(lit({ file: '../g.litertlm' }))).toThrow(/litertlm file name/);
+    expect(() => parsePhoneReaders(lit({ backend: 'npu' }))).toThrow(/backend/);
+    expect(() => parsePhoneReaders(lit({ mtp: 1 }))).toThrow(/mtp/);
+    expect(() => parsePhoneReaders(lit({ activation: 'bf16' }))).toThrow(/activation/);
+    expect(parsePhoneReaders(lit({ activation: 'f32' }))[0]!.litert).toEqual({ file: 'g.litertlm', backend: 'gpu', mtp: true, activation: 'f32' });
+    expect(() => parsePhoneReaders('[{"label":"l","model":"m","schema":"regex","input":"text"}]')).toThrow(/for LiteRT-LM/);
+    expect(() => parsePhoneReaders('[{"label":"l","model":"m","schema":"regex","litert":{"file":"g.litertlm","backend":"cpu","mtp":false}}]')).toThrow(/reads text/);
     expect(parsePhoneReaders('[{"label":"a","model":"lfm3-vl-2b","imageMaxTokens":1024},{"label":"b","model":"gemma-4-e2b","schema":"prompt"}]')).toEqual([
       { label: 'a', model: 'lfm3-vl-2b', imageMaxTokens: 1024, schema: 'grammar' },
       { label: 'b', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'prompt' },
@@ -489,7 +519,7 @@ describe('the phone benchmark (the app reads, the Mac scores)', () => {
     expect(scored[2]!.failure).toBe('jetsam');
     const md = phoneReport(results, scored, CVS.map((cv) => ({ id: cv.id, locale: 'x', layout: 'y' })), { date: '2026-10-28', title: 'iPhone 16' });
     // OK counts the answers that parsed, as the Mac's report does; the times count every call that answered.
-    expect(md).toContain('| LFM3-VL-2B, full page | 4/6 | 67% | 50% | 4.0, 30.0 | 4.0 | 30.0 | 30.0 | 2.10 | 3.00 | nominal, fair |');
+    expect(md).toContain('| LFM3-VL-2B, full page | 4/6 | 67% | 50% | 4.0, 30.0 | 4.0 | 30.0 | 30.0 | — | 2.10 | 3.00 | nominal, fair |');
     expect(md).toContain('| failed 100% 100% 100% |');
     expect(md).toContain('| 100% failed |');
     expect(() => parsePhoneResults({ v: 2 })).toThrow(/v: 1/);
