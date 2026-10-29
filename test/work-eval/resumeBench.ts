@@ -320,6 +320,9 @@ export interface Reading {
   certificates: string[];
   /** The CV's skills and its jobs' skills, as written, first seen first; not scored (the labels hold them only as free text). */
   skills?: string[];
+  /** The name read, and the languages with their levels; not scored (the dataset removed every name and labels no languages), kept to count what the worker's review would have to catch. */
+  name?: string | null;
+  languages?: { name: string; level: string }[];
 }
 
 /**
@@ -398,6 +401,8 @@ export function readingOf(p: ParsedCv): Reading {
     schools: p.claimed.education.map((e) => ({ institution: e.institution, qualification: e.qualification, end: e.end })),
     certificates: p.claimed.certificates.map((c) => c.raw),
     skills: distinctSkills([...p.claimed.skills.map((c) => c.raw), ...p.claimed.experience.flatMap((e) => e.skills.map((c) => c.raw))]),
+    name: p.identity.name,
+    languages: p.claimed.languages.map((l) => ({ name: l.raw, level: l.level })),
   };
 }
 

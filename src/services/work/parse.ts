@@ -94,13 +94,13 @@ export const PARSE_SYSTEM = [
   'You read one CV (résumé) and fill the JSON fields from it. The CV may be in Portuguese, Spanish or English; keep every value in the words and language the CV uses, never translate.',
   'The CV may have columns or a sidebar: read each column as its own text, and never attach a line from one column to an entry in another.',
   'Fields:',
-  '- name: the person the CV is about, as written. email, phone: as written. location: where the person lives (city, region), as written.',
+  "- name: the person's own name, as written; null when the CV shows none, since a job title or a heading is not a name. email, phone: as written. location: where the person lives (city, region), as written.",
   '- headline_title: the occupation the CV gives the person at the top or in its summary. years_experience: the total years of experience the CV states, else null.',
-  '- experience: one item per job, most recent first. title: the job title only, without the employer, the place or the dates; employer: the company; location: where, if the entry says; start and end: as the CV writes them (a year, or a month and year); end is null and current is true when the job continues ("atual", "actualidad", "present"); skills: tools or skills the entry itself names.',
+  '- experience: one item per job, most recent first. A job is a position held at one employer for a period: its duties, bullets, projects and headings belong to it and are never items of their own, and each job is listed once. title: the job title only, without the employer, the place or the dates; employer: the company; location: where, if the entry says; start and end: as the CV writes them (a year, or a month and year); end is null and current is true when the job continues ("atual", "actualidad", "present"); skills: tools or skills the entry itself names.',
   '- education: one item per qualification: the qualification, the institution (its name only, without its city, state or program), and the year it ended.',
   '- skills: the skills the CV lists outside its jobs, one per item, without bullets.',
   '- certificates: one item per certificate or licence, name as written without its validity, and expires as written (a date), else null.',
-  '- languages: one item per language, its name without the level, and level fluent for native, fluent or advanced, basic for basic or intermediate.',
+  '- languages: only the languages the CV names as ones the person speaks, one item per language: its name without the level, and level fluent for native, fluent or advanced, basic for basic or intermediate. The language the CV is written in is not one unless the CV names it.',
   'Use null or an empty list for anything the CV does not state. Never invent a value.',
 ].join('\n');
 
