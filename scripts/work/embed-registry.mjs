@@ -64,6 +64,8 @@ const DIMS = 768;
 const PER_FILE = 5_000;
 const GGUF_MODEL = 'gguf:ggml-org/embeddinggemma-2-GGUF:Q8_0';
 const LITERT_MODEL = 'litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm';
+/** The SHA-256 of the file the app pins (cofferdam-app `src/lib/localAi/models.ts`): v2 is made with that file or not at all. */
+const LITERT_SHA256 = '2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb';
 const LITERT_EMBED = new URL('./litert-embed.py', import.meta.url).pathname;
 
 function option(name, fallback) {
@@ -81,14 +83,28 @@ if (!input || !out) {
 const model = home(option('model'));
 const hf = option('hf', 'ggml-org/embeddinggemma-2-GGUF:Q8_0');
 const litert = home(option('litert'));
-const jobs = Math.max(1, Number(option('jobs', '1')));
+const count = (name, fallback, min) => {
+  const v = Number(option(name, fallback));
+  if (!Number.isInteger(v) || v < min) {
+    console.error(`--${name} takes a whole number from ${min}, not ${option(name, fallback)}`);
+    process.exit(2);
+  }
+  return v;
+};
+const jobs = count('jobs', '1', 1);
 const threads = option('threads');
 const MODEL_ID = litert ? LITERT_MODEL : GGUF_MODEL;
 const GENERATION = litert ? 'v2' : 'v3';
 // The τ cache's stem, as `cacheStem` in test/fixtures/work/registryTools.ts names it: the model, its document prompt's fingerprint.
 const TAU_STEM = `${MODEL_ID.split('/').pop().replace(/[^A-Za-z0-9._-]+/g, '-')}-doc-${createHash('sha256').update(DOCUMENT).digest('hex').slice(0, 8)}`;
-const batch = Number(option('batch', '4000'));
-const limit = Number(option('limit', '0'));
+const batch = count('batch', '4000', 1);
+const limit = count('limit', '0', 0);
+// The artefact itself: the LiteRT-LM file must be the one the app pins.
+const sha256 = litert ? createHash('sha256').update(readFileSync(litert)).digest('hex') : null;
+if (litert && sha256 !== LITERT_SHA256) {
+  console.error(`${litert} is not the pinned file (SHA-256 ${sha256}, the pin ${LITERT_SHA256})`);
+  process.exit(2);
+}
 const widths = option('widths', String(DIMS)).split(',').map(Number);
 if (!widths.includes(DIMS) || widths.some((w) => !Number.isInteger(w) || w < 1 || w > DIMS)) {
   console.error(`--widths lists ${DIMS} and narrower widths, e.g. ${DIMS},512`);
@@ -169,6 +185,14 @@ function embed(chunk) {
 const all = new Float32Array(texts.length * DIMS);
 const parts = join(out, 'parts');
 mkdirSync(parts, { recursive: true });
+// The runs saved in `parts/` are this model's: a resume with another model, or another file, stops here.
+const made = JSON.stringify({ model: MODEL_ID, sha256 });
+const madeFile = join(parts, 'model.json');
+if (existsSync(madeFile) ? readFileSync(madeFile, 'utf8') !== made : readdirSync(parts).some((f) => f.endsWith('.f32'))) {
+  console.error(`${parts} holds runs of another model (or of no recorded one): clear it, or write ${made} to ${madeFile} if they are this model's`);
+  process.exit(2);
+}
+writeFileSync(madeFile, made);
 const t0 = Date.now();
 const runs = [];
 for (let i = 0, n = 0; i < texts.length; i += batch, n++) runs.push({ i, chunk: texts.slice(i, i + batch), stem: join(parts, String(n).padStart(4, '0')) });
@@ -182,7 +206,8 @@ const saved = (r, part) => {
 };
 const pending = [];
 for (const r of runs) {
-  if (existsSync(`${r.stem}.json`) && existsSync(`${r.stem}.f32`) && JSON.stringify(JSON.parse(readFileSync(`${r.stem}.json`, 'utf8'))) === JSON.stringify(r.chunk)) {
+  const whole = existsSync(`${r.stem}.f32`) && readFileSync(`${r.stem}.f32`).byteLength === r.chunk.length * DIMS * 4;
+  if (whole && existsSync(`${r.stem}.json`) && JSON.stringify(JSON.parse(readFileSync(`${r.stem}.json`, 'utf8'))) === JSON.stringify(r.chunk)) {
     const buf = readFileSync(`${r.stem}.f32`);
     all.set(new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)), r.i * DIMS);
     embedded += r.chunk.length;
@@ -210,6 +235,13 @@ const vectorOf = (label) => {
   const at = row.get(clean(label)) * DIMS;
   return all.subarray(at, at + DIMS);
 };
+// Nothing is written unless every text has its unit vector: a run that never ran leaves zeros.
+if (embedded !== texts.length) throw new Error(`${embedded} of ${texts.length} texts embedded; nothing written`);
+texts.forEach((t, i) => {
+  const v = all.subarray(i * DIMS, (i + 1) * DIMS);
+  const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+  if (!(Math.abs(n - 1) <= 1e-3)) throw new Error(`text ${i} has a vector of length ${n}; nothing written`);
+});
 
 /** A vector cut to its first `width` dimensions and normalised again, rounded as the index files hold it. */
 function cut(v, width) {

@@ -29,6 +29,7 @@ import { vectorLine } from '../../../src/services/work/esco.js';
 import {
   EMBED_DIMS_BY_MODEL,
   EMBED_PROMPTS_BY_MODEL,
+  EMBEDDINGGEMMA_2_LITERT,
   labelNorm,
   type EmbedRole,
   type RegistryLabel,
@@ -168,6 +169,25 @@ export function litertOf(model: string): string | null {
 const LITERT_EMBED = join(dirname(fileURLToPath(import.meta.url)), '../../../scripts/work/litert-embed.py');
 
 /**
+ * The SHA-256 of the file each LiteRT-LM model id names, as the app pins it
+ * (cofferdam-app `src/lib/localAi/models.ts`): vectors that may reach an index
+ * (the re-embed's, the τ cache's) are made with that file or not at all.
+ * `scripts/work/embed-registry.mjs` holds the same value.
+ */
+export const LITERT_SHA256: Readonly<Record<string, string>> = {
+  [EMBEDDINGGEMMA_2_LITERT]: '2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb',
+};
+const pinnedFiles = new Set<string>();
+
+/** Throws unless `file` is the file `model`'s pin names, by its SHA-256 (read once a file). */
+export function assertPinnedLitert(model: string, file: string): void {
+  if (pinnedFiles.has(`${model}\n${file}`)) return;
+  const got = createHash('sha256').update(readFileSync(file)).digest('hex');
+  if (got !== LITERT_SHA256[model]) throw new Error(`${file} is not ${model}'s pinned file (SHA-256 ${got})`);
+  pinnedFiles.add(`${model}\n${file}`);
+}
+
+/**
  * Texts embedded on the Mac with LiteRT-LM (`scripts/work/litert-embed.py`, `uv run`), as
  * the phone embeds them: the role's prompt before each text, LiteRT-LM's defaults (special
  * tokens, pooling, L2 normalisation) on the CPU. `file` is the local `.litertlm` the model's
@@ -178,6 +198,7 @@ export function litertEmbed(model: string, texts: readonly string[], role: Embed
   const dims = EMBED_DIMS_BY_MODEL[model];
   if (!litertOf(model) || !dims) throw new Error(`${model} is no LiteRT-LM file of a known size`);
   if (!texts.length) return [];
+  assertPinnedLitert(model, file);
   const prompt = EMBED_PROMPTS_BY_MODEL[model]?.[role] ?? '';
   const dir = mkdtempSync(join(tmpdir(), 'litert-embed-'));
   try {

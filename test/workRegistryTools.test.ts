@@ -8,14 +8,24 @@
  * names the EmbeddingGemma 2 script shares with the plane.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { CLIENT_EMBED_MODELS, EMBED_DIMS_BY_MODEL, EMBED_PROMPTS_BY_MODEL, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT } from '../src/services/work/registry.js';
-import { cacheStem, exportedLabelLine, ggufOf, litertOf, readLabelExport, readVectorCache, writeVectorCache } from './fixtures/work/registryTools.js';
+import {
+  assertPinnedLitert,
+  cacheStem,
+  exportedLabelLine,
+  ggufOf,
+  LITERT_SHA256,
+  litertOf,
+  readLabelExport,
+  readVectorCache,
+  writeVectorCache,
+} from './fixtures/work/registryTools.js';
 
 const dirs: string[] = [];
 const scratch = () => {
@@ -95,6 +105,18 @@ describe('EmbeddingGemma 2 on the Mac', () => {
     expect(EMBED_PROMPTS_BY_MODEL[EMBEDDINGGEMMA_2_LITERT]).toEqual(EMBED_PROMPTS_BY_MODEL[EMBEDDINGGEMMA_2_GGUF]);
     for (const script of ['tier2-floor.mjs', 'embed-registry.mjs']) {
       expect(readFileSync(join(__dirname, '..', 'scripts', 'work', script), 'utf8')).toContain(`const LITERT_MODEL = '${EMBEDDINGGEMMA_2_LITERT}';`);
+    }
+    // Index vectors come from the app's pinned file only: the script and the Mac's embed check the same SHA-256.
+    expect(readFileSync(join(__dirname, '..', 'scripts', 'work', 'embed-registry.mjs'), 'utf8')).toContain(
+      `const LITERT_SHA256 = '${LITERT_SHA256[EMBEDDINGGEMMA_2_LITERT]}';`,
+    );
+    const dir = mkdtempSync(join(tmpdir(), 'litert-pin-'));
+    try {
+      const other = join(dir, 'embeddinggemma-2-text-270m.litertlm');
+      writeFileSync(other, 'not the pinned file');
+      expect(() => assertPinnedLitert(EMBEDDINGGEMMA_2_LITERT, other)).toThrow(/not .* pinned file/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
