@@ -23,6 +23,7 @@ import {
   type LabelKind,
   type RegistryDeps,
   type RegistryLabel,
+  type SnapInput,
   type TokenKind,
 } from '../src/services/work/registry.js';
 import { adjudicationQuestions } from '../src/services/work/clef.js';
@@ -625,7 +626,7 @@ describe('snap: retrieve, then choose', () => {
   });
 
   it('asks Clef about the kind it is snapping', () => {
-    const q = adjudicationQuestions('skill', [{ token: 'skill:leak-repair', labelEn: 'leak repair', matched: 'reparación de fugas', matchedLang: 'es', score: 0.8 }]);
+    const q = adjudicationQuestions('skill', [{ token: 'skill:leak-repair', labelEn: 'leak repair', matched: 'reparación de fugas', matchedLang: 'es' }]);
     expect(q.match).toMatchObject({ type: 'choice', criteria: { c0: 'leak repair (matched "reparación de fugas")', none: 'None of these: a different skill' } });
     expect(q.specialization).toMatchObject({ type: 'noul' });
   });
@@ -772,6 +773,284 @@ describe('the locale the model steps read', () => {
     const vectors = [...minted.index.vectors.values()].filter((v) => v.metadata.token === 'pos:pastry-chef');
     expect(vectors).toHaveLength(2);
     expect(JSON.stringify([vectors.map((v) => v.metadata), minted.db.sqlite.prepare('SELECT * FROM registry_labels WHERE token = ?').all('pos:pastry-chef')])).not.toMatch(/br-sp|Brazil|region":"/);
+  });
+});
+
+describe('the English pivot in the band (workspace decision 0018, amendment proposed 2026-10-30)', () => {
+  // As in ESCO v1.2.1: its Spanish gives "oficial de máquinas" to the marine mechanic, and a Brazilian "Terceiro
+  // Oficial de Máquinas", a marine engineer, lands near it and a Portuguese machine operator, far from the marine engineer.
+  const ships: SeedToken[] = [
+    { token: 'pos:marine-mechanic', kind: 'pos', labelEn: 'marine mechanic', labels: [['en', 'marine mechanic', axis(40)], ['es', 'oficial de máquinas', axis(41), 'alternative']] },
+    { token: 'pos:machine-operator', kind: 'pos', labelEn: 'machine operator', labels: [['en', 'machine operator', axis(42)], ['pt', 'Operador de máquinas', axis(43), 'alternative']] },
+    { token: 'pos:marine-engineer', kind: 'pos', labelEn: 'marine engineer', labels: [['en', 'marine engineer', axis(44)], ['en', 'ship engineer', axis(45), 'alternative']] },
+  ];
+  /** A unit vector at these cosines to these axes, the rest along axis 59. */
+  const toward = (...parts: [axis: number, cos: number][]) => {
+    const v = new Array<number>(1024).fill(0);
+    for (const [a, cos] of parts) v[a] = cos;
+    v[59] = Math.sqrt(Math.max(0, 1 - parts.reduce((s, [, cos]) => s + cos * cos, 0)));
+    return v;
+  };
+  // The nearest five: the marine mechanic (0.75, its Spanish label), the machine operator (0.62), then SEED's three occupations; the marine engineer is sixth.
+  const terceiro = toward([41, 0.75], [43, 0.62], [0, 0.1], [1, 0.1], [2, 0.1]);
+  const raw = 'Terceiro Oficial de Máquinas';
+  const input = { kind: 'pos', raw, lang: 'pt', market: 'br-rj' } as const;
+  const on = (deps: RegistryDeps): RegistryDeps => ({ ...deps, pivotBand: true });
+  type Asked = { state: string; questions: { match: { criteria: Record<string, string> } } };
+  const asked = (calls: FakeCall[]) => calls.find((c) => c.op === 'work-adjudicate')!.input as unknown as Asked;
+  /** A pivot that answers only when cancelled, so a snap that waited for it would never end. */
+  const hanging = (seen: { signal?: AbortSignal }) => (_input: Record<string, unknown>, call: { signal?: AbortSignal }) => {
+    seen.signal = call.signal;
+    return new Promise((_, reject) => call.signal?.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true }));
+  };
+
+  it('shows Clef the English name’s token after the nearest five, as the name’s match, and takes Clef’s pick of it', async () => {
+    const calls: FakeCall[] = [];
+    const { deps, db, decisions } = await registry(
+      { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c5', 0.86), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) },
+      calls,
+      ships,
+    );
+    const out = await snap(on(deps), input);
+    expect(out).toMatchObject({ decision: 'chosen', token: 'pos:marine-engineer', labelEn: 'marine engineer', probability: 0.86 });
+    expect(out.pivot).toEqual({ english: 'ship engineer', token: 'pos:marine-engineer', added: true });
+    // The pivot is asked before the embedding, so the two run together; the snap reads it in the band, before Clef.
+    expect(calls.map((c) => c.op)).toEqual(['work-pivot', 'work-embed', 'work-adjudicate']);
+    expect(out.calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot', 'work-adjudicate']);
+    // The nearest five, then the name's token as the English name's match: Clef still answers by key.
+    expect(out.candidates.map((c) => c.token)).toEqual(['pos:marine-mechanic', 'pos:machine-operator', 'pos:electrician', 'pos:plumber', 'pos:welder']);
+    const q = asked(calls);
+    expect(q.state).toBe(`An occupation written in Brazilian Portuguese by a worker in Brazil (br-rj):\n${raw}`);
+    expect(q.questions.match.criteria).toMatchObject({
+      c0: 'marine mechanic (matched "oficial de máquinas", Spanish)',
+      c5: 'marine engineer (matched "ship engineer", English)',
+      none: 'None of these: a different occupation',
+    });
+    expect(Object.keys(q.questions.match.criteria)).toEqual(['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'none']);
+    // The pivot reads the band's state, as at step 3.
+    const pivoted = calls.find((c) => c.op === 'work-pivot')!.input as { messages: { role: string; content: string }[] };
+    expect(pivoted.messages.find((m) => m.role === 'user')!.content).toBe(q.state);
+    // The decision keeps the nearest five's cosines and the name's token with the English name, no cosine.
+    expect(decisions()).toEqual([{ decision: 'chosen', token: 'pos:marine-engineer', specialization: 0, probability: 0.86, raw }]);
+    const recorded = JSON.parse((db.sqlite.prepare('SELECT candidates FROM registry_decisions').get() as { candidates: string }).candidates) as unknown[];
+    expect(recorded).toHaveLength(6);
+    expect(recorded[0]).toEqual({ token: 'pos:marine-mechanic', score: 0.75 });
+    expect(recorded[5]).toEqual({ token: 'pos:marine-engineer', pivot: 'ship engineer' });
+    // The string is a Portuguese alias of the marine engineer now: the next snap needs no model.
+    calls.length = 0;
+    expect(await snap(on(deps), { ...input, raw: 'terceiro oficial de maquinas' })).toMatchObject({ decision: 'label', token: 'pos:marine-engineer' });
+    expect(calls).toEqual([]);
+  });
+
+  it('adds nothing when the nearest five hold the name’s token, and never shows a token twice', async () => {
+    const calls: FakeCall[] = [];
+    const { deps } = await registry(
+      { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.8), 'work-pivot': jsonModeResult({ english: 'marine mechanic' }) },
+      calls,
+      ships,
+    );
+    const out = await snap(on(deps), input);
+    expect(out).toMatchObject({ decision: 'chosen', token: 'pos:marine-mechanic' });
+    expect(out.pivot).toEqual({ english: 'marine mechanic', token: 'pos:marine-mechanic', added: false });
+    expect(Object.keys(asked(calls).questions.match.criteria)).toEqual(['c0', 'c1', 'c2', 'c3', 'c4', 'none']);
+  });
+
+  it('reads a name several tokens hold as step 3 does: the token of its slug, or no entry', async () => {
+    // As in ESCO: "porter" is an English label of the hotel porter and the hospital porter, and no token is pos:porter.
+    const porters: SeedToken[] = [
+      { token: 'pos:hotel-porter', kind: 'pos', labelEn: 'hotel porter', labels: [['en', 'hotel porter', axis(46)], ['en', 'porter', axis(47), 'alternative']] },
+      { token: 'pos:hospital-porter', kind: 'pos', labelEn: 'hospital porter', labels: [['en', 'hospital porter', axis(48)], ['en', 'porter', axis(49), 'alternative']] },
+    ];
+    const calls: FakeCall[] = [];
+    const none = await registry(
+      { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.8), 'work-pivot': jsonModeResult({ english: 'porter' }) },
+      calls,
+      [...ships, ...porters],
+    );
+    const out = await snap(on(none.deps), input);
+    expect(out).toMatchObject({ decision: 'chosen', token: 'pos:marine-mechanic' });
+    expect(out.pivot).toEqual({ english: 'porter', token: null, added: false });
+    expect(Object.keys(asked(calls).questions.match.criteria)).toHaveLength(6);
+
+    // ESCO also gives "electrician" to the domestic electrician; the slug names pos:electrician, which the nearest five hold.
+    const domestic: SeedToken = { token: 'pos:domestic-electrician', kind: 'pos', labelEn: 'domestic electrician', labels: [['en', 'domestic electrician', axis(50)], ['en', 'electrician', axis(51), 'alternative']] };
+    const slugged = await registry(
+      { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c2', 0.7), 'work-pivot': jsonModeResult({ english: 'electrician' }) },
+      [],
+      [...ships, domestic],
+    );
+    const viaSlug = await snap(on(slugged.deps), input);
+    expect(viaSlug.pivot).toEqual({ english: 'electrician', token: 'pos:electrician', added: false });
+    expect(viaSlug).toMatchObject({ decision: 'chosen', token: 'pos:electrician' });
+  });
+
+  it('refuses the name’s token on Clef’s none at its floor, shown after the five or among them: no mint, no alias', async () => {
+    for (const [english, refused] of [
+      ['ship engineer', 'pos:marine-engineer'],
+      ['marine mechanic', 'pos:marine-mechanic'],
+    ] as const) {
+      const calls: FakeCall[] = [];
+      const { deps, db, store, decisions } = await registry(
+        { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english }) },
+        calls,
+        ships,
+      );
+      const out = await snap(on(deps), input);
+      expect(out, english).toMatchObject({ decision: 'unmatched', token: null, probability: 0.9 });
+      expect(out.pivot?.token, english).toBe(refused);
+      expect(calls.map((c) => c.op), english).toEqual(['work-pivot', 'work-embed', 'work-adjudicate']);
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM registry_tokens WHERE source = 'emergent'").get(), english).toEqual({ n: 0 });
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM registry_labels WHERE kind = 'observed'").get(), english).toEqual({ n: 0 });
+      expect((await store.tokensByLabel(labelNorm(raw), 'pos', ['pt'])).length, english).toBe(0);
+      expect(decisions(), english).toEqual([{ decision: 'unmatched', token: null, specialization: 0, probability: 0.9, raw }]);
+    }
+    // Off, the same answers take the token at step 3, as before.
+    const off = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, [], ships);
+    expect(await snap(off.deps, input)).toMatchObject({ decision: 'pivot', token: 'pos:marine-engineer' });
+  });
+
+  it('mints on Clef’s none when the name names no token, and asks the pivot once', async () => {
+    const calls: FakeCall[] = [];
+    const { deps, store } = await registry(
+      { 'work-embed': embedAnswer({ [raw]: terceiro, 'third engineer officer': axis(52) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'third engineer officer' }) },
+      calls,
+      ships,
+    );
+    const out = await snap(on(deps), input);
+    expect(out).toMatchObject({ decision: 'minted', token: 'pos:third-engineer-officer' });
+    expect(out.pivot).toEqual({ english: 'third engineer officer', token: null, added: false });
+    expect(calls.map((c) => c.op)).toEqual(['work-pivot', 'work-embed', 'work-adjudicate', 'work-embed']);
+    expect((await store.tokens(['pos:third-engineer-officer'])).get('pos:third-engineer-officer')).toMatchObject({ source: 'emergent', status: 'pending' });
+  });
+
+  it('leaves the name to step 3 on an answer under the floor, which reads the same call and never mints', async () => {
+    const calls: FakeCall[] = [];
+    const { deps } = await registry(
+      { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.3), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) },
+      calls,
+      ships,
+    );
+    const out = await snap(on(deps), input);
+    expect(out).toMatchObject({ decision: 'pivot', token: 'pos:marine-engineer', probability: null });
+    expect(out.pivot).toEqual({ english: 'ship engineer', token: 'pos:marine-engineer', added: true });
+    expect(calls.filter((c) => c.op === 'work-pivot')).toHaveLength(1);
+    const undecided = await registry(
+      { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.3), 'work-pivot': jsonModeResult({ english: 'third engineer officer' }) },
+      [],
+      ships,
+    );
+    expect(await snap(on(undecided.deps), input)).toMatchObject({ decision: 'unmatched', token: null, probability: 0.3 });
+    expect((await undecided.store.tokens(['pos:third-engineer-officer'])).size).toBe(0);
+  });
+
+  it('below the band, takes the name as step 3 always has, from a call that ran while the string was embedded', async () => {
+    const calls: FakeCall[] = [];
+    const { deps } = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: toward([40, 0.3]) }), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, calls, ships);
+    const out = await snap(on(deps), { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt', market: 'br-pr' });
+    expect(out).toMatchObject({ decision: 'pivot', token: 'pos:marine-engineer' });
+    expect(out.pivot).toEqual({ english: 'ship engineer', token: 'pos:marine-engineer', added: false });
+    expect(calls.map((c) => c.op)).toEqual(['work-pivot', 'work-embed']);
+  });
+
+  it('cancels the pivot on a τ_auto take through the string’s own label, never waits for it, and meters it', async () => {
+    const pivotCall: { signal?: AbortSignal } = {};
+    const logs: Record<string, unknown>[] = [];
+    const { deps } = await registry({ 'work-embed': embedAnswer({ 'Eletricista Industrial': near(0, 10, 0.97) }), 'work-pivot': hanging(pivotCall) });
+    const out = await snap({ ...on(deps), log: (e) => logs.push(e) }, { kind: 'pos', raw: 'Eletricista Industrial', lang: 'pt', market: 'br-sp' });
+    expect(out).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
+    expect(out.pivot).toBeUndefined();
+    expect(pivotCall.signal?.aborted).toBe(true);
+    const metered = out.calls.find((c) => c.op === 'work-pivot')!;
+    expect(metered).toMatchObject({ ok: false });
+    expect(metered.usage.tokensIn).toBeGreaterThan(0);
+    // A call the snap cancelled is no failure of the model's.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(logs.filter((e) => e.event === 'work_pivot_failed')).toEqual([]);
+  });
+
+  it('meters a pivot that answered before a τ_auto take as it answered, not as cancelled', async () => {
+    const { deps } = await registry({ 'work-embed': embedAnswer({ 'Eletricista Industrial': near(0, 10, 0.97) }), 'work-pivot': jsonModeResult({ english: 'industrial electrician' }) });
+    const out = await snap(on(deps), { kind: 'pos', raw: 'Eletricista Industrial', lang: 'pt', market: 'br-sp' });
+    expect(out).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
+    const metered = out.calls.filter((c) => c.op === 'work-pivot');
+    expect(metered).toHaveLength(1);
+    // The model's own usage, its output tokens included, not the estimate of a call that never answered.
+    expect(metered[0]).toMatchObject({ ok: true });
+    expect(metered[0]!.usage.tokensOut).toBeGreaterThan(0);
+  });
+
+  it('falls back to the band as before when the pivot fails or names nothing valid, and asks it no second time', async () => {
+    for (const failure of [new Error('down'), jsonModeResult({ english: 'pos:marine-engineer!' })]) {
+      const why = failure instanceof Error ? 'thrown' : 'invalid';
+      const calls: FakeCall[] = [];
+      const picked = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.8), 'work-pivot': failure }, calls, ships);
+      const out = await snap(on(picked.deps), input);
+      expect(out, why).toMatchObject({ decision: 'chosen', token: 'pos:marine-mechanic' });
+      expect(out.pivot, why).toBeUndefined();
+      expect(Object.keys(asked(calls).questions.match.criteria), why).toHaveLength(6);
+      // A thrown call is metered as unanswered; an invalid name came from an answered call, read and refused.
+      expect(out.calls.find((c) => c.op === 'work-pivot'), why).toMatchObject({ ok: why === 'invalid' });
+      // Clef's none: as before when the pivot fails, no token; nothing asks the pivot again.
+      const refusedCalls: FakeCall[] = [];
+      const refused = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': failure }, refusedCalls, ships);
+      expect(await snap(on(refused.deps), input), why).toMatchObject({ decision: 'unmatched', token: null });
+      expect(refusedCalls.filter((c) => c.op === 'work-pivot'), why).toHaveLength(1);
+    }
+  });
+
+  it('fails closed, and meters the pivot whatever ends the snap', async () => {
+    // No embedding: no token, the pivot cancelled and metered.
+    const pivotCall: { signal?: AbortSignal } = {};
+    const down = await registry({ 'work-embed': new Error('down'), 'work-pivot': hanging(pivotCall) }, [], ships);
+    const out = await snap(on(down.deps), input);
+    expect(out).toMatchObject({ decision: 'unmatched', token: null });
+    expect(out.calls.map((c) => [c.op, c.ok])).toEqual([
+      ['work-embed', false],
+      ['work-pivot', false],
+    ]);
+    expect(pivotCall.signal?.aborted).toBe(true);
+    // Clef down: no token, whatever the pivot named.
+    const clefDown = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': new Error('down'), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, [], ships);
+    expect(await snap(on(clefDown.deps), input)).toMatchObject({ decision: 'unmatched', token: null });
+    // The index down: the error carries the embedding and the cancelled pivot, so the route still meters both.
+    const indexDown = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-pivot': hanging({}) }, [], ships);
+    indexDown.index.query = async () => {
+      throw new Error('vectorize down');
+    };
+    const err = await snap(on(indexDown.deps), input).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkCallsError);
+    expect((err as WorkCallsError).calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot']);
+  });
+
+  it('keeps today’s rules: a hirer’s words, a certificate and an English string never ask before the band, nor does any string when it is off', async () => {
+    const cases: { why: string; deps: (d: RegistryDeps) => RegistryDeps; input: SnapInput; ops: string[]; decision: string }[] = [
+      { why: 'a hirer’s words', deps: on, input: { ...input, mint: false }, ops: ['work-embed', 'work-adjudicate'], decision: 'unmatched' },
+      { why: 'a certificate', deps: on, input: { kind: 'cert', raw: 'BOSIET com CA-EBS', lang: 'pt' }, ops: ['work-embed', 'work-adjudicate'], decision: 'unmatched' },
+      { why: 'an English string', deps: on, input: { kind: 'pos', raw, lang: 'en', market: 'us-tx' }, ops: ['work-embed', 'work-adjudicate', 'work-pivot'], decision: 'pivot' },
+      { why: 'off', deps: (d) => d, input, ops: ['work-embed', 'work-adjudicate', 'work-pivot'], decision: 'pivot' },
+    ];
+    for (const c of cases) {
+      const calls: FakeCall[] = [];
+      const { deps } = await registry(
+        { 'work-embed': embedAnswer({ [raw]: terceiro, 'BOSIET com CA-EBS': near(4, 13, 0.8) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) },
+        calls,
+        ships,
+      );
+      expect(await snap(c.deps(deps), c.input), c.why).toMatchObject({ decision: c.decision });
+      expect(calls.map((x) => x.op), c.why).toEqual(c.ops);
+      // Clef is shown the nearest candidates only.
+      expect(JSON.stringify(asked(calls)), c.why).not.toContain('ship engineer');
+    }
+  });
+
+  it('asks the pivot beside the client’s query vector, with no embedding of the plane’s', async () => {
+    const calls: FakeCall[] = [];
+    const { deps } = await registry({ 'work-adjudicate': clef('c5', 0.9), 'work-pivot': jsonModeResult({ english: 'marine engineer' }) }, calls, ships);
+    const out = await snap(on(deps), { ...input, vectors: { query: terceiro } });
+    expect(out).toMatchObject({ decision: 'chosen', token: 'pos:marine-engineer' });
+    expect(calls.map((c) => c.op)).toEqual(['work-pivot', 'work-adjudicate']);
+    // The name is the token's own English name, so the entry shows it alone.
+    expect(asked(calls).questions.match.criteria.c5).toBe('marine engineer');
   });
 });
 

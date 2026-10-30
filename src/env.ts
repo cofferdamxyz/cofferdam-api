@@ -165,6 +165,13 @@ export interface Env {
   WORK_TAU_AUTO?: string;
   WORK_TAU_LOW?: string;
   /**
+   * The English pivot in the registry's band (workspace decision 0018, amendment proposed 2026-10-30): `"1"` asks
+   * `work-pivot` for the English name of a worker's Portuguese or Spanish occupation or skill in parallel with the
+   * embedding, and shows Clef the token that name names among the band's candidates (`RegistryDeps.pivotBand`).
+   * Unset or any other value: off, as before, until the founder rules on it.
+   */
+  WORK_PIVOT_BAND?: string;
+  /**
    * The Work plane's D1 database, `cofferdam-work`: the token registry and
    * the listing records (migrations in `migrations/work/`). Created
    * 2026-10-24 and bound with `remote: true`, so `wrangler dev` uses the live

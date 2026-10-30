@@ -34,6 +34,24 @@
  *     a new token minted, `pending`: it snaps from then on, and waits for
  *     review and an `isco:` code.
  *
+ * The English pivot in the band (`RegistryDeps.pivotBand`, `WORK_PIVOT_BAND`;
+ * workspace decision 0018, amendment proposed 2026-10-30, off until the
+ * founder rules on it): a worker's Portuguese or Spanish occupation or skill
+ * that misses the exact label asks `work-pivot` for its English name in
+ * parallel with the embedding, since ESCO's Portuguese is Portugal's and its
+ * Spanish is Spain's, and Clef can confidently pick a European label of
+ * another trade ("oficial de máquinas", the marine mechanic, for a Brazilian
+ * "Terceiro Oficial de Máquinas"). In the band, the token that name names
+ * (step 3's rule) is shown to Clef after the nearest candidates, as the
+ * English name's match, when they do not hold it; Clef still chooses by key.
+ * A τ_auto take, through a label in the string's own language or English,
+ * needs it no more than the exact label does: a call still running is
+ * cancelled. Clef's none at its
+ * floor refuses the name's token as well, so the string stays unmatched: a
+ * mint of the name would copy a label the registry already holds. An answer
+ * under the floor, or no band, leaves the name to step 3, which reads the
+ * same call; a snap asks `work-pivot` once at most.
+ *
  * The model steps read a string with its locale (`locale.ts`), as context:
  * Clef's band state names its language, and for a worker's occupation or
  * skill the variant and the market of their listing (`SnapInput.market`:
@@ -71,7 +89,7 @@
 
 import type { Inference } from '../inference/index.js';
 import { fold, scanText, type BlockLang } from './blocks.js';
-import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul } from './clef.js';
+import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul, type BandEntry } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, fieldsRequest, readFieldsAnswer, usageOrEstimate, withCalls, type FieldSet, type WorkCall } from './fields.js';
 import type { StringLocale } from './locale.js';
@@ -160,7 +178,8 @@ export interface SnapRecord {
   specialization: boolean;
   score: number | null;
   probability: number | null;
-  candidates: { token: string; score: number }[];
+  /** The nearest candidates with their cosines, then the English pivot's token when the band showed it after them (with the English name, no cosine). */
+  candidates: ({ token: string; score: number } | { token: string; pivot: string })[];
   model: string | null;
   at: number;
 }
@@ -599,6 +618,16 @@ export interface Candidate {
   scoped?: number | null;
 }
 
+/** The English pivot as a snap read it (`work-pivot`). */
+export interface SnapPivot {
+  /** The string's English name. */
+  english: string;
+  /** The token the name names (the one token holding it as an English label, else its slug), or null. */
+  token: string | null;
+  /** The band showed that token to Clef after the nearest candidates, as entry `c${candidates.length}`, since they did not hold it. */
+  added: boolean;
+}
+
 export interface SnapResult {
   decision: SnapDecision;
   token: string | null;
@@ -606,7 +635,10 @@ export interface SnapResult {
   specialization: boolean;
   score: number | null;
   probability: number | null;
+  /** The nearest candidates, best first, as the band showed them to Clef (`c0`, `c1`, …). */
   candidates: Candidate[];
+  /** The English name, when the snap read one: in the band, with the pivot in the band, or at step 3. */
+  pivot?: SnapPivot;
   calls: WorkCall[];
 }
 
@@ -616,6 +648,12 @@ export interface RegistryDeps {
   index: VectorIndex;
   /** What the environment sets of τ; the rest is the embedding model's (`tauFor`). */
   tau?: TauSetting;
+  /**
+   * The English pivot in the band (`WORK_PIVOT_BAND`; workspace decision 0018, amendment proposed 2026-10-30): a
+   * worker's Portuguese or Spanish occupation or skill asks `work-pivot` in parallel with the embedding, and the token
+   * its English name names joins Clef's candidates (the module comment). Off unless true.
+   */
+  pivotBand?: boolean;
   now?: () => number;
   /** A new decision id (default: a random UUID). */
   newId?: () => string;
@@ -645,25 +683,90 @@ export function validPivot(english: string): string | null {
   return PIVOT_OK.test(v) && words <= 6 ? v : null;
 }
 
-async function pivot(deps: RegistryDeps, kind: 'pos' | 'skill', raw: string, locale: StringLocale, calls: WorkCall[]): Promise<string | null> {
-  const now = deps.now ?? Date.now;
-  const model = await deps.inference.model('work-pivot');
-  const t0 = now();
-  // The pivot is free text by nature, so it never reads a field back as a span:
-  // the request is JSON mode, and its one answer is validated as a pivot. Its
-  // message is Clef's band state: the string with its locale.
-  const req = fieldsRequest(model, PIVOT_FIELDS, { name: 'pivot', system: PIVOT_SYSTEM[kind], user: adjudicationState(kind, raw, locale), state: raw });
-  try {
-    const result = await deps.inference.run('work-pivot', req);
-    const read = readFieldsAnswer(model, PIVOT_FIELDS, result);
-    calls.push({ op: 'work-pivot', model, ok: read.ok, ms: now() - t0, usage: usageOrEstimate(result, req) });
-    if (!read.ok || typeof read.fields.english?.value !== 'string') return null;
-    return validPivot(read.fields.english.value);
-  } catch (err) {
-    calls.push({ op: 'work-pivot', model, ok: false, ms: now() - t0, usage: estimatedUsage(req) });
-    deps.log?.({ event: 'work_pivot_failed', model, reason: failureCode(err) });
-    return null;
+/**
+ * A snap's English pivot (`work-pivot`): one call at most, started before the band (in parallel with the embedding)
+ * or when step 3 needs the name, and read once. A call started and never read (a τ_auto take, a failed embedding, a
+ * store or index failure) is metered when the snap ends: as it answered, or, still running, cancelled and metered at
+ * its estimated input, as any call that ends without an answer is.
+ */
+class PivotAsk {
+  private done: Promise<{ english: string | null; call: WorkCall }> | null = null;
+  /** The call once it ended, read or not. */
+  private ended: { english: string | null; call: WorkCall } | null = null;
+  private read: Promise<string | null> | null = null;
+  private cancel: (() => WorkCall) | null = null;
+
+  constructor(
+    private readonly deps: RegistryDeps,
+    private readonly calls: WorkCall[],
+  ) {}
+
+  /** Starts the call, unless it has started. */
+  async start(kind: 'pos' | 'skill', raw: string, locale: StringLocale): Promise<void> {
+    if (this.done) return;
+    const deps = this.deps;
+    const now = deps.now ?? Date.now;
+    const model = await deps.inference.model('work-pivot');
+    if (this.done) return;
+    const t0 = now();
+    // The pivot is free text by nature, so it never reads a field back as a span:
+    // the request is JSON mode, and its one answer is validated as a pivot. Its
+    // message is Clef's band state: the string with its locale.
+    const req = fieldsRequest(model, PIVOT_FIELDS, { name: 'pivot', system: PIVOT_SYSTEM[kind], user: adjudicationState(kind, raw, locale), state: raw });
+    const ctl = new AbortController();
+    const unanswered = (): WorkCall => ({ op: 'work-pivot', model, ok: false, ms: now() - t0, usage: estimatedUsage(req) });
+    this.cancel = () => {
+      ctl.abort();
+      return unanswered();
+    };
+    this.done = (async () => {
+      try {
+        const result = await deps.inference.run('work-pivot', req, { signal: ctl.signal });
+        const read = readFieldsAnswer(model, PIVOT_FIELDS, result);
+        const call: WorkCall = { op: 'work-pivot', model, ok: read.ok, ms: now() - t0, usage: usageOrEstimate(result, req) };
+        return { english: read.ok && typeof read.fields.english?.value === 'string' ? validPivot(read.fields.english.value) : null, call };
+      } catch (err) {
+        // A call the snap cancelled is no failure of the model's.
+        if (!ctl.signal.aborted) deps.log?.({ event: 'work_pivot_failed', model, reason: failureCode(err) });
+        return { english: null, call: unanswered() };
+      }
+    })();
+    void this.done.then((r) => {
+      this.ended = r;
+    });
   }
+
+  /** The English name, once the started call ends: null when none started, or when it failed or named nothing valid. Its call joins the snap's calls once. */
+  english(): Promise<string | null> {
+    if (!this.done) return Promise.resolve(null);
+    this.read ??= this.done.then(({ english, call }) => {
+      this.calls.push(call);
+      return english;
+    });
+    return this.read;
+  }
+
+  /** Meters a started call no step read: as it ended, or, still running, cancelled. */
+  settle(): void {
+    if (!this.cancel || this.read) return;
+    this.calls.push(this.ended ? this.ended.call : this.cancel());
+    this.read = Promise.resolve(null);
+  }
+}
+
+/**
+ * The token an English name names: the one token holding it as an English label (a curated label before an observed
+ * alias, as in the shortcut), else the token whose slug it is, else none. The name is a label far more often than a
+ * slug: "truck driver" is no token's slug, but one of ESCO's alternative labels for its cargo vehicle driver. Only
+ * English labels count, since another language may use the word for something else (ESCO's Spanish gives
+ * "instructor" to its air force officer). A label several tokens hold ("electrician", which ESCO also gives three
+ * other occupations) leaves the choice to the slug.
+ */
+async function pivotToken(store: RegistryStore, kind: TokenKind, english: string): Promise<RegistryToken | null> {
+  const named = await store.tokensByLabel(labelNorm(english), kind, ['en']);
+  if (named.length === 1) return named[0]!;
+  const slug = tokenOf(kind, english);
+  return (await store.tokens([slug])).get(slug) ?? null;
 }
 
 /**
@@ -721,10 +824,22 @@ export async function snap(deps: RegistryDeps, input: SnapInput): Promise<SnapRe
 }
 
 async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]): Promise<SnapResult> {
+  const pivot = new PivotAsk(deps, calls);
+  try {
+    return await snapSteps(deps, input, calls, pivot);
+  } finally {
+    // A pivot asked for the band that no step read is metered: as it answered, or, still running, cancelled.
+    pivot.settle();
+  }
+}
+
+async function snapSteps(deps: RegistryDeps, input: SnapInput, calls: WorkCall[], pivot: PivotAsk): Promise<SnapResult> {
   const now = deps.now ?? Date.now;
   const tau = tauFor(await deps.inference.model('work-embed'), deps.tau);
   const raw = input.raw.normalize('NFC').replace(/\s+/g, ' ').trim();
-  const result = (r: Omit<SnapResult, 'calls'>): SnapResult => ({ ...r, calls });
+  /** The English name, once a step read it, and the token it names. */
+  let seen: SnapPivot | undefined;
+  const result = (r: Omit<SnapResult, 'calls'>): SnapResult => ({ ...r, ...(seen ? { pivot: seen } : {}), calls });
   const none = { token: null, labelEn: null, specialization: false, score: null, probability: null, candidates: [] };
   if (!raw || raw.length > RAW_MAX_CHARS || scanText(raw)) return result({ decision: 'unmatched', ...none });
   const norm = labelNorm(raw);
@@ -740,7 +855,10 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
       specialization: r.specialization,
       score: r.score,
       probability: r.probability,
-      candidates: r.candidates.map((c) => ({ token: c.token, score: Math.round(c.score * 1e4) / 1e4 })),
+      candidates: [
+        ...r.candidates.map((c) => ({ token: c.token, score: Math.round(c.score * 1e4) / 1e4 })),
+        ...(seen?.added && seen.token ? [{ token: seen.token, pivot: seen.english }] : []),
+      ],
       model,
       at,
     });
@@ -768,9 +886,12 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   // 2. The nearest labels, in every language: through the client's query vector when it sent one, else the plane's,
   // and under a model the plane cannot run, without one, no further than the exact label.
   const embedModel = await deps.inference.model('work-embed');
+  if (!input.vectors?.query && CLIENT_EMBED_MODELS.has(embedModel)) return result({ decision: 'unmatched', ...none });
+  // The English pivot in the band: a worker's Portuguese or Spanish occupation or skill asks for its English name now,
+  // so the call runs while the string is embedded and the index searched (a certificate and a hirer's words never ask).
+  if (deps.pivotBand && (input.lang === 'pt' || input.lang === 'es') && kind !== 'cert' && input.mint !== false) await pivot.start(kind, raw, locale);
   let vector: number[];
   if (input.vectors?.query) vector = input.vectors.query;
-  else if (CLIENT_EMBED_MODELS.has(embedModel)) return result({ decision: 'unmatched', ...none });
   else {
     const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
     calls.push(embedding.call);
@@ -793,9 +914,22 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   let clefModel: string | null = null;
   /** Clef answered in the band, but below its floor: the pivot may find an existing token, never mint one. */
   let undecided: number | null = null;
+  /** The token the English name names, once the band looked it up (null: none). */
+  let named: RegistryToken | null | undefined;
   if (top && top.score >= tau.low) {
+    // With the pivot in the band, its English name is read here, and the token it names joins the nearest candidates,
+    // as the name's match, when they do not hold it: never twice, and Clef still chooses by key.
+    const english = await pivot.english();
+    let added: RegistryToken | null = null;
+    if (english) {
+      const t = await pivotToken(deps.store, kind, english);
+      named = t;
+      added = t && !candidates.some((c) => c.token === t.token) ? t : null;
+      seen = { english, token: t?.token ?? null, added: added !== null };
+    }
+    const entries: BandEntry[] = added && english ? [...candidates, { token: added.token, labelEn: added.labelEn, matched: english, matchedLang: 'en' }] : candidates;
     clefModel = await deps.inference.model('work-adjudicate');
-    const request = clefInput(clefModel, adjudicationState(kind, raw, locale), adjudicationQuestions(kind, candidates, { labelLocales: true }));
+    const request = clefInput(clefModel, adjudicationState(kind, raw, locale), adjudicationQuestions(kind, entries, { labelLocales: true }));
     const t0 = now();
     let answer: unknown;
     try {
@@ -806,12 +940,12 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
       // Fail closed: no adjudication is no snap.
       return record({ decision: 'unmatched', ...none, score: top.score, candidates }, clefModel);
     }
-    const keys = [...candidates.map((_, i) => `c${i}`), 'none'];
+    const keys = [...entries.map((_, i) => `c${i}`), 'none'];
     const pick = readChoice(answer, 'match', keys, ADJUDICATION_FLOOR);
     const answered = pick.p > 0 || Object.keys(pick.probabilities).length > 0;
     calls.push({ op: 'work-adjudicate', model: clefModel, ok: answered, ms: now() - t0, usage: { ...usageOrEstimate(answer, request), neurons: null } });
     if (pick.choice && pick.choice !== 'none') {
-      const chosen = candidates[Number(pick.choice.slice(1))]!;
+      const chosen = entries[Number(pick.choice.slice(1))]!;
       const specialization = (readNoul(answer, 'specialization') ?? 0) > SPECIALIZATION_FLOOR;
       await observe(chosen.token);
       return record({ decision: 'chosen', token: chosen.token, labelEn: chosen.labelEn, specialization, score: top.score, probability: pick.p, candidates }, clefModel);
@@ -822,6 +956,9 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
       deps.log?.({ event: 'work_adjudicate_failed', model: clefModel, reason: 'no_answer' });
       return record({ decision: 'unmatched', ...none, score: top.score, candidates }, clefModel);
     }
+    // Clef was shown the English name's token, among the nearest or after them, so its none refuses that token too:
+    // step 3 would take it, and a mint of the name would copy a label the registry holds. The string stays unmatched.
+    if (pick.choice === 'none' && named) return record({ decision: 'unmatched', ...none, score: top.score, probability: pick.p, candidates }, clefModel);
     if (pick.choice !== 'none') undecided = pick.p;
   }
 
@@ -829,18 +966,14 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   // pivot (decision 0070: only a Vault document will mint a certificate); a worker's occupations and skills mint.
   const score = top?.score ?? null;
   if (kind === 'cert' || input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
-  const english = await pivot(deps, kind, raw, locale, calls);
+  // The band's call when the pivot was in the band (a snap asks once), else one now.
+  await pivot.start(kind, raw, locale);
+  const english = await pivot.english();
   if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const englishNorm = labelNorm(english);
-  // The name is a label far more often than a slug: "truck driver" is no
-  // token's slug, but one of ESCO's alternative labels for its cargo vehicle
-  // driver. Only English labels count, since another language may use the
-  // word for something else (ESCO's Spanish gives "instructor" to its air
-  // force officer). A label several tokens hold ("electrician", which ESCO
-  // also gives three other occupations) leaves the choice to the slug.
-  const named = await deps.store.tokensByLabel(englishNorm, input.kind, ['en']);
+  const existing = named !== undefined ? named : await pivotToken(deps.store, kind, english);
+  seen = { english, token: existing?.token ?? null, added: seen?.added ?? false };
   const token = tokenOf(input.kind, english);
-  const existing = named.length === 1 ? named[0] : (await deps.store.tokens([token])).get(token);
   if (existing) {
     await observe(existing.token);
     return record({ decision: 'pivot', token: existing.token, labelEn: existing.labelEn, specialization: false, score, probability: null, candidates }, clefModel);

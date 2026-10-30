@@ -149,6 +149,15 @@ export interface BandQuestionOptions {
 }
 
 /**
+ * What a band entry shows Clef: a registry token's English name and the
+ * label that brought it in, with that label's language and region. The
+ * nearest candidates are entries, and so is the token the English pivot names
+ * when the pivot is in the band (`registry.ts`): its match is the English
+ * name ("cargo vehicle driver (matched "truck driver", English)").
+ */
+export type BandEntry = Pick<Candidate, 'token' | 'labelEn' | 'matched' | 'matchedLang' | 'matchedRegion'>;
+
+/**
  * Clef's questions in the τ band: which candidate, by key, names the same
  * thing as the raw string or the broader thing it specializes, or none; and
  * whether it is a narrower specialization of it. The candidates are the
@@ -156,7 +165,7 @@ export interface BandQuestionOptions {
  * question is the same in every language: a label's locale is context, and
  * no wording prefers the string's own language.
  */
-export function adjudicationQuestions(kind: TokenKind, candidates: readonly Candidate[], opts: BandQuestionOptions = {}): Record<string, ClefQuestion> {
+export function adjudicationQuestions(kind: TokenKind, candidates: readonly BandEntry[], opts: BandQuestionOptions = {}): Record<string, ClefQuestion> {
   const criteria: Record<string, string> = {};
   candidates.forEach((c, i) => {
     const locale = opts.labelLocales ? labelLocale(c.matchedLang, c.matchedRegion) : null;

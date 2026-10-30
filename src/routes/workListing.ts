@@ -167,7 +167,16 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
 
     const t0 = deps.now();
     const now = () => deps.now();
-    const registry = { inference, store: stores.registry, index: stores.tokenIndex, tau: parseTau(c.env.WORK_TAU_AUTO, c.env.WORK_TAU_LOW), now, log: workLog };
+    const registry = {
+      inference,
+      store: stores.registry,
+      index: stores.tokenIndex,
+      tau: parseTau(c.env.WORK_TAU_AUTO, c.env.WORK_TAU_LOW),
+      // The English pivot in the band (workspace decision 0018, amendment proposed 2026-10-30): off until the founder rules.
+      pivotBand: c.env.WORK_PIVOT_BAND === '1',
+      now,
+      log: workLog,
+    };
     const draft: ListingDraft = { ...input, tier, pseudonym: await workPseudonym(key, account) };
     let outcome: PublishOutcome;
     try {

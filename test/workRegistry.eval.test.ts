@@ -41,8 +41,20 @@
  *   cd cofferdam-api && WORK_EVAL=1 V3_DIR=~/Development/esco/import/registry-embeddinggemma-2 ESCO_SQL=~/Development/esco/import/cofferdam-import \
  *     US_SQL=~/Development/us-layer-data/cofferdam-import direnv exec .. yarn vitest run test/workRegistry.eval.test.ts -t v3
  *
- * WORK_TAU_AUTO and WORK_TAU_LOW try other bands, and WORK_EMBED_MODEL another
- * embedding model; either one adds itself to the reports' file names, and so
+ * With the same three, a fourth run measures the English pivot in the band
+ * (workspace decision 0018, amendment proposed 2026-10-30) on the v2 engine:
+ * that replica with EmbeddingGemma 2's GGUF vectors (the v2 generation's
+ * LiteRT-LM vectors match them at a median cosine of 0.990), in two arms,
+ * production's requests with the listing's market, and the same with the
+ * pivot in the band. It writes
+ * `test/work-eval/registry-pivot-band-v2-engine-<date>.md`.
+ *
+ *   cd cofferdam-api && WORK_EVAL=1 V3_DIR=~/Development/esco/import/registry-embeddinggemma-2 ESCO_SQL=~/Development/esco/import/cofferdam-import \
+ *     US_SQL=~/Development/us-layer-data/cofferdam-import direnv exec .. yarn vitest run test/workRegistry.eval.test.ts -t "pivot in the band"
+ *
+ * WORK_TAU_AUTO and WORK_TAU_LOW try other bands, WORK_EMBED_MODEL another
+ * embedding model, and WORK_PIVOT_BAND=1 puts the English pivot in the band in
+ * the first two runs; each one adds itself to the reports' file names, and so
  * does WORK_EVAL_SUFFIX.
  */
 
@@ -81,6 +93,8 @@ import { embedAll, loadReplica, ReplicaIndex } from './work-eval/replica.js';
 const LIVE = process.env.WORK_EVAL === '1';
 const ESCO_DIR = process.env.ESCO_DIR ? homePath(process.env.ESCO_DIR) : '';
 const FLOORS = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+/** The English pivot in the band in the first two runs (`RegistryDeps.pivotBand`, as `WORK_PIVOT_BAND` sets it on the plane). */
+const PIVOT_BAND = process.env.WORK_PIVOT_BAND === '1';
 
 interface SeedToken {
   token: string;
@@ -111,6 +125,7 @@ interface Row {
   expectedCos: number | null;
   probability: number | null;
   band: BandAnswer | null;
+  pivot: string;
   ms: number;
   costMicroUsd: number;
 }
@@ -130,19 +145,25 @@ interface Recorded {
   error?: string;
 }
 
-/** The inference seam with every call's input and answer, or its error, kept, so the report can read Clef's answers and the pivot's names. */
+/**
+ * The inference seam with every call's input and answer, or its error, kept, so the report can read Clef's answers and
+ * the pivot's names. A call the snap cancelled (the English pivot at a τ_auto take) is no error, and a call that ends
+ * after its snap's calls were taken is dropped, so it is never read as the next snap's.
+ */
 function recording(inner: Inference): { inference: Inference; take(): Recorded[] } {
   let calls: Recorded[] = [];
+  let round = 0;
   return {
     inference: {
       model: (op) => inner.model(op),
       async run(op, input, call) {
+        const at = round;
         try {
           const output = await inner.run(op, input, call);
-          calls.push({ op, input, output });
+          if (at === round) calls.push({ op, input, output });
           return output;
         } catch (err) {
-          calls.push({ op, input, error: err instanceof Error ? err.message : String(err) });
+          if (at === round && !call?.signal?.aborted) calls.push({ op, input, error: err instanceof Error ? err.message : String(err) });
           throw err;
         }
       },
@@ -150,6 +171,7 @@ function recording(inner: Inference): { inference: Inference; take(): Recorded[]
     take() {
       const out = calls;
       calls = [];
+      round++;
       return out;
     },
   };
@@ -186,8 +208,43 @@ function bandAnswer(recorded: readonly Recorded[], out: SnapResult): BandAnswer 
   const probabilities = match?.probabilities ?? {};
   const p = (key: unknown) => (typeof key === 'string' && typeof probabilities[key] === 'number' ? probabilities[key] : 0);
   const choice = typeof match?.choice === 'string' ? match.choice : null;
-  const pick = choice === 'none' ? 'none' : choice && /^c\d$/.test(choice) ? (out.candidates[Number(choice.slice(1))]?.token ?? null) : null;
+  // The nearest candidates are c0, c1, …; the English pivot's token, when the band showed it after them, the next key.
+  const entry = (i: number) => (i < out.candidates.length ? out.candidates[i]!.token : i === out.candidates.length && out.pivot?.added ? out.pivot.token : null);
+  const pick = choice === 'none' ? 'none' : choice && /^c\d$/.test(choice) ? entry(Number(choice.slice(1))) : null;
   return { pick, p: p(choice), none: p('none') };
+}
+
+/** The English pivot as a snap read it: the name, then the token it names, and whether the band showed that token to Clef after the nearest candidates. */
+function pivotText(out: SnapResult, recorded: readonly Recorded[]): string {
+  const name = out.pivot?.english ?? pivotName(recorded);
+  if (!name) return '—';
+  if (!out.pivot) return name;
+  return `${name} → ${out.pivot.token ?? 'no token'}${out.pivot.added ? ' (in the band)' : ''}`;
+}
+
+/**
+ * What the English pivot did in the band, over the strings that asked it there (a worker's Portuguese or Spanish
+ * string with the pivot in the band): how often its name named a token, shown after the nearest five or already among
+ * them, and what became of that token: Clef's choice, Clef's none (a refusal), or step 3 on an answer under the floor.
+ */
+function pivotBandLine(rows: readonly { c: { lang: string }; out: SnapResult; band: BandAnswer | null }[]): string {
+  const inBand = rows.filter((r) => r.c.lang !== 'en' && r.band && r.out.pivot?.token);
+  const added = inBand.filter((r) => r.out.pivot!.added).length;
+  const chose = inBand.filter((r) => r.out.decision === 'chosen' && r.out.token === r.out.pivot!.token).length;
+  const refused = inBand.filter((r) => r.out.decision === 'unmatched' && r.band!.pick === 'none').length;
+  const undecided = inBand.filter((r) => r.out.decision === 'pivot').length;
+  return `In the band, the English name named a token for ${inBand.length} strings: shown after the nearest five ${added} times, already among them ${inBand.length - added} times. Clef chose that token ${chose} times, chose another ${inBand.length - chose - refused - undecided} times and refused it with its none ${refused} times; ${undecided} times Clef answered under its floor and step 3 took it.`;
+}
+
+/** The hosted calls a snap made, per snap, and each op's median time (from the Mac, over the REST API); a pivot a τ_auto take left unread counts as a call. */
+function callStats(outs: readonly SnapResult[]): string {
+  const ops = ['work-embed', 'work-pivot', 'work-adjudicate'] as const;
+  const unread = outs.filter((o) => o.decision === 'auto' && o.calls.some((c) => c.op === 'work-pivot')).length;
+  const parts = ops.map((op) => {
+    const calls = outs.flatMap((o) => o.calls.filter((c) => c.op === op));
+    return `${op} ${(calls.length / Math.max(1, outs.length)).toFixed(2)} a snap${calls.length ? ` (median ${median(calls.filter((c) => c.ok).map((c) => c.ms))} ms answered)` : ''}`;
+  });
+  return `${parts.join(', ')}; ${unread} pivot calls a τ_auto take left unread (cancelled while running, or metered as answered)`;
 }
 
 /** The pivot's English name for a snap, as the model wrote it. */
@@ -232,7 +289,7 @@ function liveInference(): Inference {
 function reportSuffix(tau: { auto: number; low: number }): string {
   const embed = process.env.WORK_EMBED_MODEL ? `-${process.env.WORK_EMBED_MODEL.split('/').pop()}` : '';
   const band = process.env.WORK_TAU_AUTO || process.env.WORK_TAU_LOW ? `-tau-${tau.auto}-${tau.low}` : '';
-  return `${embed}${band}${process.env.WORK_EVAL_SUFFIX ?? ''}`;
+  return `${embed}${band}${PIVOT_BAND ? '-pivot-band' : ''}${process.env.WORK_EVAL_SUFFIX ?? ''}`;
 }
 
 describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
@@ -278,12 +335,14 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
     }
 
     const rows: Row[] = [];
+    const outs: SnapResult[] = [];
     const failed: string[] = [];
     let retried = 0;
     for (const x of seed.expected as Expected[]) {
       // As a listing snaps them (`claimSnapInput`): a worker's occupation or skill with its market, a certificate without.
       const input: SnapInput = { kind: x.kind, raw: x.raw, lang: x.lang, ...(x.market && x.kind !== 'cert' ? { market: x.market } : {}) };
-      const { out, recorded, errors, attempts, ms } = await snapRecorded(recorder, freshRegistry, { inference, tau }, input);
+      const { out, recorded, errors, attempts, ms } = await snapRecorded(recorder, freshRegistry, { inference, tau, pivotBand: PIVOT_BAND }, input);
+      outs.push(out);
       if (attempts > 1) retried++;
       if (errors.length) failed.push(`${x.raw}: ${errors.join('; ')}`);
       const band = bandAnswer(recorded, out);
@@ -307,6 +366,7 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
         expectedCos: expectedCos == null ? null : Math.round(expectedCos * 1000) / 1000,
         probability: out.probability,
         band,
+        pivot: pivotText(out, recorded),
         ms,
         costMicroUsd: out.calls.reduce((s, c) => s + callCostMicroUsd(c), 0),
       });
@@ -325,13 +385,15 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
     const md = [
       `# Canonicalization evaluation, ${date}`,
       '',
-      `Retrieve-then-choose over the synthetic seed (\`test/fixtures/work/registry-seed.json\`, no ESCO data; its ${nCert} certificates are test data, since the plane holds none until a Vault document mints one, workspace decision 0070), ${tokens.length} tokens and ${labels.length} labels in en, pt and es, each of ${rows.length} strings against a fresh copy, with \`${await inference.model('work-embed')}\`, \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. An occupation or a skill is a worker's, with their listing's market. A certificate snaps as a skill does, without a market and never minted, a worker's claim and a hirer's words alike; one where no token fits is right only when nothing snaps.`,
+      `Retrieve-then-choose over the synthetic seed (\`test/fixtures/work/registry-seed.json\`, no ESCO data; its ${nCert} certificates are test data, since the plane holds none until a Vault document mints one, workspace decision 0070), ${tokens.length} tokens and ${labels.length} labels in en, pt and es, each of ${rows.length} strings against a fresh copy, with \`${await inference.model('work-embed')}\`, \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. An occupation or a skill is a worker's, with their listing's market. A certificate snaps as a skill does, without a market and never minted, a worker's claim and a hirer's words alike; one where no token fits is right only when nothing snaps. The English pivot in the band (workspace decision 0018, amendment proposed 2026-10-30): ${PIVOT_BAND ? 'on, so a worker\'s Portuguese or Spanish occupation or skill asks the pivot beside the embedding, and Clef is shown the token its English name names' : 'off, as on the plane today'}.`,
       '',
       '| Kind | Right | Wrong token | A token where none fits | No token where one fits |',
       '|---|---|---|---|---|',
       ...byKind,
       '',
       `Decisions: ${decisions}. Cost per snap ${(rows.reduce((s, r) => s + r.costMicroUsd, 0) / rows.length / 1e6).toFixed(6)} USD, median ${median(rows.map((r) => r.ms))} ms. ${retried} snaps ran again after a hosted call threw; ${failed.length ? `${failed.length} still failed: ${failed.join('; ')}` : 'none still failed'}.`,
+      '',
+      `Calls: ${callStats(outs)}.`,
       '',
       `Cosine of the expected token's best label: min ${Math.min(...positives).toFixed(3)}, median ${median(positives).toFixed(3)}. Best cosine of strings with no fitting token: max ${Math.max(...negatives).toFixed(3)}.`,
       '',
@@ -341,11 +403,11 @@ describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
       '|---|---|---|---|---|',
       ...floorSweep(banded),
       '',
-      '| Kind | As | Language | String | Expected | Decision | Token | Top cos | Expected cos | Clef p | Clef band answer |',
-      '|---|---|---|---|---|---|---|---|---|---|---|',
+      '| Kind | As | Language | String | Expected | Decision | Token | Top cos | Expected cos | Clef p | Clef band answer | Pivot |',
+      '|---|---|---|---|---|---|---|---|---|---|---|---|',
       ...rows.map(
         (r) =>
-          `| ${r.kind} | ${r.as} | ${r.lang} | ${r.raw} | ${r.expected ?? '—'} | ${r.correct ? '' : '**'}${r.decision}${r.correct ? '' : '**'} | ${r.token ?? '—'} | ${r.top} | ${r.expectedCos ?? '—'} | ${r.probability == null ? '—' : r.probability.toFixed(2)} | ${bandText(r.band)} |`,
+          `| ${r.kind} | ${r.as} | ${r.lang} | ${r.raw} | ${r.expected ?? '—'} | ${r.correct ? '' : '**'}${r.decision}${r.correct ? '' : '**'} | ${r.token ?? '—'} | ${r.top} | ${r.expectedCos ?? '—'} | ${r.probability == null ? '—' : r.probability.toFixed(2)} | ${bandText(r.band)} | ${r.pivot} |`,
       ),
       '',
     ].join('\n');
@@ -377,8 +439,9 @@ describe.skipIf(!LIVE || !ESCO_DIR)('regional words and false friends on ESCO (l
       out: SnapResult;
       verdict: 'right' | 'false friend' | 'other';
       band: BandAnswer | null;
-      pivot: string | null;
+      pivot: string;
       state: string | null;
+      ms: number;
       costMicroUsd: number;
     }[] = [];
     const failed: string[] = [];
@@ -388,14 +451,14 @@ describe.skipIf(!LIVE || !ESCO_DIR)('regional words and false friends on ESCO (l
       return registry;
     };
     for (const c of localeCases.cases as LocaleCase[]) {
-      const { out, recorded, errors, attempts } = await snapRecorded(recorder, fresh, { inference, tau }, { kind: c.kind, raw: c.raw, lang: c.lang, market: c.market });
+      const { out, recorded, errors, attempts, ms } = await snapRecorded(recorder, fresh, { inference, tau, pivotBand: PIVOT_BAND }, { kind: c.kind, raw: c.raw, lang: c.lang, market: c.market });
       if (attempts > 1) retried++;
       if (errors.length) failed.push(`${c.raw}: ${errors.join('; ')}`);
       const existing = out.token && out.decision !== 'minted' ? out.token : null;
       const verdict = existing ? (c.right.includes(existing) ? 'right' : c.wrong?.includes(existing) ? 'false friend' : 'other') : c.none ? 'right' : 'other';
       const clef = recorded.find((r) => r.op === 'work-adjudicate' && r.output !== undefined)?.input as { state?: string; questions?: { match?: { criteria?: Record<string, string> } } } | undefined;
       const told = clef?.state ? [clef.state, '', ...Object.entries(clef.questions?.match?.criteria ?? {}).map(([k, v]) => `${k}: ${v}`)].join('\n') : null;
-      rows.push({ c, out, verdict, band: bandAnswer(recorded, out), pivot: pivotName(recorded), state: told, costMicroUsd: out.calls.reduce((s, x) => s + callCostMicroUsd(x), 0) });
+      rows.push({ c, out, verdict, band: bandAnswer(recorded, out), pivot: pivotText(out, recorded), state: told, ms, costMicroUsd: out.calls.reduce((s, x) => s + callCostMicroUsd(x), 0) });
       console.log(`${verdict === 'right' ? 'ok  ' : 'MISS'} ${c.lang}/${c.market} ${c.raw} → ${out.decision} ${out.token ?? ''}`);
     }
 
@@ -412,17 +475,22 @@ describe.skipIf(!LIVE || !ESCO_DIR)('regional words and false friends on ESCO (l
     const md = [
       `# Regional words and false friends on ESCO, ${date}`,
       '',
-      `${rows.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped against ESCO v1.2.1's occupations as loaded (${registry.tokens} tokens, ${registry.labels} labels in en, pt and es; \`test/work-eval/escoRegistry.ts\`), each against the registry as loaded, with \`${await inference.model('work-embed')}\`, \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word.`,
+      `${rows.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped against ESCO v1.2.1's occupations as loaded (${registry.tokens} tokens, ${registry.labels} labels in en, pt and es; \`test/work-eval/escoRegistry.ts\`), each against the registry as loaded, with \`${await inference.model('work-embed')}\`, \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word, or the one a generic English name holds as a label (workspace OD-28). The English pivot in the band (workspace decision 0018, amendment proposed 2026-10-30): ${PIVOT_BAND ? 'on, so a worker\'s Portuguese or Spanish string asks the pivot beside the embedding, and Clef is shown the token its English name names' : 'off, as on the plane today'}.`,
       '',
-      '| Group | Right | A false friend | Another token |',
+      '| Group | Right | A false friend or a generic name\'s token | Another token |',
       '|---|---|---|---|',
       ...groups.map((g) => {
         const r = rows.filter((x) => x.c.group === g);
         return `| ${g} | ${r.filter((x) => x.verdict === 'right').length} of ${r.length} | ${r.filter((x) => x.verdict === 'false friend').length} | ${r.filter((x) => x.verdict === 'other').length} |`;
       }),
       '',
-      `Cost per snap ${(rows.reduce((s, r) => s + r.costMicroUsd, 0) / rows.length / 1e6).toFixed(6)} USD. ${retried} snaps ran again after a hosted call threw; ${failed.length ? `${failed.length} still failed: ${failed.join('; ')}` : 'none still failed'}.`,
+      `All: ${rows.filter((r) => r.verdict === 'right').length} of ${rows.length} right.`,
       '',
+      `Cost per snap ${(rows.reduce((s, r) => s + r.costMicroUsd, 0) / rows.length / 1e6).toFixed(6)} USD, median ${median(rows.map((r) => r.ms))} ms. ${retried} snaps ran again after a hosted call threw; ${failed.length ? `${failed.length} still failed: ${failed.join('; ')}` : 'none still failed'}.`,
+      '',
+      `Calls: ${callStats(rows.map((r) => r.out))}.`,
+      '',
+      ...(PIVOT_BAND ? [pivotBandLine(rows), ''] : []),
       `Clef answered ${banded.length} strings in the band. Each answer read again at other floors (the shipped floor is 0.5):`,
       '',
       '| Floor | Picked an expected token | Picked another | None | Below the floor |',
@@ -618,5 +686,128 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('regional words and fa
     ].join('\n');
     writeFileSync(join(__dirname, 'work-eval', `registry-locale-v3-${date}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
     expect(rows).toHaveLength(cases.length * ARMS.length);
+  }, 3_600_000);
+});
+
+// ── The English pivot in the band on the v2 engine: the replica and the phone's EmbeddingGemma 2 ──────────────────
+
+/** The pivot run's arms: production's requests with the listing's market, and the same with the English pivot in the band. */
+const PIVOT_ARMS = ['market', 'pivot'] as const;
+type PivotArm = (typeof PIVOT_ARMS)[number];
+
+describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('the English pivot in the band on the v2 engine (live Clef and pivot, the replica and the phone’s EmbeddingGemma 2)', () => {
+  it('snaps each market-tagged string as production does, then with the pivot in the band, and writes the report', async () => {
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+    if (!accountId || !apiToken) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
+    const recorder = recording(createInference({ WORK_EMBED_MODEL: EMBEDDINGGEMMA_2_GGUF }, { ai: createRestAi({ accountId, token: apiToken }) })!);
+    const inference = recorder.inference;
+    const tau = tauFor(EMBEDDINGGEMMA_2_GGUF, parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW));
+
+    // The registry as the v2 engine holds it (ESCO and the US layer, EmbeddingGemma 2's GGUF vectors, no certificate token), as the run above loads it.
+    const replica = await loadReplica(ESCO_SQL, US_SQL);
+    const index = ReplicaIndex.load(V3_DIR);
+    const loadedAt = Date.now();
+    const fresh = async () => {
+      const added = replica.db.sqlite.prepare('SELECT label_id FROM registry_labels WHERE created_at >= ?').all(loadedAt) as { label_id: string }[];
+      if (added.length) await index.deleteByIds(added.map((r) => r.label_id));
+      for (const table of ['registry_decisions', 'registry_labels', 'registry_tokens']) replica.db.sqlite.prepare(`DELETE FROM ${table} WHERE created_at >= ?`).run(loadedAt);
+      return { store: replica.store, index };
+    };
+    const cases = localeCases.cases as LocaleCase[];
+    const key = (t: string) => t.replace(/\s+/g, ' ').trim();
+    const queries = embedAll(cases.map((c) => c.raw), 'query');
+    const documents = embedAll(cases.map((c) => c.raw), 'document');
+
+    type PivotRow = { c: LocaleCase; arm: PivotArm; out: SnapResult; verdict: 'right' | 'false friend' | 'other'; band: BandAnswer | null; pivot: string; state: string | null; ms: number; costMicroUsd: number };
+    const rows: PivotRow[] = [];
+    const failed: string[] = [];
+    let retried = 0;
+    for (const arm of PIVOT_ARMS) {
+      for (const c of cases) {
+        const input: SnapInput = { kind: c.kind, raw: c.raw, lang: c.lang, market: c.market, vectors: { query: queries.get(key(c.raw))!, document: documents.get(key(c.raw))! } };
+        const { out, recorded, errors, attempts, ms } = await snapRecorded(recorder, fresh, { inference, tau, pivotBand: arm === 'pivot' }, input);
+        if (attempts > 1) retried++;
+        if (errors.length) failed.push(`${arm} ${c.raw}: ${errors.join('; ')}`);
+        const existing = out.token && out.decision !== 'minted' ? out.token : null;
+        const verdict = existing ? (c.right.includes(existing) ? 'right' : c.wrong?.includes(existing) ? 'false friend' : 'other') : c.none ? 'right' : 'other';
+        const clef = recorded.find((r) => r.op === 'work-adjudicate' && r.output !== undefined)?.input as { state?: string; questions?: { match?: { criteria?: Record<string, string> } } } | undefined;
+        const told = clef?.state ? [clef.state, '', ...Object.entries(clef.questions?.match?.criteria ?? {}).map(([k, v]) => `${k}: ${v}`)].join('\n') : null;
+        rows.push({ c, arm, out, verdict, band: bandAnswer(recorded, out), pivot: pivotText(out, recorded), state: told, ms, costMicroUsd: out.calls.reduce((s, x) => s + callCostMicroUsd(x), 0) });
+        console.log(`${verdict === 'right' ? 'ok  ' : 'MISS'} ${arm} ${c.lang}/${c.market} ${c.raw} → ${out.decision} ${out.token ?? ''}`);
+      }
+    }
+
+    const date = new Date().toISOString().slice(0, 10);
+    const groups = [...new Set(cases.map((c) => c.group))];
+    const of = (a: PivotArm) => rows.filter((r) => r.arm === a);
+    const right = (r: readonly PivotRow[]) => r.filter((x) => x.verdict === 'right').length;
+    const cell = (r: PivotRow | undefined) => {
+      if (!r) return '—';
+      const what = `${r.verdict === 'right' ? '' : '**'}${r.out.decision} ${r.out.token ?? '—'}${r.verdict === 'right' ? '' : '**'}`;
+      return [what, r.band ? `Clef ${bandText(r.band)}` : null, r.pivot !== '—' ? `pivot "${r.pivot}"` : null].filter(Boolean).join('; ');
+    };
+    const shown = (out: SnapResult) =>
+      out.candidates
+        .slice(0, 5)
+        .map((x) => `${x.token} "${x.matched}" ${x.matchedLang ?? '?'}${x.matchedRegion ? `-${x.matchedRegion}` : ''} ${x.score.toFixed(3)}`)
+        .join('; ') || '—';
+    const perArm = (a: PivotArm) => {
+      const r = of(a);
+      return `**${a === 'market' ? 'Market (production)' : 'With the pivot in the band'}:** cost per snap ${(r.reduce((s, x) => s + x.costMicroUsd, 0) / r.length / 1e6).toFixed(6)} USD, median ${median(r.map((x) => x.ms))} ms a snap (the phone's vectors were embedded before, and the replica searches its vectors in process, so this is no production latency); calls: ${callStats(r.map((x) => x.out))}.`;
+    };
+    const md = [
+      `# The English pivot in the band on the v2 engine, ${date}`,
+      '',
+      `${cases.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped on the v2 engine: the registry replica (\`test/work-eval/replica.ts\`: the ESCO import's and the US layer's SQL, ${replica.tokens} tokens and ${replica.labels} labels, no certificate token; ${index.size} vectors of EmbeddingGemma 2 at 768, a national label's region kept), each string embedded with the same GGUF (\`${EMBEDDINGGEMMA_2_GGUF}\` through llama-embedding, a query and a document; the v2 generation's LiteRT-LM vectors match these at a median cosine of 0.990), with \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Two arms on the same registry and vectors: **market**, production's requests with the listing's market, the pivot asked only below the band or after Clef's none, as today; **pivot**, the same with the English pivot in the band (workspace decision 0018, amendment proposed 2026-10-30): a worker's Portuguese or Spanish string asks the pivot beside the snap's search, and Clef is shown the token its English name names. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word, or the one a generic English name holds as a label (workspace OD-28).`,
+      '',
+      '| Group | Market (production) | With the pivot in the band |',
+      '|---|---|---|',
+      ...groups.map((g) => {
+        const line = (a: PivotArm) => {
+          const r = of(a).filter((x) => x.c.group === g);
+          return `${right(r)} of ${r.length} right, ${r.filter((x) => x.verdict === 'false friend').length} false friend or generic name, ${r.filter((x) => x.verdict === 'other').length} other`;
+        };
+        return `| ${g} | ${line('market')} | ${line('pivot')} |`;
+      }),
+      `| all | ${right(of('market'))} of ${cases.length} | ${right(of('pivot'))} of ${cases.length} |`,
+      '',
+      perArm('market'),
+      '',
+      perArm('pivot'),
+      '',
+      pivotBandLine(of('pivot')),
+      '',
+      `${retried} snaps ran again after a hosted call threw; ${failed.length ? `${failed.length} still failed: ${failed.join('; ')}` : 'none still failed'}.`,
+      '',
+      'Clef\'s band answers, read again at other floors (the shipped floor is 0.5), per arm:',
+      '',
+      ...PIVOT_ARMS.flatMap((a) => {
+        const banded = of(a)
+          .filter((r): r is PivotRow & { band: BandAnswer } => r.band != null)
+          .map((r) => ({ band: r.band, right: (t: string) => r.c.right.includes(t) }));
+        return [`**${a}**, ${banded.length} answers:`, '', '| Floor | Picked an expected token | Picked another | None | Below the floor |', '|---|---|---|---|---|', ...floorSweep(banded), ''];
+      }),
+      '| Group | String | Language, market | Expected | Market (production) | With the pivot in the band |',
+      '|---|---|---|---|---|---|',
+      ...cases.map((c) => {
+        const at = (a: PivotArm) => rows.find((r) => r.arm === a && r.c === c);
+        return `| ${c.group} | ${c.raw} | ${c.lang}, ${c.market} | ${[...c.right, ...(c.none ? ['none'] : [])].join(', ') || '—'} | ${cell(at('market'))} | ${cell(at('pivot'))} |`;
+      }),
+      '',
+      'The nearest candidates (token, matched label, its language and a national label\'s region, cosine), the same in both arms:',
+      '',
+      '| String | Candidates |',
+      '|---|---|',
+      ...of('market').map((r) => `| ${r.c.raw} (${r.c.lang}) | ${shown(r.out)} |`),
+      '',
+      'What Clef was told with the pivot in the band (the state and the `match` criteria), for each string whose band showed the English name\'s token after the nearest five:',
+      '',
+      ...of('pivot')
+        .filter((r) => r.out.pivot?.added && r.state)
+        .flatMap((r) => ['```', r.state!, '```', '']),
+    ].join('\n');
+    writeFileSync(join(__dirname, 'work-eval', `registry-pivot-band-v2-engine-${date}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
+    expect(rows).toHaveLength(cases.length * PIVOT_ARMS.length);
   }, 3_600_000);
 });
