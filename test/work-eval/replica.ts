@@ -4,25 +4,33 @@
 /**
  * The registry replica the Mac-side benchmarks share (`test/workJobs.eval.test.ts`,
  * `test/workResume.eval.test.ts`): the ESCO import's SQL and the US layer's SQL
- * in node:sqlite, the v3 label vectors (EmbeddingGemma 2 at 768) in memory, and
- * the phone's embeddings from llama-embedding. A match answers with the
- * metadata `token-registry-v3` holds, a national layer's region included, so
+ * in node:sqlite, one index generation's label vectors (EmbeddingGemma 2 at
+ * 768) in memory, and the phone's embeddings made on the Mac with the same
+ * artefact (`macEmbed`). A directory holds one generation's files, by their
+ * prefix: `vectors-v2-NNN.ndjson`, the LiteRT-LM file the phone runs
+ * (`EMBEDDINGGEMMA_2_LITERT`, `scripts/work/embed-registry.mjs --litert`), or
+ * `vectors-v3-NNN.ndjson`, the GGUF the evaluations before 2026-10-30
+ * measured (`EMBEDDINGGEMMA_2_GGUF`, the default here). A match answers with the
+ * metadata the index holds, a national layer's region included, so
  * the registry band shows an O*NET title as American English, as production
  * does. Moved here unchanged from the
  * job-ad benchmark on 2026-10-28. Like production since 2026-10-30, it holds no
  * certificate token (workspace decision 0070), and it leaves out the deleted
- * certificate seed's vectors that v3 files written before then still carry.
+ * certificate seed's vectors that files written before then still carry.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { D1RegistryStore, EMBEDDINGGEMMA_2_GGUF, type IndexMatch, type IndexVector, type VectorIndex } from '../../src/services/work/registry.js';
+import { D1RegistryStore, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, type IndexMatch, type IndexVector, type VectorIndex } from '../../src/services/work/registry.js';
 import { sqliteD1 } from '../fixtures/work/d1.js';
-import { llamaEmbed } from '../fixtures/work/registryTools.js';
+import { macEmbed } from '../fixtures/work/registryTools.js';
 
 const MODEL = EMBEDDINGGEMMA_2_GGUF;
 const DIMS = 768;
+
+/** The generation each model's label files are written as (`scripts/work/embed-registry.mjs`): a benchmark never mixes one model's strings with another's labels. */
+export const GENERATION_OF_MODEL: Readonly<Record<string, string>> = { [EMBEDDINGGEMMA_2_LITERT]: 'v2', [EMBEDDINGGEMMA_2_GGUF]: 'v3' };
 
 // ── The registry replica ───────────────────────────────────────────────────
 
@@ -38,25 +46,33 @@ interface Meta {
   region?: string;
 }
 
-const v3Files = (dir: string) =>
-  readdirSync(dir)
-    .filter((f) => /^vectors-v3-\d{3}\.ndjson$/.test(f))
-    .sort();
+/** The one generation whose index files a directory holds (`vectors-v2-NNN.ndjson` or `vectors-v3-NNN.ndjson`), and its files in order. */
+function generationFiles(dir: string): { generation: string; files: string[] } {
+  const byGeneration = new Map<string, string[]>();
+  for (const f of readdirSync(dir)) {
+    const g = /^vectors-(v\d+)-\d{3}\.ndjson$/.exec(f)?.[1];
+    if (g) byGeneration.set(g, [...(byGeneration.get(g) ?? []), f]);
+  }
+  const found = [...byGeneration];
+  if (found.length !== 1) throw new Error(`${dir} holds ${found.length ? `the files of ${found.map(([g]) => g).join(' and ')}` : 'no vectors-vN-NNN.ndjson'}: one generation a directory`);
+  const [generation, files] = found[0]!;
+  return { generation, files: files.sort() };
+}
 
 /**
- * The region of every row a national layer's label holds, by row, as the v3
+ * The region of every row a national layer's label holds, by row, as the
  * files' metadata gives it (`national.ts`). Caches written before 2026-10-30
  * kept no region, so the regions are read once from the files, row by row,
  * the ids checked against the cache's, and kept beside it.
  */
-function loadRegions(dir: string, cacheDir: string, rows: Meta[]): void {
-  const file = join(cacheDir, `v3-${DIMS}.regions.json`);
+function loadRegions(dir: string, cacheDir: string, rows: Meta[], generation: string, files: readonly string[]): void {
+  const file = join(cacheDir, `${generation}-${DIMS}.regions.json`);
   let byRow: Record<string, string>;
   if (existsSync(file)) byRow = JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>;
   else {
     byRow = {};
     let i = 0;
-    for (const f of v3Files(dir)) {
+    for (const f of files) {
       for (const line of readFileSync(join(dir, f), 'utf8').split('\n')) {
         if (!line) continue;
         // The id leads each line and the metadata ends it: neither needs the 768 values parsed.
@@ -67,32 +83,40 @@ function loadRegions(dir: string, cacheDir: string, rows: Meta[]): void {
         i++;
       }
     }
-    if (i !== rows.length) throw new Error(`the v3 files hold ${i} rows, the cache ${rows.length}: delete ${cacheDir}`);
+    if (i !== rows.length) throw new Error(`the ${generation} files hold ${i} rows, the cache ${rows.length}: delete ${cacheDir}`);
     writeFileSync(file, JSON.stringify(byRow));
   }
   for (const [i, region] of Object.entries(byRow)) rows[Number(i)]!.region = region;
 }
 
-/** The v3 vectors (`vectors-v3-NNN.ndjson`, 768 wide) in memory, with brute-force retrieval by kind; mints go to a side list. */
+/** One generation's label vectors (`vectors-vN-NNN.ndjson`, 768 wide) in memory, with brute-force retrieval by kind; mints go to a side list. */
 export class ReplicaIndex implements VectorIndex {
   private readonly rows: Meta[] = [];
   private values = new Float32Array(0);
   private readonly byKind = new Map<string, Int32Array>();
   private readonly extra = new Map<string, IndexVector>();
   readonly queries = { count: 0, ms: 0 };
+  /** The generation its files are of, by their prefix (`v2`, `v3`). */
+  generation = '';
 
-  static load(dir: string): ReplicaIndex {
+  /**
+   * The label vectors of `dir`, which must be the generation `model` writes
+   * (`GENERATION_OF_MODEL`; the GGUF's by default, as `embedAll` embeds): a
+   * benchmark's strings never meet another model's labels.
+   */
+  static load(dir: string, model: string = MODEL): ReplicaIndex {
     const idx = new ReplicaIndex();
+    const { generation, files } = generationFiles(dir);
+    if (GENERATION_OF_MODEL[model] !== generation) throw new Error(`${dir} holds ${generation} labels, and ${model} writes ${GENERATION_OF_MODEL[model] ?? 'no generation'}: one model's strings never meet another's labels`);
+    idx.generation = generation;
     const cacheDir = join(dir, 'bench-cache');
-    const f32 = join(cacheDir, `v3-${DIMS}.f32`);
-    const meta = join(cacheDir, `v3-${DIMS}.meta.json`);
+    const f32 = join(cacheDir, `${generation}-${DIMS}.f32`);
+    const meta = join(cacheDir, `${generation}-${DIMS}.meta.json`);
     if (existsSync(f32) && existsSync(meta)) {
       const buf = readFileSync(f32);
       idx.values = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
       for (const r of JSON.parse(readFileSync(meta, 'utf8')) as Meta[]) idx.rows.push(r);
     } else {
-      const files = v3Files(dir);
-      if (!files.length) throw new Error(`no vectors-v3-NNN.ndjson in ${dir}`);
       const chunks: Float32Array[] = [];
       for (const f of files) {
         for (const line of readFileSync(join(dir, f), 'utf8').split('\n')) {
@@ -114,12 +138,12 @@ export class ReplicaIndex implements VectorIndex {
       idx.rows.forEach((r, i) => {
         if (r.region) regions[i] = r.region;
       });
-      writeFileSync(join(cacheDir, `v3-${DIMS}.regions.json`), JSON.stringify(regions));
+      writeFileSync(join(cacheDir, `${generation}-${DIMS}.regions.json`), JSON.stringify(regions));
     }
-    loadRegions(dir, cacheDir, idx.rows);
+    loadRegions(dir, cacheDir, idx.rows, generation, files);
     const lists = new Map<string, number[]>();
     idx.rows.forEach((r, i) => {
-      // The deleted certificate seed's labels (kind cert, source seed), which v3 files written before 2026-10-30 still hold.
+      // The deleted certificate seed's labels (kind cert, source seed), which files written before 2026-10-30 still hold.
       if (r.kind === 'cert' && r.source === 'seed') return;
       (lists.get(r.kind) ?? lists.set(r.kind, []).get(r.kind)!).push(i);
     });
@@ -213,13 +237,17 @@ export async function loadReplica(escoSql: string, usSql: string) {
 
 // ── Vectors, as the phone makes them ──────────────────────────────────────
 
-/** Every distinct text embedded once per role, in runs of 2,000, read back by text. */
-export function embedAll(texts: Iterable<string>, role: 'query' | 'document'): Map<string, number[]> {
+/**
+ * Every distinct text embedded once per role, in runs of 2,000, read back by
+ * text: with the GGUF by default, or with the model and local file a
+ * benchmark names (the LiteRT-LM file for v2).
+ */
+export function embedAll(texts: Iterable<string>, role: 'query' | 'document', model: string = MODEL, file?: string): Map<string, number[]> {
   const all = [...new Set([...texts].map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean))];
   const out = new Map<string, number[]>();
   for (let i = 0; i < all.length; i += 2_000) {
     const batch = all.slice(i, i + 2_000);
-    llamaEmbed(MODEL, batch, role).forEach((v, j) => out.set(batch[j]!, v));
+    macEmbed(model, batch, role, file).forEach((v, j) => out.set(batch[j]!, v));
     process.stdout.write(`${role}: ${Math.min(i + 2_000, all.length)} of ${all.length}\n`);
   }
   return out;
