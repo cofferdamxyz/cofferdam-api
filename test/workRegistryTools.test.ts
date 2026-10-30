@@ -14,7 +14,16 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { CLIENT_EMBED_MODELS, EMBED_DIMS_BY_MODEL, EMBED_PROMPTS_BY_MODEL, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT } from '../src/services/work/registry.js';
+import {
+  CLIENT_EMBED_MODELS,
+  DEFAULT_TAU,
+  DEFAULT_TAU_BY_MODEL,
+  EMBED_DIMS_BY_MODEL,
+  EMBED_PROMPTS_BY_MODEL,
+  EMBEDDINGGEMMA_2_GGUF,
+  EMBEDDINGGEMMA_2_LITERT,
+  tauFor,
+} from '../src/services/work/registry.js';
 import {
   assertPinnedLitert,
   cacheStem,
@@ -83,6 +92,15 @@ describe('the export of minted labels', () => {
   });
 });
 
+describe('τ for the models the plane cannot run', () => {
+  it("gives each its own values, so pinning one never falls back to bge-m3's, below its unrelated pairs", () => {
+    for (const model of CLIENT_EMBED_MODELS) {
+      expect(DEFAULT_TAU_BY_MODEL[model], model).toBeDefined();
+      expect(tauFor(model), model).not.toEqual(DEFAULT_TAU);
+    }
+  });
+});
+
 describe('EmbeddingGemma 2 on the Mac', () => {
   it("reads the GGUF from the plane's model id, and the script prefixes the plane's document prompt", () => {
     expect(ggufOf(EMBEDDINGGEMMA_2_GGUF)).toBe('ggml-org/embeddinggemma-2-GGUF:Q8_0');
@@ -103,6 +121,8 @@ describe('EmbeddingGemma 2 on the Mac', () => {
     expect(CLIENT_EMBED_MODELS.has(EMBEDDINGGEMMA_2_LITERT)).toBe(true);
     expect(EMBED_DIMS_BY_MODEL[EMBEDDINGGEMMA_2_LITERT]).toBe(768);
     expect(EMBED_PROMPTS_BY_MODEL[EMBEDDINGGEMMA_2_LITERT]).toEqual(EMBED_PROMPTS_BY_MODEL[EMBEDDINGGEMMA_2_GGUF]);
+    // v2's τ, calibrated on its own vectors (test/work-eval/tau-embeddinggemma-2-text-270m-litert-lm-…-2026-10-30.md).
+    expect(tauFor(EMBEDDINGGEMMA_2_LITERT)).toEqual({ auto: 0.96, low: 0.81 });
     for (const script of ['tier2-floor.mjs', 'embed-registry.mjs']) {
       expect(readFileSync(join(__dirname, '..', 'scripts', 'work', script), 'utf8')).toContain(`const LITERT_MODEL = '${EMBEDDINGGEMMA_2_LITERT}';`);
     }

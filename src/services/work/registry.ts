@@ -531,13 +531,25 @@ export const DEFAULT_TAU: Tau = { auto: 0.95, low: 0.6 };
  * 92.1% of them right against 83.5% (an occupation 86.3% against 62.4%); at
  * 0.45 it leaves out of the band no more strings whose token was among the
  * best five (0.1%).
+ *
+ * The v2 generation's, EmbeddingGemma 2's LiteRT-LM file, by the same method on
+ * the registry's v2 vectors (`test/work-eval/tau-embeddinggemma-2-text-270m-litert-lm-…-2026-10-30.md`):
+ * at 0.96 it takes 36.4% of the strings without Clef, 84.5% of them right
+ * (an occupation 73.7% against bge-m3's 62.4%), and at 0.81 it leaves out of
+ * the band 0.1% of strings whose token was among the best five, the GGUF's
+ * values on its own scale. Every model the plane cannot run has its own here
+ * (`test/workRegistryTools.test.ts`), so pinning one never falls back to
+ * bge-m3's, which sit below this model's unrelated pairs.
  */
 export const DEFAULT_TAU_BY_MODEL: Readonly<Record<string, Tau>> = {
   '@cf/baai/bge-m3': DEFAULT_TAU,
   '@cf/google/embeddinggemma-300m': { auto: 0.81, low: 0.45 },
-  // Version 2's own scale (unrelated labels 0.68 on average, crowded at the top), on held-out ESCO labels from
-  // its llama-embedding vectors, the same at 768 and 512 dimensions (test/work-eval, 2026-10-27).
+  // EmbeddingGemma 2's GGUF on its own scale (unrelated labels 0.68 on average, crowded at the top), on held-out ESCO
+  // labels from its llama-embedding vectors, the same at 768 and 512 dimensions (test/work-eval, 2026-10-27).
   [EMBEDDINGGEMMA_2_GGUF]: { auto: 0.96, low: 0.81 },
+  // The v2 generation: EmbeddingGemma 2's LiteRT-LM file (unrelated labels 0.685), from the registry's v2 vectors
+  // and held-out ESCO labels embedded as the phone embeds them (test/work-eval, 2026-10-30).
+  [EMBEDDINGGEMMA_2_LITERT]: { auto: 0.96, low: 0.81 },
 };
 
 /** τ as `WORK_TAU_AUTO` and `WORK_TAU_LOW` set it: either, both or neither. */
