@@ -54,6 +54,9 @@ dependencies {
   // ML Kit's on-device text recognition, its Latin model bundled: Android's own OCR for /v1/pdf-text?method=mlkit
   // (the phones' native-text test of 2026-10-30, workspace decision 0068).
   implementation("com.google.mlkit:text-recognition:16.0.1")
+  // Apache PDFBox's Android port (Apache-2.0): a PDF text layer with spacing rules like the Mac's PDFKit, for
+  // /v1/pdf-text?method=pdfbox, where PdfRenderer joins words (the founder's trial of 2026-10-30).
+  implementation("com.tom-roush:pdfbox-android:2.0.27.0")
   // The Tensor TPU dispatch bridge, which the litertlm AAR does not carry.
   if (tensorBridge != "nightly") implementation("com.google.ai.edge.litert:litert-npu-runtime-google-tensor:2.3.2")
 }

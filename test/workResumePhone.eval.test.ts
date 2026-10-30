@@ -12,7 +12,8 @@
  * The text paths. The iPhone's (cofferdam-app `modules/pdf-text`): PDFKit's `string`, `attributed`,
  * `selection`, the string's spaces `rebuilt` from the glyphs' positions, and `vision`, Vision's text
  * recognition on the rendered page. The Pixel's (the test app's `/v1/pdf-text`): `PdfRenderer`'s
- * `contents` and `selection`, and `mlkit`, ML Kit's text recognition on the rendered page.
+ * `contents` and `selection`, `mlkit`, ML Kit's text recognition on the rendered page, and `pdfbox`,
+ * Apache PDFBox's Android port (the founder's trial of 2026-10-30, where no native path kept the words).
  *
  *   PHONE_PDF_PLAN=1      writes the iPhone's plan into `<PHONE_OUT>/ios-plan/` (`plan.json`, the
  *                         PDFs, a blank page): with PHONE_PDF_EXTRACT=<paths> the paths alone, no
@@ -31,7 +32,8 @@
  * Each path's text is compared with the Mac's text layer (`scripts/work/pdf-pages.swift`) word by word,
  * a recognised one also with the Mac's Vision lines, counts only; the real-resume benchmark then scores
  * the phones' answers beside the Mac's and the cloud's with the `RESUME_LOCAL` this prints (`textDir`).
- * PHONE_SAMPLE (default: the twenty of `resumes-2026-10-30-n20.json`) names the run whose sample to read.
+ * PHONE_SAMPLE (default: the twenty of `resumes-2026-10-30-n20.json`) names the run whose sample to read, or
+ * any JSON whose `sample` lists the ids (`pixel-hardest.json`, the six hardest for the Pixel).
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -57,7 +59,7 @@ import {
 } from './work-eval/phoneBench.js';
 import { readResumeCsv } from './work-eval/resumeBench.js';
 
-const ANDROID_METHODS = ['contents', 'selection', 'mlkit'] as const;
+const ANDROID_METHODS = ['contents', 'selection', 'mlkit', 'pdfbox'] as const;
 type AndroidMethod = (typeof ANDROID_METHODS)[number];
 
 const list = <T extends string>(raw: string | undefined, allowed: readonly T[], name: string): T[] => {
@@ -100,6 +102,7 @@ const ANDROID_WORDS: Record<AndroidMethod, string> = {
   contents: 'the text PdfRenderer gives',
   selection: "PdfRenderer's whole-page selection",
   mlkit: "ML Kit's text recognition on the page",
+  pdfbox: "PDFBox's text layer",
 };
 
 /** The iPhone's reader of a path's texts taken in an earlier run and carried in the plan. */
@@ -137,7 +140,8 @@ const iosReader = (method: PhonePdfMethod): LocalReader => {
 const androidReader = (method: AndroidMethod): LocalReader => {
   const dir = join(out, method === 'contents' ? 'android' : `android-${method}`);
   return {
-    label: `Gemma 4 E2B LiteRT-LM 0.19.0 on the Pixel 10, the TPU and the CPU for long CVs, ${ANDROID_WORDS[method]}`,
+    // The text comes first: the benchmark's cache folder keeps a label's first 80 characters.
+    label: `Gemma 4 E2B on the Pixel 10 from ${ANDROID_WORDS[method]}, LiteRT-LM 0.19.0, the TPU and the CPU for long CVs`,
     answers: join(dir, 'answers.json'),
     model: TPU,
     paths: ['text'],

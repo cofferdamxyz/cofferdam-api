@@ -32,6 +32,9 @@ import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -52,10 +55,11 @@ private const val TAG = "LiteRtBench"
  * with the same truth and scorer as the others. Never part of the app. Synthetic CVs, or the
  * real-resume benchmark under workspace decision 0021's exception, after which the answers the
  * app keeps are deleted (`run-as xyz.cofferdam.litertbench rm -r files/answers`).
- * `POST /v1/pdf-text?method=contents|selection|mlkit` takes a PDF's bytes and answers each page's
- * text: Android's own PDF renderer's text layer (`contents`, the default, or a whole-page `selection`;
- * Android 15 and later), or ML Kit's text recognition on the page rendered at 1,600 px on its long
- * side (`mlkit`), for the phones' test of 2026-10-30 (workspace decisions 0021 and 0068).
+ * `POST /v1/pdf-text?method=contents|selection|mlkit|pdfbox` takes a PDF's bytes and answers each
+ * page's text: Android's own PDF renderer's text layer (`contents`, the default, or a whole-page
+ * `selection`; Android 15 and later), ML Kit's text recognition on the page rendered at 1,600 px on
+ * its long side (`mlkit`), or Apache PDFBox's text layer (`pdfbox`), for the phones' test of
+ * 2026-10-30 (workspace decisions 0021 and 0068).
  * Steps: workspace `docs/runbooks/android-build.md`, TPU reader check.
  */
 
@@ -195,11 +199,25 @@ object BenchServer {
    */
   @TargetApi(35)
   private fun pdfText(context: Context, pdf: ByteArray, textMethod: String, longSide: Int = 1600): JSONObject {
-    require(textMethod in setOf("contents", "selection", "mlkit")) { "method must be contents, selection or mlkit" }
+    require(textMethod in setOf("contents", "selection", "mlkit", "pdfbox")) { "method must be contents, selection, mlkit or pdfbox" }
     val file = java.io.File.createTempFile("cv-text", ".pdf", context.cacheDir)
     try {
       file.writeBytes(pdf)
       val t0 = SystemClock.elapsedRealtime()
+      if (textMethod == "pdfbox") {
+        // PDFBox reads the whole document itself, a page at a time; no renderer.
+        PDFBoxResourceLoader.init(context.applicationContext)
+        val pages = JSONArray()
+        PDDocument.load(file).use { doc ->
+          val stripper = PDFTextStripper()
+          for (n in 1..doc.numberOfPages) {
+            stripper.startPage = n
+            stripper.endPage = n
+            pages.put(stripper.getText(doc))
+          }
+        }
+        return JSONObject().put("pages", pages).put("ms", SystemClock.elapsedRealtime() - t0)
+      }
       val pages = JSONArray()
       val pieces = JSONArray()
       // Counts only: each page's characters and the boxes its text comes with, to tell whether the boxes are per glyph.

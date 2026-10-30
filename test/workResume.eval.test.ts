@@ -42,7 +42,9 @@
  * `1` (or `pdf`) or `ocr` to send one cloud reader the PDF's text layer or
  * Apple Vision's lines instead of the page images, as a cloud parse would read
  * a CV whose identity the phone stripped first (workspace decision 0021),
- * RESUME_STRIP `unbound` or `bound` (with RESUME_CLOUD_TEXT) to give each
+ * RESUME_ONLY some of the plan's resumes (comma-separated ids, or a run's JSON
+ * whose `sample` lists them), RESUME_STRIP `unbound` or `bound` (with
+ * RESUME_CLOUD_TEXT) to give each
  * resume a made-up identity and strip it before the cloud reads the text: the
  * emails, and when bound also the passport's name and birth date
  * (`test/work-eval/identityStrip.ts`, `stripBench.ts`; decision 0021, the
@@ -543,6 +545,14 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     const sample: ResumeRecord[] = [];
     for (const [category, n] of Object.entries(plan)) {
       sample.push(...candidates.filter((r) => r.category === category && pageCount(r.id) >= 1 && pageCount(r.id) <= MAX_PAGES).slice(0, n));
+    }
+    // RESUME_ONLY keeps some of the plan's resumes: comma-separated ids, or a run's JSON whose `sample` lists them.
+    const onlyRaw = (process.env.RESUME_ONLY ?? '').trim();
+    if (onlyRaw) {
+      const ids = new Set(onlyRaw.endsWith('.json') ? (JSON.parse(readFileSync(onlyRaw, 'utf8')) as { sample: string[] }).sample : onlyRaw.split(',').map((x) => x.trim()));
+      const kept = sample.filter((r) => ids.has(r.id));
+      if (kept.length !== ids.size) throw new Error(`RESUME_ONLY names ${ids.size - kept.length} resumes the plan does not sample`);
+      sample.splice(0, sample.length, ...kept);
     }
     const excluded = records.filter((r) => hasContact(r.text)).length;
     process.stdout.write(`sample: ${sample.length} resumes (${Object.entries(plan).map(([c, n]) => `${c} ${sample.filter((r) => r.category === c).length}/${n}`).join(', ')}); ${excluded} of ${records.length} left out for contact details\n`);
