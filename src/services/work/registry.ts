@@ -6,8 +6,8 @@
  * Token registry): any title, skill or certificate, in any language, to one
  * token, through retrieve-then-choose.
  *
- *  1. An exact known label (ESCO's, the seed's, a national layer's, or one
- *     observed before) snaps without a model, read in the string's own
+ *  1. An exact known label (ESCO's, a national layer's, or one observed
+ *     before) snaps without a model, read in the string's own
  *     language and in English only (`labelLangs`): another language may use
  *     the word for something else, as ESCO's Spanish gives "instructor" to
  *     the air force officer and "coach" to the life coach.
@@ -49,26 +49,28 @@
  * the alias a snap observes, which then decides that string by label for
  * every market of its language.
  *
- * A certificate takes its own path through the curated seed
- * (`certificates.ts`), whose labels it reads in every language, since the
- * seed gives each label one credential: its level and modules are read off
- * the string, a claim must name the credential, a hirer's phrase means the
- * licence of the job's region, and Clef sees at most three candidates; it
- * never mints, and reads no market.
+ * A certificate snaps as a skill does (workspace decision 0070, the
+ * founder's rulings of 2026-10-30): the exact label, the nearest labels and
+ * τ_auto, then Clef in the band. A worker's claim and a hirer's words reach
+ * only a certificate token that exists: neither mints one, and neither goes
+ * on to the pivot. Only a Vault document will mint a certificate (decision
+ * 0070 (a), not built), so until then the registry holds none and every
+ * certificate stays unmatched. A certificate claim reads no market
+ * (`listings.ts` `claimSnapInput`).
  *
  * No model ever writes an ESCO or ISCO code: those come only from the ESCO
  * export (`esco.ts`). Clef answers which of the candidates it was shown, by
  * key. Every decision past the exact-label shortcut is recorded
- * (`registry_decisions`), and every snap adds the raw string as an observed
- * alias in the string's language, so the same string snaps by label next
- * time: in that language, and in every language when it is English. Raw
- * strings come from published listings and intents, never from a CV, and no
- * account, document or listing id is stored with them.
+ * (`registry_decisions`), and every snap of a worker's string adds it as an
+ * observed alias in the string's language, so the same string snaps by label
+ * next time: in that language, and in every language when it is English. A
+ * hirer's words never become an alias. Raw strings come from published
+ * listings and intents, never from a CV, and no account, document or listing
+ * id is stored with them.
  */
 
 import type { Inference } from '../inference/index.js';
 import { fold, scanText, type BlockLang } from './blocks.js';
-import { snapCertificate, type CertFacets, type CertificateCatalogue } from './certificates.js';
 import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, fieldsRequest, readFieldsAnswer, usageOrEstimate, withCalls, type FieldSet, type WorkCall } from './fields.js';
@@ -132,7 +134,7 @@ export function tokenOf(kind: TokenKind, label: string): string {
  * best candidate at τ_auto is taken only through a label in one of them. The
  * string's own, so a word another language gives another occupation never
  * catches it, and English, so a Portuguese or Spanish CV's English title
- * still snaps. Certificates read every language (`certificates.ts`).
+ * still snaps.
  */
 export function labelLangs(lang: string): string[] {
   return lang === 'en' ? ['en'] : [lang, 'en'];
@@ -249,7 +251,7 @@ export class D1RegistryStore implements RegistryStore {
       )
       .bind(norm, kind, ...(langs ?? []))
       .all<{ token: string; observed: number }>();
-    // A curated label (ESCO's, the seed's, a national layer's) outranks an observed alias (decision 0066 (4)).
+    // A curated label (ESCO's, a national layer's) outranks an observed alias (decision 0066 (4)).
     const curated = results.filter((r) => !r.observed);
     const resolved = await this.tokens((curated.length ? curated : results).map((r) => r.token));
     const seen = new Map<string, RegistryToken>();
@@ -542,23 +544,16 @@ export interface SnapInput {
   kind: TokenKind;
   raw: string;
   lang: BlockLang;
-  /** False for a hirer's words: an intent snaps to what exists and never mints. Default true. */
+  /** False for a hirer's words: an intent snaps to what exists, never mints and leaves no alias. Default true. A certificate never mints either way. */
   mint?: boolean;
-  /**
-   * A hirer's requirement only (`mint: false`): the job's coarse region,
-   * which names the jurisdiction a licence phrase leaves open (`licensed
-   * electrician` in `us-tx` is the Texas licence). A worker's claim names its
-   * own, or matches no licence.
-   */
-  region?: string;
   /**
    * A worker's occupation or skill only: the coarse region of their listing
    * (`br-sp`, `mx`, `us-tx`), so the model steps read the string in its
    * regional variant ("Encanador" in Brazilian Portuguese). Context for Clef's
    * state and the pivot, never a rule: no step prefers a label of that
    * language or region, it decides nothing without a model, and it is not
-   * stored. Never the job's region, which is `region`; a certificate reads
-   * neither for a worker's claim.
+   * stored. Never a certificate's: a claim names its own jurisdiction, and a
+   * market never names one for it.
    */
   market?: string;
   /**
@@ -577,7 +572,7 @@ export interface Candidate {
   /** The label that matched, as written, and its language (null when its vector names none). */
   matched: string;
   matchedLang: string | null;
-  /** The matched label's region, a national layer's (`us`); null or absent for ESCO's, the seed's and a mint's labels. */
+  /** The matched label's region, a national layer's (`us`); null or absent for ESCO's and a mint's labels. */
   matchedRegion?: string | null;
   score: number;
   /**
@@ -585,8 +580,6 @@ export interface Candidate {
    * of the nearest labels in them, null when none of those is.
    */
   scoped?: number | null;
-  /** A certificate's issuer, jurisdiction, levels and modules, as Clef reads the candidate. */
-  detail?: string;
 }
 
 export interface SnapResult {
@@ -597,20 +590,8 @@ export interface SnapResult {
   score: number | null;
   probability: number | null;
   candidates: Candidate[];
-  /** A certificate's level and modules, read off the string by the seed; null for an occupation or a skill. */
-  facets: CertFacets | null;
-  /**
-   * What the snap puts in an exact token list: the token, and a
-   * certificate's facet tokens (a claim: its level, every level below it and
-   * its modules; a requirement: the level and modules it names). Empty
-   * without a token.
-   */
-  tokens: string[];
   calls: WorkCall[];
 }
-
-/** A decision before its calls: the facets and tokens default to the token alone. */
-export type SnapOutcome = Omit<SnapResult, 'calls' | 'facets' | 'tokens'> & Partial<Pick<SnapResult, 'facets' | 'tokens'>>;
 
 export interface RegistryDeps {
   inference: Inference;
@@ -622,8 +603,6 @@ export interface RegistryDeps {
   /** A new decision id (default: a random UUID). */
   newId?: () => string;
   log?: (fields: Record<string, unknown>) => void;
-  /** The curated certificate seed (default: `certificates.json`). */
-  certificates?: CertificateCatalogue;
 }
 
 /** The JSON-mode request for a new token's English pivot. */
@@ -728,12 +707,12 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
   const now = deps.now ?? Date.now;
   const tau = tauFor(await deps.inference.model('work-embed'), deps.tau);
   const raw = input.raw.normalize('NFC').replace(/\s+/g, ' ').trim();
-  const result = (r: SnapOutcome): SnapResult => ({ facets: null, tokens: r.token ? [r.token] : [], ...r, calls });
+  const result = (r: Omit<SnapResult, 'calls'>): SnapResult => ({ ...r, calls });
   const none = { token: null, labelEn: null, specialization: false, score: null, probability: null, candidates: [] };
   if (!raw || raw.length > RAW_MAX_CHARS || scanText(raw)) return result({ decision: 'unmatched', ...none });
   const norm = labelNorm(raw);
   const at = now();
-  const record = async (r: SnapOutcome, model: string | null) => {
+  const record = async (r: Omit<SnapResult, 'calls'>, model: string | null) => {
     await deps.store.recordDecision({
       id: deps.newId?.() ?? crypto.randomUUID(),
       kind: input.kind,
@@ -750,14 +729,16 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
     });
     return result(r);
   };
-  const observe = async (token: string) =>
-    deps.store.addLabels([{ labelId: await labelIdOf(token, input.lang, norm), token, lang: input.lang, label: raw, labelNorm: norm, kind: 'observed', embedded: false }], at);
+  // A worker's string becomes an alias of the token it snapped to. A hirer's words never do: a phrase that leaves a
+  // licence's state open ("licensed electrician") would otherwise decide a state-bound licence for every worker's claim.
+  const observe = async (token: string) => {
+    if (input.mint === false) return;
+    await deps.store.addLabels([{ labelId: await labelIdOf(token, input.lang, norm), token, lang: input.lang, label: raw, labelNorm: norm, kind: 'observed', embedded: false }], at);
+  };
 
-  // A certificate takes the seed's path, and never mints.
-  if (input.kind === 'cert') return snapCertificate(deps, input, { raw, norm, calls, tau, now, result, record, observe });
   const kind = input.kind;
-  /** What the model steps are told of the string, as context: its language, and a worker's market. */
-  const locale: StringLocale = { lang: input.lang, ...(input.market ? { market: input.market } : {}) };
+  /** What the model steps are told of the string, as context: its language, and a worker's market, never a certificate's. */
+  const locale: StringLocale = { lang: input.lang, ...(input.market && kind !== 'cert' ? { market: input.market } : {}) };
 
   // 1. An exact known label, in the string's own language or English.
   const langs = labelLangs(input.lang);
@@ -827,9 +808,10 @@ async function snapWith(deps: RegistryDeps, input: SnapInput, calls: WorkCall[])
     if (pick.choice !== 'none') undecided = pick.p;
   }
 
-  // 3. Nothing matched: anything a hirer wrote stays unmatched; occupations and skills mint.
+  // 3. Nothing matched: a certificate and anything a hirer wrote stay unmatched, never minted and never sent to the
+  // pivot (decision 0070: only a Vault document will mint a certificate); a worker's occupations and skills mint.
   const score = top?.score ?? null;
-  if (input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
+  if (kind === 'cert' || input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const english = await pivot(deps, kind, raw, locale, calls);
   if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const englishNorm = labelNorm(english);

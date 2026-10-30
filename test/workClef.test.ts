@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   adjudicationState,
-  certificateState,
   documentQuestions,
   documentState,
   needQuestions,
@@ -69,8 +68,8 @@ describe('the Clef catalogue', () => {
     expect(languageName('es')).toBe('Spanish');
     expect(adjudicationState('pos', 'Encanador', { lang: 'pt', market: 'br-sp' })).toBe('An occupation written in Brazilian Portuguese by a worker in Brazil (br-sp):\nEncanador');
     expect(adjudicationState('skill', 'Soldagem TIG', { lang: 'pt' })).toBe('A skill written in Portuguese by a worker or a hirer:\nSoldagem TIG');
-    // The certificate band's state is as it was: it reads no market.
-    expect(certificateState('NR-10 Básico', 'pt')).toBe('A certificate or licence as a worker or a hirer wrote it, in pt:\nNR-10 Básico');
+    // A certificate's state is a skill's, with its language only (the registry gives a certificate no market).
+    expect(adjudicationState('cert', 'NR-10 Básico', { lang: 'pt' })).toBe('A certificate or licence written in Portuguese by a worker or a hirer:\nNR-10 Básico');
   });
 
   it('names a matched label’s language, and a national layer’s region', () => {

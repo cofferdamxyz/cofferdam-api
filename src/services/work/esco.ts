@@ -254,7 +254,7 @@ const SQL_ROWS = 100;
  */
 export const SQL_STATEMENTS_PER_FILE = 100;
 
-/** A plan as SQL for `wrangler d1 execute cofferdam-work --remote --file=…` (ESCO's, or the certificate seed's); a re-run inserts nothing twice. */
+/** A plan as SQL for `wrangler d1 execute cofferdam-work --remote --file=…`; a re-run inserts nothing twice. */
 export function registrySql(plan: Pick<EscoPlan, 'tokens' | 'labels'>, at: number): string {
   return registryStatements(plan, at).join('\n') + '\n';
 }

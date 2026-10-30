@@ -3,16 +3,17 @@
 
 /**
  * The registry replica the Mac-side benchmarks share (`test/workJobs.eval.test.ts`,
- * `test/workResume.eval.test.ts`): the ESCO import's SQL, the US layer's SQL
- * and the certificate seed in node:sqlite, the v3 label vectors (EmbeddingGemma 2
- * at 768) in memory, and the phone's embeddings from llama-embedding. Moved
- * here unchanged from the job-ad benchmark on 2026-10-28.
+ * `test/workResume.eval.test.ts`): the ESCO import's SQL and the US layer's SQL
+ * in node:sqlite, the v3 label vectors (EmbeddingGemma 2 at 768) in memory, and
+ * the phone's embeddings from llama-embedding. Moved here unchanged from the
+ * job-ad benchmark on 2026-10-28. Like production since 2026-10-30, it holds no
+ * certificate token (workspace decision 0070), and it leaves out the deleted
+ * certificate seed's vectors that v3 files written before then still carry.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { planCertificateImport } from '../../src/services/work/certificates.js';
 import { D1RegistryStore, EMBEDDINGGEMMA_2_GGUF, type IndexMatch, type IndexVector, type VectorIndex } from '../../src/services/work/registry.js';
 import { sqliteD1 } from '../fixtures/work/d1.js';
 import { llamaEmbed } from '../fixtures/work/registryTools.js';
@@ -72,13 +73,20 @@ export class ReplicaIndex implements VectorIndex {
       writeFileSync(meta, JSON.stringify(idx.rows));
     }
     const lists = new Map<string, number[]>();
-    idx.rows.forEach((r, i) => (lists.get(r.kind) ?? lists.set(r.kind, []).get(r.kind)!).push(i));
+    idx.rows.forEach((r, i) => {
+      // The deleted certificate seed's labels (kind cert, source seed), which v3 files written before 2026-10-30 still hold.
+      if (r.kind === 'cert' && r.source === 'seed') return;
+      (lists.get(r.kind) ?? lists.set(r.kind, []).get(r.kind)!).push(i);
+    });
     for (const [k, l] of lists) idx.byKind.set(k, Int32Array.from(l));
     return idx;
   }
 
+  /** The vectors it serves, the deleted seed's left out. */
   get size() {
-    return this.rows.length;
+    let n = 0;
+    for (const l of this.byKind.values()) n += l.length;
+    return n;
   }
 
   async query(vector: number[], opts: { topK: number; namespace?: string; filter?: Record<string, string | number | boolean> }): Promise<IndexMatch[]> {
@@ -136,7 +144,7 @@ export class ReplicaIndex implements VectorIndex {
   }
 }
 
-/** ESCO's and the US layer's SQL (the import files the founder loads into D1), then the certificate seed, into node:sqlite. */
+/** ESCO's and the US layer's SQL (the import files the founder loads into D1) into node:sqlite. */
 export async function loadReplica(escoSql: string, usSql: string) {
   const db = sqliteD1();
   const files = (dir: string, re: RegExp) =>
@@ -153,11 +161,9 @@ export async function loadReplica(escoSql: string, usSql: string) {
   }
   db.sqlite.exec('PRAGMA foreign_keys = ON');
   const store = new D1RegistryStore(db.d1);
-  const certificates = await planCertificateImport();
-  for (const t of certificates.tokens) await store.insertToken(t, certificates.labels.filter((l) => l.token === t.token), 0);
   const tokens = (db.sqlite.prepare('SELECT COUNT(*) AS n FROM registry_tokens').get() as { n: number }).n;
   const labels = (db.sqlite.prepare('SELECT COUNT(*) AS n FROM registry_labels').get() as { n: number }).n;
-  return { db, store, statements, tokens, labels, certificateTokens: certificates.tokens.length };
+  return { db, store, statements, tokens, labels };
 }
 
 // ── Vectors, as the phone makes them ──────────────────────────────────────

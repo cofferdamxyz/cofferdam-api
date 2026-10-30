@@ -147,12 +147,7 @@ describe('publishListing', () => {
   it('snaps the claims, embeds the listing in its namespace with coarse metadata only, and keeps the exact tokens in D1', async () => {
     const { publish, jobsIndex, listings } = await world();
     const out = await publishListing(publish, draft({ certificates: ['Texas Journeyman Plumber License'], languages: ['en', 'es'] }));
-    // The journeyman's licence holds its level and the one below it, so a Tradesman job finds it and a Master job never does.
-    expect(out).toMatchObject({
-      ok: true,
-      namespace: 'us-tx:onsite',
-      tokens: ['cert:plumber-license:us-tx', 'cert:plumber-license:us-tx/journeyman', 'cert:plumber-license:us-tx/tradesman', 'lang:en', 'lang:es', 'pos:plumber', 'skill:leak-repair'],
-    });
+    expect(out).toMatchObject({ ok: true, namespace: 'us-tx:onsite', tokens: ['cert:plumber-license:us-tx', 'lang:en', 'lang:es', 'pos:plumber', 'skill:leak-repair'] });
     if (!out.ok) return;
     const v = jobsIndex.vectors.get(out.listingId)!;
     expect(v.namespace).toBe('us-tx:onsite');
@@ -320,14 +315,16 @@ describe('one hirer query', () => {
     const w = await world({ 'work-intent': intentAnswer({ credential: 'licensed plumber' }), 'work-classify': clefSays(/plumber/) }, calls);
     const planned = await planHire(w.hire, { sentence: `${SINK} Must be a licensed plumber.`, lang: 'en', regions: ['us-tx'] });
     expect(planned.ok && planned.plan).toMatchObject({ certificate: 'cert:plumber-license:us-tx', intent: { mode: 'curated', allOf: ['cert:plumber-license:us-tx'] } });
+    // The hirer's phrase reached the licence at τ_auto, and left no alias a worker's claim could snap through.
+    expect(w.db.sqlite.prepare("SELECT COUNT(*) AS n FROM registry_labels WHERE kind = 'observed'").get()).toEqual({ n: 0 });
     const unknown = await world({ 'work-intent': intentAnswer({ credential: 'certified welder' }), 'work-classify': clefSays(/plumber/) }, calls);
     const noCert = await planHire(unknown.hire, { sentence: `${SINK} Must be a certified welder.`, lang: 'en', regions: ['us-tx'] });
     expect(noCert.ok && noCert.plan.certificate).toBeNull();
     // A credential the registry cannot name is still a requirement: a person checks it.
     expect(noCert.ok && noCert.plan.intent.mode).toBe('curated');
     expect(calls.map((c) => c.op)).not.toContain('work-pivot');
-    // A hirer's words carry no worker's locale: the job's region reaches only the licence it names.
-    expect(JSON.stringify(calls.map((c) => c.input))).not.toMatch(/written in|by a worker in/);
+    // A hirer's words carry no worker's locale (a certificate's band state names its language only: "by a worker or a hirer").
+    expect(JSON.stringify(calls.map((c) => c.input))).not.toMatch(/by a worker in /);
   });
 
   it('checks the sentence, its language and its regions before any hosted call', async () => {

@@ -327,7 +327,7 @@ async function decide(
   const jobCertificates = intent.allOf.filter((t) => t.startsWith('cert:'));
   const named = await store.tokens([...new Set([...jobCertificates, ...finalists.flatMap((f) => tokensOf(f).filter((t) => /^(pos|skill|cert):/.test(t)))])]);
   // A token the registry no longer names reads as its own words (`pos:pipe-fitter` as "pipe fitter").
-  const name = (t: string) => named.get(t)?.labelEn ?? t.replace(/^[a-z]+:/, '').replace(/[-/]/g, ' ');
+  const name = (t: string) => named.get(t)?.labelEn ?? t.replace(/^[a-z]+:/, '').replace(/-/g, ' ');
   const job = { task: intent.task ?? intent.queryText, needs: intent.needLabels ?? [], certificates: jobCertificates.map(name) };
   const neededSkills = intent.anyOf.filter((t) => t.startsWith('skill:'));
   const needed = new Set([...neededSkills, ...jobCertificates]);

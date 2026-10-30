@@ -157,7 +157,6 @@ export interface BandQuestionOptions {
  * no wording prefers the string's own language.
  */
 export function adjudicationQuestions(kind: TokenKind, candidates: readonly Candidate[], opts: BandQuestionOptions = {}): Record<string, ClefQuestion> {
-  if (kind === 'cert') return certificateQuestions(candidates);
   const criteria: Record<string, string> = {};
   candidates.forEach((c, i) => {
     const locale = opts.labelLocales ? labelLocale(c.matchedLang, c.matchedRegion) : null;
@@ -179,44 +178,16 @@ export function adjudicationQuestions(kind: TokenKind, candidates: readonly Cand
 }
 
 /**
- * A certificate in the τ band (decision 0018, E10): which candidate, by key,
- * is the same credential, its level and modules aside, or none. Each
- * candidate is shown with its issuer, jurisdiction, levels and modules, and
- * the plane has already kept only those the string names and whose words it
- * can all read, so the level and modules come from the seed, never from
- * Clef.
+ * The band's state: its kind, its locale (`locale.ts`) and the string, as in
+ * "An occupation written in Brazilian Portuguese by a worker in Brazil
+ * (br-sp):" and then "Encanador". A certificate's locale is its language
+ * only ("A certificate or licence written in Portuguese by a worker or a
+ * hirer:"), since a claim names its own jurisdiction. The pivot reads the
+ * same text for an occupation or a skill (`registry.ts`).
  */
-export function certificateQuestions(candidates: readonly Candidate[]): Record<string, ClefQuestion> {
-  const criteria: Record<string, string> = {};
-  candidates.forEach((c, i) => {
-    const name = c.detail ?? c.labelEn;
-    criteria[`c${i}`] = c.matched === c.labelEn ? name : `${name} (matched "${c.matched}")`;
-  });
-  criteria.none = 'None of these: a different certificate or licence';
-  return {
-    match: {
-      type: 'choice',
-      instructions:
-        'Which entry is the same certificate or licence as the text, from the same issuer, and for the same state or country when the entry names one? A level, grade, module or endorsement written beside it does not make it a different one. Choose none when every entry is a different certificate or licence.',
-      criteria,
-    },
-  };
-}
-
-/**
- * The band's state for an occupation or a skill: its kind, its locale
- * (`locale.ts`) and the string, as in "An occupation written in Brazilian
- * Portuguese by a worker in Brazil (br-sp):" and then "Encanador". The pivot
- * reads the same text (`registry.ts`).
- */
-export function adjudicationState(kind: 'pos' | 'skill', raw: string, locale: StringLocale): string {
+export function adjudicationState(kind: TokenKind, raw: string, locale: StringLocale): string {
   const noun = KIND_NOUN[kind];
   return `${/^[aeiou]/.test(noun) ? 'An' : 'A'} ${noun} ${writtenIn(locale)}:\n${raw}`;
-}
-
-/** The certificate band's state: the string and its language's code. It reads no market: a claim names its own jurisdiction, and a hirer's comes from the job's region. */
-export function certificateState(raw: string, lang: string): string {
-  return `A ${KIND_NOUN.cert} as a worker or a hirer wrote it, in ${lang}:\n${raw}`;
 }
 
 /**

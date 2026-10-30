@@ -20,7 +20,6 @@
  *   `<ESCO_DIR>/tau-cache`) are reused by text where they are this model's
  *   documents under its prompt, never a refused text's zero vector
  *   (`test/fixtures/work/registryTools.ts`);
- * - the curated certificate seed's (`certificates.json`);
  * - the US layer's, read from its `national-vectors-*.ndjson` in ONET_OUT
  *   (ids and metadata kept, values new);
  * - the labels the plane minted, which no file holds: REEMBED_D1_LABELS names
@@ -28,6 +27,10 @@
  *   query), and they go to a file of their own, `vectors-v2-minted.ndjson`, so
  *   labels minted after a run need only that file loaded again. Without it
  *   the run says so, and the count check before the switch shows the gap.
+ *
+ * The deleted certificate seed (workspace decision 0070, 2026-10-30) is not
+ * among them: files written before then hold its 156 labels, which no index
+ * may load (runbook, Cofferdam Work resources).
  *
  * WORK_EMBED_MODEL is required, so the run never writes another model's
  * vectors by mistake. Needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
@@ -41,7 +44,6 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createInference } from '../src/services/inference/index.js';
-import { certificates, planCertificateImport } from '../src/services/work/certificates.js';
 import { planEscoImport, vectorLine, type EscoLang } from '../src/services/work/esco.js';
 import { EMBED_DIMS_BY_MODEL, embedTexts } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
@@ -55,7 +57,7 @@ const home = (p: string) => p.replace(/^~(?=\/)/, homedir());
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe.skipIf(!RUN)('registry labels embedded again for a new model (opt-in, from the Mac)', () => {
-  it("embeds ESCO's, the seed's and the US layer's labels as documents and writes the files the new index loads", async () => {
+  it("embeds ESCO's and the US layer's labels as documents and writes the files the new index loads", async () => {
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const apiToken = process.env.CLOUDFLARE_API_TOKEN;
     const model = process.env.WORK_EMBED_MODEL;
@@ -118,12 +120,6 @@ describe.skipIf(!RUN)('registry labels embedded again for a new model (opt-in, f
     const tokens = new Map(esco.tokens.map((t) => [t.token, t]));
     const lines: string[] = esco.labels.map((l) => vectorLine(l, tokens.get(l.token)!, Array.from(escoVectors.get(`${kindOf(l.token)}\u0000${l.label}`) ?? fresh.get(l.label)!)));
 
-    // The certificate seed.
-    const seed = await planCertificateImport(certificates());
-    const seedTokens = new Map(seed.tokens.map((t) => [t.token, t]));
-    const seedVectors = await embed([...new Set(seed.labels.map((l) => l.label))]);
-    lines.push(...seed.labels.map((l) => vectorLine(l, seedTokens.get(l.token)!, seedVectors.get(l.label)!)));
-
     // The US layer: its ids and metadata, new values.
     const national: { id: string; metadata: { label: string } }[] = [];
     for (const f of readdirSync(onetOut).filter((f) => /^national-vectors-\d{3}\.ndjson$/.test(f)).sort())
@@ -138,7 +134,7 @@ describe.skipIf(!RUN)('registry labels embedded again for a new model (opt-in, f
     for (let i = 0; i < nationalLines.length; i += PER_FILE)
       writeFileSync(join(usDir, `national-vectors-${String(i / PER_FILE + 1).padStart(3, '0')}.ndjson`), nationalLines.slice(i, i + PER_FILE).join('\n') + '\n');
 
-    const ids = new Set([...esco.labels.map((l) => l.labelId), ...seed.labels.map((l) => l.labelId), ...national.map((n) => n.id)]);
+    const ids = new Set([...esco.labels.map((l) => l.labelId), ...national.map((n) => n.id)]);
     if (ids.size !== lines.length) throw new Error(`${lines.length - ids.size} vector ids repeat`);
 
     // The labels the plane minted, from the export: those no file above holds.
@@ -148,7 +144,7 @@ describe.skipIf(!RUN)('registry labels embedded again for a new model (opt-in, f
     const mintedVectors = await embed([...new Set(minted.map((r) => r.label))]);
     const mintedLines = minted.map((r) => exportedLabelLine(r, mintedVectors.get(r.label)!));
 
-    const all = [...escoVectors.values(), ...fresh.values(), ...seedVectors.values(), ...nationalVectors.values(), ...mintedVectors.values()];
+    const all = [...escoVectors.values(), ...fresh.values(), ...nationalVectors.values(), ...mintedVectors.values()];
     const sizes = new Set(all.map((v) => v.length));
     if (sizes.size !== 1 || !sizes.has(dims)) throw new Error(`vector sizes ${[...sizes].join(', ')}, not ${dims}`);
     if (all.some((v) => Array.prototype.every.call(v, (x: number) => x === 0))) throw new Error('a zero vector: a text the model refused would enter the index');
@@ -162,7 +158,7 @@ describe.skipIf(!RUN)('registry labels embedded again for a new model (opt-in, f
     if (mintedLines.length) writeFileSync(join(out, 'vectors-v2-minted.ndjson'), mintedLines.join('\n') + '\n');
     process.stdout.write(
       [
-        `wrote ${lines.length} vectors (${esco.labels.length} ESCO, ${seed.labels.length} certificate seed, ${national.length} US layer; ${model}, ${dims} dimensions) in ${names.length} files to ${out}`,
+        `wrote ${lines.length} vectors (${esco.labels.length} ESCO, ${national.length} US layer; ${model}, ${dims} dimensions) in ${names.length} files to ${out}`,
         exportPath ? `and ${mintedLines.length} the plane minted${mintedLines.length ? ' to vectors-v2-minted.ndjson' : ''}, from ${exportPath}` : 'and none the plane minted (no export)',
         'load them one file at a time into the new index (runbook: docs/runbooks/cloudflare-deploys.md, Cofferdam Work resources):',
         `  for f in ${out}/vectors-v2-[0-9][0-9][0-9].ndjson${mintedLines.length ? ` ${out}/vectors-v2-minted.ndjson` : ''}; do wrangler vectorize upsert token-registry-v2 --file="$f" || break; done`,

@@ -6,7 +6,7 @@
  * MATCH_EVAL=1), from the Mac: workspace decision 0069, the founder's ruling
  * of 2026-10-28. The synthetic pool of `test/fixtures/work/match/ambiguous.json`
  * is published on a replica of the registry (`test/work-eval/replica.ts`: the
- * ESCO import, the US layer, the certificate seed, the v3 vectors in memory)
+ * ESCO import, the US layer, the v3 vectors in memory)
  * with the phone's EmbeddingGemma 2 vectors from llama-embedding, and every
  * prompt is planned once and searched twice over the pool: with the decision
  * pass (Clef, not flash, classifying each finalist against the job; the

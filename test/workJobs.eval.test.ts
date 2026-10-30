@@ -16,8 +16,8 @@
  * (the requirements) and a certificates block (the lines that name a licence
  * or a course), each extracted on `work-extract`; the title, the skills and
  * the certificates then publish through `publishListing`, snapping against a
- * replica of the registry (the ESCO import's SQL, the US layer's SQL and the
- * certificate seed in node:sqlite; the v3 vectors in memory) with the
+ * replica of the registry (the ESCO import's SQL and the US layer's SQL in
+ * node:sqlite, no certificate token; the v3 vectors in memory) with the
  * vectors llama-embedding makes, as the phone does. As a hirer: the title and
  * an excerpt of the requirements, at most 1,000 characters, go through
  * `hirerQuery` with the sentence's query vector, and recall runs over the
@@ -640,7 +640,7 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
     // ── The report ───────────────────────────────────────────────────────
     say(`# The Work pipeline on real vacancies, ${MODEL} at ${DIMS}, ${date}`);
     say();
-    say(`${picked.length} vacancies sampled (seed ${seed}) from ${all.length} JobSpy pulled from Indeed (${byCountry(all)}), each both a listing and a hirer's sentence, through the real hosted models over the Workers AI REST API and the phone's embeddings from llama-embedding (${MODEL}, ${DIMS} wide), against a replica of the registry: ${replica.tokens} tokens and ${replica.labels} labels (ESCO, the US layer and the certificate seed), ${index.size} label vectors. τ ${tau.auto} and ${tau.low}. ${((Date.now() - started) / 60_000).toFixed(1)} minutes; hosted cost ${usd(extractCost + publishCost + hireCost + thinkCost)} (extraction ${usd(extractCost)}, publishing ${usd(publishCost)}, hirer queries ${usd(hireCost)}, the Thinking re-asks ${usd(thinkCost)}).`);
+    say(`${picked.length} vacancies sampled (seed ${seed}) from ${all.length} JobSpy pulled from Indeed (${byCountry(all)}), each both a listing and a hirer's sentence, through the real hosted models over the Workers AI REST API and the phone's embeddings from llama-embedding (${MODEL}, ${DIMS} wide), against a replica of the registry: ${replica.tokens} tokens and ${replica.labels} labels (ESCO and the US layer; no certificate token), ${index.size} label vectors. τ ${tau.auto} and ${tau.low}. ${((Date.now() - started) / 60_000).toFixed(1)} minutes; hosted cost ${usd(extractCost + publishCost + hireCost + thinkCost)} (extraction ${usd(extractCost)}, publishing ${usd(publishCost)}, hirer queries ${usd(hireCost)}, the Thinking re-asks ${usd(thinkCost)}).`);
     say();
     say('## The listings: blocks and extraction');
     say();

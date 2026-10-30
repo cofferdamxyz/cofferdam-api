@@ -13,7 +13,8 @@
  *
  * Input: a snapshot of the registry's vectors in NDJSON (`{ id, values,
  * metadata }`, for example `test/registry.reembed.test.ts`'s v2 files):
- * every line's id and metadata are kept and its `metadata.label` is embedded
+ * every line's id and metadata are kept, except the deleted certificate
+ * seed's (kind `cert`, source `seed`), and its `metadata.label` is embedded
  * again: the label as the index holds it, cut at 200 characters (5 of ESCO's
  * 229,810), with runs of white space as one space (131), since
  * llama-embedding reads one text a line. Output: `vectors-v3-001.ndjson`, …
@@ -75,12 +76,18 @@ if (!widths.includes(DIMS) || widths.some((w) => !Number.isInteger(w) || w < 1 |
   process.exit(2);
 }
 
-// The snapshot: ids, metadata, the texts to embed.
+// The snapshot: ids, metadata, the texts to embed. The deleted certificate seed's labels (kind cert, source seed;
+// workspace decision 0070, 2026-10-30), which snapshots written before then hold, are left out: no index loads them.
 const lines = [];
+let seedLeftOut = 0;
 for (const f of readdirSync(input).filter((f) => /\.ndjson$/.test(f)).sort()) {
   for (const line of readFileSync(join(input, f), 'utf8').split('\n')) {
     if (!line) continue;
     const { id, metadata } = JSON.parse(line);
+    if (metadata?.kind === 'cert' && metadata?.source === 'seed') {
+      seedLeftOut++;
+      continue;
+    }
     lines.push({ id, metadata });
     if (limit && lines.length >= limit) break;
   }
@@ -89,7 +96,7 @@ for (const f of readdirSync(input).filter((f) => /\.ndjson$/.test(f)).sort()) {
 const clean = (label) => label.replace(/\s+/g, ' ').trim();
 const texts = [...new Set(lines.map((l) => clean(l.metadata.label)))];
 const row = new Map(texts.map((t, i) => [t, i]));
-console.log(`${lines.length} vectors, ${texts.length} distinct texts, ${batch} a run`);
+console.log(`${lines.length} vectors, ${texts.length} distinct texts, ${batch} a run${seedLeftOut ? `; ${seedLeftOut} of the deleted certificate seed left out` : ''}`);
 
 /** One llama-embedding run over these texts: their unit vectors, in order. */
 function embed(chunk) {

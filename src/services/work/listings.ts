@@ -307,8 +307,7 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
       const s = await snap(deps.registry, claimSnapInput(kind, raw, draft, client.claims?.get(claimKey(kind, raw))));
       calls.push(...s.calls);
       if (s.token) {
-        // A certificate adds its level, the levels below it and its modules beside it (`cert:nccco-rigger/level-2`).
-        for (const t of s.tokens) tokens.add(t);
+        tokens.add(s.token);
         if (s.labelEn) english.push(s.labelEn);
       }
     }

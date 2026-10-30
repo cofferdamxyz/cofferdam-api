@@ -549,15 +549,45 @@ describe('snap: retrieve, then choose', () => {
       expect(calls).toEqual([]);
     });
 
-    it('reads a certificate’s labels in every language, since the seed gives each label one credential', async () => {
+    it('reads a certificate’s labels as a skill’s: in the string’s own language and English', async () => {
       const calls: FakeCall[] = [];
       const { deps, store } = await registry({}, calls);
-      // A Portuguese claim kept as an alias of BOSIET, its words in an order no seed label has, so only the D1 label can read it.
+      // A Portuguese claim kept as an alias of BOSIET.
       const alias = 'Segurança offshore BOSIET básico';
       await store.addLabels([{ labelId: await labelIdOf('cert:bosiet', 'pt', labelNorm(alias)), token: 'cert:bosiet', lang: 'pt', label: alias, labelNorm: labelNorm(alias), kind: 'observed', embedded: false }], 1);
-      expect(await snap(deps, { kind: 'cert', raw: 'Segurança Offshore BOSIET Básico', lang: 'en' })).toMatchObject({ decision: 'label', token: 'cert:bosiet' });
+      expect(await snap(deps, { kind: 'cert', raw: 'Segurança Offshore BOSIET Básico', lang: 'pt' })).toMatchObject({ decision: 'label', token: 'cert:bosiet' });
+      // The English label decides a Spanish string too.
+      expect(await snap(deps, { kind: 'cert', raw: 'BOSIET', lang: 'es' })).toMatchObject({ decision: 'label', token: 'cert:bosiet' });
       expect(calls).toEqual([]);
+      // Another language's label decides nothing without a model: an English string goes on to the embedding, which answers nothing here.
+      expect(await snap(deps, { kind: 'cert', raw: 'Segurança Offshore BOSIET Básico', lang: 'en' })).toMatchObject({ decision: 'unmatched', token: null });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed']);
     });
+  });
+
+  it('snaps a certificate as a skill: the band’s questions, its language without a market, and only a token that exists', async () => {
+    const calls: FakeCall[] = [];
+    const { deps, store, decisions } = await registry({ 'work-embed': embedAnswer({ 'BOSIET with CA-EBS': near(4, 13, 0.8) }), 'work-adjudicate': clef('c0', 0.9) }, calls);
+    // A market given to a certificate is never read: a claim names its own jurisdiction.
+    expect(await snap(deps, { kind: 'cert', raw: 'BOSIET with CA-EBS', lang: 'en', market: 'us-tx' })).toMatchObject({ decision: 'chosen', token: 'cert:bosiet', probability: 0.9 });
+    const asked = calls.find((c) => c.op === 'work-adjudicate')!.input as { state: string; questions: { match: { criteria: Record<string, string> } } };
+    expect(asked.state).toBe('A certificate or licence written in English by a worker or a hirer:\nBOSIET with CA-EBS');
+    expect(Object.keys(asked.questions)).toEqual(['match', 'specialization']);
+    expect(asked.questions.match.criteria).toEqual({ c0: 'BOSIET', none: 'None of these: a different certificate or licence' });
+    expect(JSON.stringify(asked)).not.toMatch(/us-tx|United States/);
+    expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-adjudicate']);
+    expect(decisions()).toMatchObject([{ decision: 'chosen', token: 'cert:bosiet' }]);
+    // The claim is kept as an alias, as a skill's is, so the same string snaps by label next time.
+    expect((await store.tokensByLabel(labelNorm('BOSIET with CA-EBS'), 'cert', ['en'])).map((t) => t.token)).toEqual(['cert:bosiet']);
+  });
+
+  it('keeps a hirer’s words out of the aliases: a certificate they reach at τ_auto or through Clef leaves no label', async () => {
+    const { deps, db, decisions } = await registry({ 'work-embed': embedAnswer({ 'BOSIET card': near(4, 13, 0.99), 'BOSIET with CA-EBS': near(4, 13, 0.8) }), 'work-adjudicate': clef('c0', 0.9) });
+    expect(await snap(deps, { kind: 'cert', raw: 'BOSIET card', lang: 'en', mint: false })).toMatchObject({ decision: 'auto', token: 'cert:bosiet' });
+    expect(await snap(deps, { kind: 'cert', raw: 'BOSIET with CA-EBS', lang: 'en', mint: false })).toMatchObject({ decision: 'chosen', token: 'cert:bosiet' });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM registry_labels WHERE kind = 'observed'").get()).toEqual({ n: 0 });
+    // The decisions are still recorded, for review.
+    expect(decisions()).toMatchObject([{ decision: 'auto', token: 'cert:bosiet' }, { decision: 'chosen', token: 'cert:bosiet' }]);
   });
 
   it('never mints a certificate', async () => {
