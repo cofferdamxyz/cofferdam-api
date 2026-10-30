@@ -2,3 +2,4 @@
 .kotlin/
 build/
 local.properties
+app/nightly-jni/
