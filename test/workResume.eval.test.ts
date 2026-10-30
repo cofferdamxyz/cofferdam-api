@@ -38,7 +38,11 @@
  * RESUME_OUT pages, cache and run data (default ~/Development/cv-bench/runs),
  * RESUME_PLAN `CATEGORY:N,…` (default 50 from the trades, 25 engineering,
  * 25 IT), RESUME_SEED (1), RESUME_CLOUD the two cloud readers, comma-separated
- * (default Gemma 4 and DeepSeek V4.1 Flash; empty for none), RESUME_PARALLEL
+ * (default Gemma 4 and DeepSeek V4.1 Flash; empty for none), RESUME_CLOUD_TEXT
+ * `1` (or `pdf`) or `ocr` to send one cloud reader the PDF's text layer or
+ * Apple Vision's lines instead of the page images, as a cloud parse would read
+ * a CV whose identity the phone stripped first (workspace decision 0021),
+ * RESUME_PARALLEL
  * resumes at once on the cloud (4), RESUME_CLEF_FLOOR Clef's floor (0.6),
  * RESUME_REVIEW=1 the full check. The cloud needs CLOUDFLARE_ACCOUNT_ID and
  * CLOUDFLARE_API_TOKEN; the local readers need their servers
@@ -497,6 +501,10 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     const floor = Number(process.env.RESUME_CLEF_FLOOR ?? 0.6);
     const review = process.env.RESUME_REVIEW === '1';
     if (cloudReaders.length > 2) throw new Error('RESUME_CLOUD names one or two readers, or none');
+    const cloudTextEnv = (process.env.RESUME_CLOUD_TEXT ?? '').trim();
+    if (cloudTextEnv && !['1', 'pdf', 'ocr'].includes(cloudTextEnv)) throw new Error('RESUME_CLOUD_TEXT must be 1 (or pdf) or ocr');
+    const cloudText: 'pdf' | 'ocr' | null = cloudTextEnv === 'ocr' ? 'ocr' : cloudTextEnv ? 'pdf' : null;
+    if (cloudText && cloudReaders.length !== 1) throw new Error('RESUME_CLOUD_TEXT reads text with one cloud reader');
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const token = process.env.CLOUDFLARE_API_TOKEN;
     if (cloudReaders.length && (!accountId || !token)) throw new Error('the cloud pipeline needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
@@ -538,7 +546,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     // `strict` (a partial match is not enough), `lesser` (LangExtract's default, a partial match aligns) or `both`.
     const ground = (process.env.RESUME_GROUND ?? '').trim();
     if (ground && !['strict', 'lesser', 'both'].includes(ground)) throw new Error('RESUME_GROUND must be strict, lesser or both');
-    if (ground || localReaders.some((x) => x.textSource === 'ocr')) {
+    if (ground || cloudText === 'ocr' || localReaders.some((x) => x.textSource === 'ocr')) {
       const ocr = spawnSync('swift', [join(__dirname, '..', 'scripts', 'work', 'ocr-pages.swift'), pagesDir, ...sample.map((r) => r.id)], { encoding: 'utf8', maxBuffer: 1 << 24 });
       if (ocr.status !== 0) throw new Error(`ocr-pages.swift exited ${ocr.status}: ${(ocr.stderr ?? '').split('\n').slice(-4).join(' ')}`);
       process.stdout.write(`${ocr.stdout.trim()}\n`);
@@ -555,7 +563,14 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         const pages = pagesOf(r.id);
         const [a, b] = await Promise.all(
           cloudReaders.map((model) =>
-            readOnce(cacheDir, model, r.id, async () => ({ model, result: await ai.run(model as never, parseRequest(model, { kind: 'image', pages }) as never, { signal: AbortSignal.timeout(180_000) } as never) })),
+            readOnce(cacheDir, cloudText ? `${model} ${cloudText === 'ocr' ? 'ocr' : 'text'}` : model, r.id, async () => ({
+              model,
+              result: await ai.run(
+                model as never,
+                parseRequest(model, cloudText ? { kind: 'text', text: cloudText === 'ocr' ? ocrOf(r.id) : textOf(r.id) } : { kind: 'image', pages }) as never,
+                { signal: AbortSignal.timeout(180_000) } as never,
+              ),
+            })),
           ),
         );
         let trace: PipelineTrace | null = null;
@@ -643,13 +658,16 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       }
     };
     const short = (m: string) => m.split('/').pop()!;
-    const cloudCacheReaders = cloudReaders.length ? cloudReaders : [];
+    const cloudCacheReaders = cloudReaders.length
+      ? cloudReaders.map((m) => (cloudText === 'ocr' ? `${m}, Apple Vision's lines` : cloudText ? `${m}, the text layer` : m))
+      : [];
     for (const r of sample) {
       const c = cloud.get(r.id);
       // The second reader and the pipeline only when there are two; the local readers below are scored either way.
       if (c) {
         addPath(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.reading ? readingGaps(c.a.reading) : [], c.a.ms, c.a.costMicroUsd);
-        groundedRows(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.ms, c.a.costMicroUsd, () => ocrOf(r.id));
+        // A reader that read the PDF's text layer is checked against that text, as a local text reader is.
+        groundedRows(`${short(cloudCacheReaders[0]!)} alone`, r, c.a.reading, c.a.ms, c.a.costMicroUsd, () => (cloudText === 'pdf' ? textOf(r.id) : ocrOf(r.id)));
       }
       if (c?.b) {
         addPath(`${short(cloudCacheReaders[1]!)} alone`, r, c.b.reading, c.b.reading ? readingGaps(c.b.reading) : [], c.b.ms, c.b.costMicroUsd);
@@ -839,7 +857,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     say(`# Real-resume benchmark, ${date}`);
     say();
     say(
-      `Generated by \`test/workResume.eval.test.ts\` (RESUME_EVAL=1; workspace decision 0021, the founder's exception of 2026-10-28) on ${sample.length} resumes of Kaggle's public LiveCareer dataset, seed ${seed}, outside every repository; ${excluded} of ${records.length} resumes carry an email or a phone number and are never sampled. Pages as the phone sends them (JPEG, long side 1,600 px). Each field is scored against the labels in the resume's own HTML: right (counting those the worker would also be asked about), or wrong, and a wrong field nobody would ask about is silent. Readings made with the parse prompt tagged \`${PROMPT_TAG}\`. Months: a job's length, a current job running to the resume's latest date, right within one month. Certificates: the keywords the certifications section names (OSHA, CDL, forklift, …). Counts only; no resume's text, title or date is in this file. ${Math.round((Date.now() - started) / 60_000)} min in all.`,
+      `Generated by \`test/workResume.eval.test.ts\` (RESUME_EVAL=1; workspace decision 0021, the founder's exception of 2026-10-28) on ${sample.length} resumes of Kaggle's public LiveCareer dataset, seed ${seed}, outside every repository; ${excluded} of ${records.length} resumes carry an email or a phone number and are never sampled. Pages as the phone sends them (JPEG, long side 1,600 px).${cloudText === 'ocr' ? " The cloud reader gets the lines Apple's Vision recognises on those pages instead of the pages, as it would read a photographed CV whose identity the phone stripped first." : cloudText ? " The cloud reader gets the PDF's text layer instead of the pages, as it would read a CV whose identity the phone stripped first." : ''} Each field is scored against the labels in the resume's own HTML: right (counting those the worker would also be asked about), or wrong, and a wrong field nobody would ask about is silent. Readings made with the parse prompt tagged \`${PROMPT_TAG}\`. Months: a job's length, a current job running to the resume's latest date, right within one month. Certificates: the keywords the certifications section names (OSHA, CDL, forklift, …). Counts only; no resume's text, title or date is in this file. ${Math.round((Date.now() - started) / 60_000)} min in all.`,
     );
     say();
     say('## All resumes');
