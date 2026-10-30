@@ -5,7 +5,10 @@
  * The registry replica the Mac-side benchmarks share (`test/workJobs.eval.test.ts`,
  * `test/workResume.eval.test.ts`): the ESCO import's SQL and the US layer's SQL
  * in node:sqlite, the v3 label vectors (EmbeddingGemma 2 at 768) in memory, and
- * the phone's embeddings from llama-embedding. Moved here unchanged from the
+ * the phone's embeddings from llama-embedding. A match answers with the
+ * metadata `token-registry-v3` holds, a national layer's region included, so
+ * the registry band shows an O*NET title as American English, as production
+ * does. Moved here unchanged from the
  * job-ad benchmark on 2026-10-28. Like production since 2026-10-30, it holds no
  * certificate token (workspace decision 0070), and it leaves out the deleted
  * certificate seed's vectors that v3 files written before then still carry.
@@ -31,6 +34,43 @@ interface Meta {
   label: string;
   source: string;
   isco: string;
+  /** A national layer's label: its region (`us`), which the registry band shows beside it. */
+  region?: string;
+}
+
+const v3Files = (dir: string) =>
+  readdirSync(dir)
+    .filter((f) => /^vectors-v3-\d{3}\.ndjson$/.test(f))
+    .sort();
+
+/**
+ * The region of every row a national layer's label holds, by row, as the v3
+ * files' metadata gives it (`national.ts`). Caches written before 2026-10-30
+ * kept no region, so the regions are read once from the files, row by row,
+ * the ids checked against the cache's, and kept beside it.
+ */
+function loadRegions(dir: string, cacheDir: string, rows: Meta[]): void {
+  const file = join(cacheDir, `v3-${DIMS}.regions.json`);
+  let byRow: Record<string, string>;
+  if (existsSync(file)) byRow = JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>;
+  else {
+    byRow = {};
+    let i = 0;
+    for (const f of v3Files(dir)) {
+      for (const line of readFileSync(join(dir, f), 'utf8').split('\n')) {
+        if (!line) continue;
+        // The id leads each line and the metadata ends it: neither needs the 768 values parsed.
+        const id = /^\{"id":"([^"]+)"/.exec(line)?.[1];
+        if (id !== rows[i]?.id) throw new Error(`${f}: row ${i} is ${id ?? 'unreadable'}, the cache's ${rows[i]?.id ?? 'end'}: delete ${cacheDir}`);
+        const region = (JSON.parse(line.slice(line.lastIndexOf('"metadata":') + 11, -1)) as { region?: unknown }).region;
+        if (typeof region === 'string') byRow[i] = region;
+        i++;
+      }
+    }
+    if (i !== rows.length) throw new Error(`the v3 files hold ${i} rows, the cache ${rows.length}: delete ${cacheDir}`);
+    writeFileSync(file, JSON.stringify(byRow));
+  }
+  for (const [i, region] of Object.entries(byRow)) rows[Number(i)]!.region = region;
 }
 
 /** The v3 vectors (`vectors-v3-NNN.ndjson`, 768 wide) in memory, with brute-force retrieval by kind; mints go to a side list. */
@@ -51,9 +91,7 @@ export class ReplicaIndex implements VectorIndex {
       idx.values = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
       for (const r of JSON.parse(readFileSync(meta, 'utf8')) as Meta[]) idx.rows.push(r);
     } else {
-      const files = readdirSync(dir)
-        .filter((f) => /^vectors-v3-\d{3}\.ndjson$/.test(f))
-        .sort();
+      const files = v3Files(dir);
       if (!files.length) throw new Error(`no vectors-v3-NNN.ndjson in ${dir}`);
       const chunks: Float32Array[] = [];
       for (const f of files) {
@@ -63,6 +101,7 @@ export class ReplicaIndex implements VectorIndex {
           if (r.values.length !== DIMS) throw new Error(`${f}: a vector of ${r.values.length}`);
           chunks.push(Float32Array.from(r.values));
           idx.rows.push({ id: r.id, token: r.metadata.token ?? '', kind: r.metadata.kind ?? '', lang: r.metadata.lang ?? '', label: r.metadata.label ?? '', source: r.metadata.source ?? '', isco: r.metadata.isco ?? '' });
+          if (typeof r.metadata.region === 'string') idx.rows[idx.rows.length - 1]!.region = r.metadata.region;
         }
         process.stdout.write(`${f}: ${idx.rows.length} vectors\n`);
       }
@@ -71,7 +110,13 @@ export class ReplicaIndex implements VectorIndex {
       mkdirSync(cacheDir, { recursive: true });
       writeFileSync(f32, Buffer.from(idx.values.buffer, idx.values.byteOffset, idx.values.byteLength));
       writeFileSync(meta, JSON.stringify(idx.rows));
+      const regions: Record<string, string> = {};
+      idx.rows.forEach((r, i) => {
+        if (r.region) regions[i] = r.region;
+      });
+      writeFileSync(join(cacheDir, `v3-${DIMS}.regions.json`), JSON.stringify(regions));
     }
+    loadRegions(dir, cacheDir, idx.rows);
     const lists = new Map<string, number[]>();
     idx.rows.forEach((r, i) => {
       // The deleted certificate seed's labels (kind cert, source seed), which v3 files written before 2026-10-30 still hold.
@@ -121,7 +166,7 @@ export class ReplicaIndex implements VectorIndex {
     }
     const out: IndexMatch[] = top.map(({ i, s }) => {
       const r = this.rows[i]!;
-      return { id: r.id, score: s, metadata: { token: r.token, kind: r.kind, lang: r.lang, label: r.label, source: r.source } };
+      return { id: r.id, score: s, metadata: { token: r.token, kind: r.kind, lang: r.lang, label: r.label, source: r.source, ...(r.region ? { region: r.region } : {}) } };
     });
     // Minted labels (the side list), the same filter.
     for (const v of this.extra.values()) {
