@@ -76,4 +76,15 @@ describe('sendWithRetry', () => {
     await expect(sendWithRetry(twice.opts)).rejects.toThrow(/timeout/);
     expect(twice.sent).toHaveLength(2);
   });
+
+  it('keeps the outcome when the report itself throws (the bigint log line of 2026-10-16 to 10-30)', async () => {
+    const report = () => {
+      throw new TypeError('Do not know how to serialize a BigInt');
+    };
+    const retried = harness(['429 Too Many Requests']);
+    expect(await sendWithRetry({ ...retried.opts, onAttemptError: report })).toBe(keccak256(RAW1));
+    expect(retried.sent).toEqual([RAW1, RAW1]);
+    const fatal = harness(['insufficient funds for gas']);
+    await expect(sendWithRetry({ ...fatal.opts, onAttemptError: report })).rejects.toThrow(/insufficient funds/);
+  });
 });

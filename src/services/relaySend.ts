@@ -14,7 +14,9 @@
  * Pure apart from the injected `sign` and `send`, so the tests drive it with
  * fakes. On 2026-10-16 a relay attempt failed after simulation passed and the
  * user's second try succeeded; the node's reason was not logged, so every
- * attempt now reports through `onAttemptError`.
+ * attempt now reports through `onAttemptError`. A report that throws never
+ * changes the outcome: from 2026-10-16 to 10-30 the relay's log line threw on
+ * the op's bigint nonce, and every refused send answered that error instead.
  */
 
 import { keccak256, type Hex } from 'viem';
@@ -62,7 +64,11 @@ export async function sendWithRetry(opts: SendWithRetryOptions): Promise<Hex> {
     } catch (err) {
       const message = messageOf(err);
       const cls = classifySendError(message);
-      opts.onAttemptError?.(attempt, cls, message);
+      try {
+        opts.onAttemptError?.(attempt, cls, message);
+      } catch {
+        // The report is only a log: it never changes what the relay does.
+      }
       if (cls === 'already_known') return keccak256(raw);
       if (cls === 'fatal' || attempt >= attempts) throw new Error(message, { cause: err });
       if (cls === 'nonce') raw = await opts.sign(true);

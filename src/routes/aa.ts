@@ -100,9 +100,18 @@ function revertReason(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** One structured log line per refused relay step (no signature, no key). */
+/** `JSON.stringify` replacer: a bigint (the op's nonce) as its decimal string, since a bare bigint makes it throw. */
+function bigintAsString(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
+
+/**
+ * One structured log line per refused relay step (no signature, no key). Until 2026-10-30 the bigint
+ * nonce made it throw, so every refused send answered `relay_failed` "Do not know how to serialize a
+ * BigInt" in place of the node's error, and a failed simulation lost its `simulation_failed`.
+ */
 function logRelay(event: string, op: PackedUserOperationWire, fields: Record<string, unknown>): void {
-  console.warn(JSON.stringify({ event, sender: op.sender, nonce: op.nonce, ...fields }));
+  console.warn(JSON.stringify({ event, sender: op.sender, nonce: op.nonce, ...fields }, bigintAsString));
 }
 
 /** Simulate from the relayer, admit, then submit with it (signed once, one retry). */
