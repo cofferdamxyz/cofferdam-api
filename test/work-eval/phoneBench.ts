@@ -44,10 +44,22 @@ export interface PhoneReader {
   /** With `input: "pdf"`, the phone parser's path to the text (cofferdam-app `modules/pdf-text`); `string` when absent. */
   pdfText?: PhonePdfMethod;
   /**
-   * A LiteRT-LM reader (the app's `modules/litert-lm`): the `.litertlm` file copied beside the plan, Metal (`gpu`) or the
-   * CPU, multi-token prediction on or off. It reads text with the schema as a regex, as `scripts/work/litert-answers.py` does on the Mac.
+   * A LiteRT-LM reader (the app's `modules/litert-lm`): the `.litertlm` file copied beside the plan, Metal (`gpu`), the
+   * Pixel's TPU (`npu`, its compiled file, whose context `contextLimit` holds) or the CPU, multi-token prediction on or
+   * off, and on the Pixel a `fallback` engine that reads again what the first cut at its context or left out of shape.
+   * It reads text with the schema as a regex, as `scripts/work/litert-answers.py` does on the Mac.
    */
-  litert?: { file: string; backend: 'gpu' | 'cpu'; mtp: boolean; activation?: 'f32' | 'f16' };
+  litert?: PhoneEngine & { fallback?: PhoneEngine };
+}
+
+/** A LiteRT-LM engine in the app's plan (cofferdam-app `readerBenchPlan.ts` `LiteRtEngine`). */
+export interface PhoneEngine {
+  file: string;
+  backend: 'gpu' | 'cpu' | 'npu';
+  mtp: boolean;
+  activation?: 'f32' | 'f16';
+  /** The engine's fixed context, prompt and answer together: 4,096 for the Pixel's TPU file. */
+  contextLimit?: number;
 }
 
 /** The cloud parse's text path for each CV, as the Mac's in-process LiteRT-LM reader receives it (`localRequest` with `schema: "regex"`). */
@@ -65,7 +77,10 @@ export interface PhoneText {
 
 /** The iPhone's text paths (cofferdam-app `modules/pdf-text`): PDFKit's string, attributed string, whole-page selection, the string's spaces rebuilt from the glyphs' positions, and Vision's recognition on the rendered page. */
 export const PHONE_PDF_METHODS = ['string', 'attributed', 'selection', 'rebuilt', 'vision'] as const;
-export type PhonePdfMethod = (typeof PHONE_PDF_METHODS)[number];
+export type IphonePdfMethod = (typeof PHONE_PDF_METHODS)[number];
+/** Every text path the app's `modules/pdf-text` offers: the iPhone's, and `pdfbox`, Apache PDFBox's Android port on Android. */
+export const APP_PDF_METHODS = [...PHONE_PDF_METHODS, 'pdfbox'] as const;
+export type PhonePdfMethod = (typeof APP_PDF_METHODS)[number];
 
 /** The text the phone's parser read from one CV's PDF, as the app writes it back (once per CV and path). */
 export interface PhonePdfText {
@@ -130,6 +145,14 @@ export interface PhoneRun {
   stoppedLimit: boolean | null;
   /** The answer's decode speed as the runtime reports it (llama.rn's timings, LiteRT-LM's benchmark info). */
   decodeTokensPerSec: number | null;
+  /** LiteRT-LM: the backend whose answer this is. */
+  backend?: PhoneEngine['backend'];
+  /** LiteRT-LM: the reader stopped the answer on a run of whitespace; `content` is what it read, closed (the app's `closeAnswer`). */
+  stalled?: boolean;
+  /** LiteRT-LM: tokens in the conversation once the answer ended. */
+  contextTokens?: number | null;
+  /** LiteRT-LM: the first engine's try, when this answer is its fallback's (the Pixel: the TPU's, before the CPU's). */
+  firstTry?: { backend: PhoneEngine['backend']; reason: string; error: string | null; msToJson: number; promptTokens: number | null; predictedTokens: number | null; contextTokens: number | null };
 }
 
 export interface PhoneResults {
@@ -295,10 +318,14 @@ export function phoneAnswers(
           choices: [{ index: 0, message: { role: 'assistant', content: answerOf(run) }, finish_reason: run.stoppedLimit ? 'length' : 'stop' }],
           usage: { prompt_tokens: run.promptTokens, completion_tokens: run.predictedTokens },
           timing: {
-            ms: run.msToJson,
+            // A fallback's answer took the first engine's try too, as the Pixel's test app counted it.
+            ms: run.msToJson + (run.firstTry?.msToJson ?? 0),
             ttftMs: run.msFirstToken,
             decodeTps: run.decodeTokensPerSec,
             peakFootprintMb: run.peakFootprint == null ? null : Math.round(run.peakFootprint / 1e6),
+            ...(run.backend ? { engine: run.backend } : {}),
+            ...(run.firstTry ? { firstTry: { backend: run.firstTry.backend, reason: run.firstTry.reason, ms: run.firstTry.msToJson } } : {}),
+            ...(run.stalled ? { stalled: true } : {}),
           },
         }
       : { error: run.error ?? 'the read failed' };
@@ -376,6 +403,7 @@ export function parsePhoneReaders(raw: string): PhoneReader[] {
 const isObject = (v: unknown): v is Record<string, unknown> => v != null && typeof v === 'object' && !Array.isArray(v);
 const numOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const strOrNull = (v: unknown) => (typeof v === 'string' ? v : null);
+const isBackend = (v: unknown): v is PhoneEngine['backend'] => v === 'gpu' || v === 'cpu' || v === 'npu';
 
 /** The phone's `results.json`, checked: throws when it is not the app's `v: 1` results. */
 export function parsePhoneResults(raw: unknown): PhoneResults {
@@ -403,6 +431,22 @@ export function parsePhoneResults(raw: unknown): PhoneResults {
       thermalAfter: strOrNull(r.thermalAfter),
       stoppedLimit: typeof r.stoppedLimit === 'boolean' ? r.stoppedLimit : null,
       decodeTokensPerSec: numOrNull(r.decodeTokensPerSec),
+      ...(isBackend(r.backend) ? { backend: r.backend } : {}),
+      ...(r.stalled === true ? { stalled: true } : {}),
+      ...(r.contextTokens !== undefined ? { contextTokens: numOrNull(r.contextTokens) } : {}),
+      ...(isObject(r.firstTry)
+        ? {
+            firstTry: {
+              backend: isBackend(r.firstTry.backend) ? r.firstTry.backend : 'npu',
+              reason: strOrNull(r.firstTry.reason) ?? '',
+              error: strOrNull(r.firstTry.error),
+              msToJson: numOrNull(r.firstTry.msToJson) ?? 0,
+              promptTokens: numOrNull(r.firstTry.promptTokens),
+              predictedTokens: numOrNull(r.firstTry.predictedTokens),
+              contextTokens: numOrNull(r.firstTry.contextTokens),
+            },
+          }
+        : {}),
     };
   });
   const obj = (v: unknown) => (isObject(v) ? v : {});
@@ -421,7 +465,7 @@ export function parsePhoneResults(raw: unknown): PhoneResults {
           texts: raw.texts.map((t, i): PhonePdfText => {
             const o = obj(t);
             if (typeof o.cv !== 'string' || typeof o.text !== 'string') throw new Error(`texts[${i}] has no cv or text`);
-            const method = (PHONE_PDF_METHODS as readonly string[]).includes(String(o.method)) ? (o.method as PhonePdfMethod) : 'string';
+            const method = (APP_PDF_METHODS as readonly string[]).includes(String(o.method)) ? (o.method as PhonePdfMethod) : 'string';
             return { cv: o.cv, method, pages: numOrNull(o.pages) ?? 0, chars: numOrNull(o.chars) ?? 0, ms: numOrNull(o.ms) ?? 0, text: o.text, error: strOrNull(o.error) };
           }),
         }

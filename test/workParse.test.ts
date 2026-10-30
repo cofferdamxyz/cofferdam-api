@@ -623,5 +623,41 @@ describe('the phones reading real resumes from their PDFs (test/workResumePhone.
     const vision = { ...litert, pdfText: 'vision' as const };
     expect(pdfPlan(['123'], [vision], 1, 'test').readers).toEqual([vision]);
   });
+
+  it("plans the Pixel's reader in the app, and times a CPU answer with the TPU's try before it", () => {
+    const pixel = {
+      ...litert,
+      label: 'Pixel',
+      pdfText: 'pdfbox' as const,
+      litert: {
+        file: 'gemma-4-E2B-it_Google_Tensor_G5.litertlm',
+        backend: 'npu' as const,
+        mtp: true,
+        activation: 'f32' as const,
+        contextLimit: 4096,
+        fallback: { file: 'gemma-4-E2B-it.litertlm', backend: 'cpu' as const, mtp: true, activation: 'f32' as const },
+      },
+    };
+    expect(pdfPlan(['123'], [pixel], 1, 'test').readers).toEqual([pixel]);
+    const firstTry = { backend: 'npu', reason: 'context', error: null, msToJson: 40_000, promptTokens: 3500, predictedTokens: 596, contextTokens: 4096 };
+    const results = parsePhoneResults({
+      v: 1,
+      readers: [],
+      runs: [
+        { reader: 'Pixel', cv: '123', run: 0, ok: true, text: '{"a":1}', content: '{"a":1}', msToJson: 60_000, backend: 'cpu', contextTokens: 5000, firstTry },
+        { reader: 'Pixel', cv: '456', run: 0, ok: true, text: '{"a":1, \n\n', content: '{"a":1}', msToJson: 20_000, backend: 'npu', stalled: true },
+      ],
+      texts: [
+        { cv: '123', method: 'pdfbox', pages: 1, chars: 7, ms: 100, text: 'Maria\n\n', error: null },
+        { cv: '456', method: 'pdfbox', pages: 1, chars: 4, ms: 90, text: 'Juan', error: null },
+      ],
+    });
+    expect(results.runs[0]).toMatchObject({ backend: 'cpu', contextTokens: 5000, firstTry });
+    expect(results.runs[1]).toMatchObject({ backend: 'npu', stalled: true });
+    const { answers } = phoneAnswers(results, 'Pixel', reader, 'pdfbox');
+    expect(answers[keyOf('Maria\n\n')]).toMatchObject({ timing: { ms: 100_000, engine: 'cpu', firstTry: { backend: 'npu', reason: 'context', ms: 40_000 } } });
+    // A stalled answer is scored as the app closed it.
+    expect(answers[keyOf('Juan')]).toMatchObject({ choices: [{ message: { content: '{"a":1}' } }], timing: { ms: 20_000, engine: 'npu', stalled: true } });
+  });
 });
 

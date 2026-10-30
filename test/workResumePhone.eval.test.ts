@@ -28,6 +28,10 @@
  *                         PDF's text on PHONE_ANDROID_TEXT's path (`contents` by default) read on the TPU,
  *                         and on the CPU with MTP when the TPU's 4,096 tokens cut the answer (the
  *                         founder's rule for long CVs).
+ *   PHONE_PDF_PLAN=android  writes the Pixel's plan for the app's own benchmark (the founder's ruling of
+ *                         2026-10-30: the PDFBox test inside the app) into `<PHONE_OUT>/android-plan/`:
+ *                         PDFBox's text, the TPU, and the CPU for what the TPU cuts or leaves out of shape.
+ *   PHONE_ANDROID_RESULTS=<results.json>  reads that run's results into `<PHONE_OUT>/android-app/`.
  *
  * Each path's text is compared with the Mac's text layer (`scripts/work/pdf-pages.swift`) word by word,
  * a recognised one also with the Mac's Vision lines, counts only; the real-resume benchmark then scores
@@ -54,7 +58,7 @@ import {
   phonePlan,
   PHONE_PDF_METHODS,
   wordAgreement,
-  type PhonePdfMethod,
+  type IphonePdfMethod,
   type PhoneReader,
 } from './work-eval/phoneBench.js';
 import { readResumeCsv } from './work-eval/resumeBench.js';
@@ -70,13 +74,15 @@ const list = <T extends string>(raw: string | undefined, allowed: readonly T[], 
 
 const pdfMode = process.env.PHONE_PDF_PLAN === '1';
 const iosExtract = list(process.env.PHONE_PDF_EXTRACT, PHONE_PDF_METHODS, 'PHONE_PDF_EXTRACT');
-const iosMethod = (list(process.env.PHONE_PDF_METHOD, PHONE_PDF_METHODS, 'PHONE_PDF_METHOD')[0] ?? 'string') as PhonePdfMethod;
-const iosFromText = list(process.env.PHONE_PDF_FROM_TEXT, PHONE_PDF_METHODS, 'PHONE_PDF_FROM_TEXT')[0] as PhonePdfMethod | undefined;
+const iosMethod: IphonePdfMethod = list(process.env.PHONE_PDF_METHOD, PHONE_PDF_METHODS, 'PHONE_PDF_METHOD')[0] ?? 'string';
+const iosFromText: IphonePdfMethod | undefined = list(process.env.PHONE_PDF_FROM_TEXT, PHONE_PDF_METHODS, 'PHONE_PDF_FROM_TEXT')[0];
 const iosResults = (process.env.PHONE_IOS_RESULTS ?? '').trim();
 const androidUrl = (process.env.PHONE_ANDROID ?? '').trim().replace(/\/+$/, '');
 const androidExtract = list(process.env.PHONE_ANDROID_EXTRACT, ANDROID_METHODS, 'PHONE_ANDROID_EXTRACT');
 const androidMethod = (list(process.env.PHONE_ANDROID_TEXT, ANDROID_METHODS, 'PHONE_ANDROID_TEXT')[0] ?? 'contents') as AndroidMethod;
-const RUN = pdfMode || !!iosResults || !!androidUrl;
+const androidAppPlan = process.env.PHONE_PDF_PLAN === 'android';
+const androidAppResults = (process.env.PHONE_ANDROID_RESULTS ?? '').trim();
+const RUN = pdfMode || !!iosResults || !!androidUrl || androidAppPlan || !!androidAppResults;
 
 const home = homedir();
 const dataset = process.env.RESUME_DIR ?? join(home, 'Development', 'cv-bench', 'kagle-pdf-dataset');
@@ -91,7 +97,7 @@ const TPU = 'gemma-4-E2B-it_Google_Tensor_G5.litertlm,npu,ctx=16384,spec=on,act=
 const CPU = 'gemma-4-E2B-it.litertlm,cpu,ctx=16384,spec=on,act=f32';
 const TPU_CONTEXT = 4_096;
 
-const IOS_WORDS: Record<PhonePdfMethod, string> = {
+const IOS_WORDS: Record<IphonePdfMethod, string> = {
   string: 'the text PDFKit gives',
   attributed: "PDFKit's attributed text",
   selection: "PDFKit's whole-page selection",
@@ -106,7 +112,7 @@ const ANDROID_WORDS: Record<AndroidMethod, string> = {
 };
 
 /** The iPhone's reader of a path's texts taken in an earlier run and carried in the plan. */
-const iosTextPhone = (method: PhonePdfMethod): PhoneReader => ({
+const iosTextPhone = (method: IphonePdfMethod): PhoneReader => ({
   label: `Gemma 4 E2B, LiteRT-LM, Metal, 32-bit, MTP, the ${method} text of an earlier run`,
   model: 'gemma-4-e2b',
   imageMaxTokens: null,
@@ -115,7 +121,7 @@ const iosTextPhone = (method: PhonePdfMethod): PhoneReader => ({
   litert: { file: 'gemma-4-E2B-it.litertlm', backend: 'gpu', mtp: true, activation: 'f32' },
 });
 /** The iPhone's reader in the app's plan: Metal, 32-bit activations, MTP (the founder's ruling of 2026-10-29), on a text path. */
-const iosPhone = (method: PhonePdfMethod): PhoneReader => ({
+const iosPhone = (method: IphonePdfMethod): PhoneReader => ({
   label: method === 'string' ? 'Gemma 4 E2B, LiteRT-LM, Metal, 32-bit, MTP, PDFKit' : `Gemma 4 E2B, LiteRT-LM, Metal, 32-bit, MTP, PDFKit ${method}`,
   model: 'gemma-4-e2b',
   imageMaxTokens: null,
@@ -125,7 +131,7 @@ const iosPhone = (method: PhonePdfMethod): PhoneReader => ({
   litert: { file: 'gemma-4-E2B-it.litertlm', backend: 'gpu', mtp: true, activation: 'f32' },
 });
 /** The benchmark's readers for the phones' answers: an answer's key is the body the benchmark builds for them. */
-const iosReader = (method: PhonePdfMethod): LocalReader => {
+const iosReader = (method: IphonePdfMethod): LocalReader => {
   const dir = join(out, method === 'string' ? 'ios' : `ios-${method}`);
   return {
     label: `Gemma 4 E2B LiteRT-LM on the iPhone 16, Metal, 32-bit, MTP, ${IOS_WORDS[method]}`,
@@ -142,6 +148,41 @@ const androidReader = (method: AndroidMethod): LocalReader => {
   return {
     // The text comes first: the benchmark's cache folder keeps a label's first 80 characters.
     label: `Gemma 4 E2B on the Pixel 10 from ${ANDROID_WORDS[method]}, LiteRT-LM 0.19.0, the TPU and the CPU for long CVs`,
+    answers: join(dir, 'answers.json'),
+    model: TPU,
+    paths: ['text'],
+    schema: 'regex',
+    maxTokens: MAX_TOKENS,
+    textDir: join(dir, 'texts'),
+  };
+};
+
+/**
+ * The Pixel's reader inside the app (the founder's ruling of 2026-10-30: the PDFBox test runs in the app's Local AI
+ * test, whose benchmark the test app does not have): PDFBox's text, the TPU file at 32 bits with MTP, and the CPU with
+ * MTP for each CV the TPU's 4,096 tokens cut or leave out of shape, as the test app read the twenty.
+ */
+const pixelAppPhone: PhoneReader = {
+  label: "Gemma 4 E2B in the app on the Pixel 10, PDFBox's text, the TPU and the CPU for long CVs",
+  model: 'gemma-4-e2b',
+  imageMaxTokens: null,
+  schema: 'regex',
+  input: 'pdf',
+  pdfText: 'pdfbox',
+  litert: {
+    file: 'gemma-4-E2B-it_Google_Tensor_G5.litertlm',
+    backend: 'npu',
+    mtp: true,
+    activation: 'f32',
+    contextLimit: TPU_CONTEXT,
+    fallback: { file: 'gemma-4-E2B-it.litertlm', backend: 'cpu', mtp: true, activation: 'f32' },
+  },
+};
+const pixelAppReader = (): LocalReader => {
+  const dir = join(out, 'android-app');
+  return {
+    // Where it ran comes first: the benchmark's cache folder keeps a label's first 80 characters.
+    label: "Gemma 4 E2B in the app on the Pixel 10 from PDFBox's text, LiteRT-LM 0.19.0, the TPU and the CPU for long CVs",
     answers: join(dir, 'answers.json'),
     model: TPU,
     paths: ['text'],
@@ -343,7 +384,43 @@ describe.skipIf(!RUN)('Real resumes on the phones, from their PDFs (live: the ph
       }
     }
 
-    const readers = [...PHONE_PDF_METHODS.map(iosReader), ...ANDROID_METHODS.map(androidReader)].filter((r) => existsSync(r.answers!));
+    if (androidAppPlan) {
+      const dir = join(out, 'android-plan');
+      mkdirSync(dir, { recursive: true });
+      const plan = pdfPlan(sample, [pixelAppPhone], 1, `test/workResumePhone.eval.test.ts, ${new Date().toISOString()}`);
+      writeFileSync(join(dir, 'plan.json'), JSON.stringify(plan, null, 1) + '\n');
+      writeFileSync(join(dir, PDF_PLAN_PAGE), BLANK_PNG);
+      for (const id of sample) copyFileSync(pdfOf(id), join(dir, `${id}.pdf`));
+      process.stdout.write(`plan: ${dir} (${sample.length} PDFs; reader ${pixelAppPhone.label})\n`);
+    }
+
+    if (androidAppResults) {
+      const results = parsePhoneResults(readJson<unknown>(androidAppResults));
+      const reader = pixelAppReader();
+      const { texts, answers } = phoneAnswers(results, pixelAppPhone.label, reader, 'pdfbox');
+      saveTexts(reader.textDir!, texts);
+      writeFileSync(reader.answers!, JSON.stringify(answers, null, 1) + '\n');
+      const parsed = (results.texts ?? []).filter((t) => t.method === 'pdfbox' && !t.error);
+      const mine = results.runs.filter((r) => r.reader === pixelAppPhone.label);
+      // Counts only: the parser, the engines, the fallbacks and the stalls.
+      const summary = {
+        device: results.device,
+        runtime: results.runtime,
+        parserMsMedian: median(parsed.map((t) => t.ms)),
+        parserMsMax: parsed.length ? Math.max(...parsed.map((t) => t.ms)) : null,
+        agreement: agreement(texts),
+        reads: mine.length,
+        failed: mine.filter((r) => !r.ok).length,
+        byBackend: Object.fromEntries(['npu', 'cpu'].map((b) => [b, mine.filter((r) => r.backend === b).length])),
+        fallbacks: mine.filter((r) => r.firstTry).map((r) => ({ reason: r.firstTry!.reason, firstMs: r.firstTry!.msToJson, ms: r.msToJson })),
+        stalled: mine.filter((r) => r.stalled).length,
+        readers: results.readers.map((r) => ({ label: r.label, loadMs: r.loadMs, error: r.error, fallback: (r as { fallback?: unknown }).fallback ?? null })),
+      };
+      writeFileSync(join(reader.answers!, '..', 'summary.json'), JSON.stringify(summary, null, 1) + '\n');
+      process.stdout.write(`Pixel in the app: ${Object.keys(answers).length} answers; ${JSON.stringify({ byBackend: summary.byBackend, fallbacks: summary.fallbacks.length, stalled: summary.stalled, failed: summary.failed })}\n`);
+    }
+
+    const readers = [...PHONE_PDF_METHODS.map(iosReader), ...ANDROID_METHODS.map(androidReader), pixelAppReader()].filter((r) => existsSync(r.answers!));
     process.stdout.write(`RESUME_LOCAL for the benchmark: ${JSON.stringify(readers)}\n`);
   }, 4 * 3_600_000);
 });
