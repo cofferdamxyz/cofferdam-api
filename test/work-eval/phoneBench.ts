@@ -25,7 +25,7 @@ import { withSchemaAsRegex } from './schemaRegex.js';
 export interface PhoneReader {
   /** The name in the report. */
   label: string;
-  /** The app's model id (`src/lib/localAi/models.ts`): `lfm3-vl-2b`, `gemma-4-e2b`, `minicpm-v-4.7-1b`. */
+  /** The app's reader id (`src/lib/localAi/models.ts`): `gemma-4-e2b`, since llama.rn's readers (`lfm3-vl-2b`, `minicpm-v-4.7-1b`) left the app on 2026-10-30. */
   model: string;
   /** llama.rn's `image_max_tokens` for the projector; null for the model's own limit. */
   imageMaxTokens: number | null;
@@ -554,8 +554,9 @@ export function phoneReport(
       '(`src/lib/localAi/readerBench.ts`), on the synthetic CVs of `test/fixtures/work/parse/` with the cloud parse\'s request ' +
       '(`parseRequest`: its system prompt, user text and JSON schema), thinking off, temperature 0, ' +
       `scored by \`test/work-eval/parseScore.ts\` like \`test/workParse.eval.test.ts\`. Device: ${d.model ?? 'unknown'}, ${d.os ?? 'unknown OS'}, ` +
-      `${d.totalMemory != null ? `${gb(d.totalMemory)} GB` : 'unknown'} of memory; llama.rn ${results.runtime.llamaRn ?? 'unknown'}, llama.cpp ${results.runtime.llamaCpp ?? 'unknown'}` +
-      `${results.runtime.litertLm ? `, LiteRT-LM ${results.runtime.litertLm}` : ''}; ` +
+      `${d.totalMemory != null ? `${gb(d.totalMemory)} GB` : 'unknown'} of memory; ` +
+      // The app has run LiteRT-LM alone since 2026-10-30; results from before name llama.rn and llama.cpp too.
+      `${[results.runtime.llamaRn ? `llama.rn ${results.runtime.llamaRn}` : '', results.runtime.llamaCpp ? `llama.cpp ${results.runtime.llamaCpp}` : '', results.runtime.litertLm ? `LiteRT-LM ${results.runtime.litertLm}` : ''].filter(Boolean).join(', ') || 'runtime unknown'}; ` +
       `app ${results.app.version ?? '?'} (${results.app.build ?? '?'}). From ${results.startedAt} to ${results.finishedAt ?? 'an unfinished run'}.`,
     '',
     'Times are the phone\'s wall clock from the call: to the first answer token, and to the finished JSON (image, prompt and answer); ' +
