@@ -374,14 +374,26 @@ export function parsePhoneReaders(raw: string): PhoneReader[] {
     if (input !== 'image' && input !== 'text' && input !== 'pdf') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].input must be "image", "text" or "pdf"`);
     let litert: PhoneReader['litert'];
     if (o.litert != null) {
-      const l = (o.litert ?? {}) as Record<string, unknown>;
-      if (typeof l.file !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.litertlm$/.test(l.file) || l.file.includes('..')) {
-        throw new Error(`WORK_PARSE_PHONE_READERS[${i}].litert.file must be a .litertlm file name`);
-      }
-      if (l.backend !== 'gpu' && l.backend !== 'cpu') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].litert.backend must be "gpu" or "cpu"`);
-      if (typeof l.mtp !== 'boolean') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].litert.mtp must be true or false`);
-      if (l.activation != null && l.activation !== 'f32' && l.activation !== 'f16') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].litert.activation must be "f32" or "f16"`);
-      litert = { file: l.file, backend: l.backend, mtp: l.mtp, ...(l.activation ? { activation: l.activation as 'f32' | 'f16' } : {}) };
+      const engine = (v: unknown, where: string): PhoneEngine => {
+        const l = (v ?? {}) as Record<string, unknown>;
+        if (typeof l.file !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.litertlm$/.test(l.file) || l.file.includes('..')) {
+          throw new Error(`${where}.file must be a .litertlm file name`);
+        }
+        if (l.backend !== 'gpu' && l.backend !== 'cpu' && l.backend !== 'npu') throw new Error(`${where}.backend must be "gpu", "cpu" or "npu"`);
+        if (typeof l.mtp !== 'boolean') throw new Error(`${where}.mtp must be true or false`);
+        if (l.activation != null && l.activation !== 'f32' && l.activation !== 'f16') throw new Error(`${where}.activation must be "f32" or "f16"`);
+        if (l.contextLimit != null && (!Number.isInteger(l.contextLimit) || (l.contextLimit as number) < 1)) throw new Error(`${where}.contextLimit must be a positive integer`);
+        return {
+          file: l.file,
+          backend: l.backend,
+          mtp: l.mtp,
+          ...(l.activation ? { activation: l.activation as 'f32' | 'f16' } : {}),
+          ...(l.contextLimit ? { contextLimit: l.contextLimit as number } : {}),
+        };
+      };
+      const where = `WORK_PARSE_PHONE_READERS[${i}].litert`;
+      const fallback = (o.litert as Record<string, unknown>).fallback;
+      litert = { ...engine(o.litert, where), ...(fallback != null ? { fallback: engine(fallback, `${where}.fallback`) } : {}) };
     }
     if (litert && (input === 'image' || schema !== 'regex')) throw new Error(`WORK_PARSE_PHONE_READERS[${i}]: a LiteRT-LM reader reads text with schema "regex"`);
     if (input === 'pdf' && !litert) throw new Error(`WORK_PARSE_PHONE_READERS[${i}].input "pdf" is for LiteRT-LM readers`);

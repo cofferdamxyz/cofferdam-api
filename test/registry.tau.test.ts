@@ -25,10 +25,12 @@
  * vectors (default `<ESCO_DIR>/tau-cache`: documents per model, prompt and
  * kind, read by text, `test/fixtures/work/registryTools.ts`; a text missing
  * from it is embedded and added). A model the plane cannot run
- * (`CLIENT_EMBED_MODELS`, EmbeddingGemma 2's GGUF) is embedded on the Mac
- * with brew's `llama-embedding`, as the phone embeds (TAU_GGUF names a local
- * .gguf in place of the Hugging Face cache); its documents can come from
- * `scripts/work/embed-registry.mjs`'s cache (TAU_CACHE=<its --out>/tau-cache).
+ * (`CLIENT_EMBED_MODELS`) is embedded on the Mac as the phone embeds: EmbeddingGemma
+ * 2's GGUF with brew's `llama-embedding` (TAU_GGUF names a local .gguf in place of
+ * the Hugging Face cache), its LiteRT-LM file, the v2 generation's, with
+ * `scripts/work/litert-embed.py` (TAU_FILE names the local .litertlm); its
+ * documents can come from `scripts/work/embed-registry.mjs`'s cache
+ * (TAU_CACHE=<its --out>/tau-cache).
  * TAU_WIDTHS (for example 768,512) scores the model also at narrower widths,
  * its vectors cut to their first dimensions and normalised again, each with
  * its own τ (EmbeddingGemma 2 is trained for that truncation), and reports
@@ -48,7 +50,7 @@ import { createInference } from '../src/services/inference/index.js';
 import { planEscoImport, type EscoLang } from '../src/services/work/esco.js';
 import { CLIENT_EMBED_MODELS, DEFAULT_TAU, EMBED_DIMS_BY_MODEL, embedTexts, labelLangs, type EmbedRole, type RegistryLabel } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
-import { llamaEmbed, readVectorCache, writeVectorCache } from './fixtures/work/registryTools.js';
+import { macEmbed, readVectorCache, writeVectorCache } from './fixtures/work/registryTools.js';
 
 const RUN = process.env.TAU_CALIBRATE === '1';
 const BASE = '@cf/baai/bge-m3';
@@ -130,6 +132,8 @@ describe.skipIf(!RUN)('τ for an embedding model, set against bge-m3 (opt-in, fr
     const escoDir = home(process.env.ESCO_DIR ?? '');
     if (!accountId || !apiToken || !escoDir) throw new Error('TAU_CALIBRATE needs ESCO_DIR, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
     const target = process.env.TAU_MODEL ?? '@cf/google/embeddinggemma-300m';
+    // The target's local file when the plane cannot run it: a .gguf (TAU_GGUF, or llama.cpp's Hugging Face cache) or a .litertlm (TAU_FILE).
+    const localFile = process.env.TAU_FILE ? home(process.env.TAU_FILE) : process.env.TAU_GGUF ? home(process.env.TAU_GGUF) : undefined;
     const perKind = Number(process.env.TAU_N ?? 1_000);
     const cacheDir = home(process.env.TAU_CACHE ?? join(escoDir, 'tau-cache'));
     mkdirSync(cacheDir, { recursive: true });
@@ -156,9 +160,9 @@ describe.skipIf(!RUN)('τ for an embedding model, set against bge-m3 (opt-in, fr
       const embed = async (texts: string[], role: EmbedRole, dims: number): Promise<Float32Array> => {
         const out = new Float32Array(texts.length * dims);
         if (local) {
-          // llama.cpp on the Mac: 4,000 texts a run, each run loads the model once.
+          // On the Mac (llama.cpp for a GGUF, LiteRT-LM for its file): 4,000 texts a run, each run loads the model once.
           for (let i = 0; i < texts.length; i += 4_000) {
-            llamaEmbed(model, texts.slice(i, i + 4_000), role, process.env.TAU_GGUF ? home(process.env.TAU_GGUF) : undefined).forEach((v, j) => unitInto(out, (i + j) * dims, v));
+            macEmbed(model, texts.slice(i, i + 4_000), role, localFile).forEach((v, j) => unitInto(out, (i + j) * dims, v));
             process.stdout.write(`${model} ${role} ${Math.min(i + 4_000, texts.length)} of ${texts.length}\n`);
           }
           return out;
@@ -198,7 +202,7 @@ describe.skipIf(!RUN)('τ for an embedding model, set against bge-m3 (opt-in, fr
         return out;
       };
       // A model's first calls can outlast the op's 10 s while it starts (EmbeddingGemma, 2026-10-25 and 2026-10-26).
-      let dims = local ? llamaEmbed(model, ['plumber'], 'document', process.env.TAU_GGUF ? home(process.env.TAU_GGUF) : undefined)[0]!.length : 0;
+      let dims = local ? macEmbed(model, ['plumber'], 'document', localFile)[0]!.length : 0;
       if (!local) {
         let dimsProbe = await embedTexts(inference, ['plumber'], { role: 'document' });
         for (let attempt = 0; !dimsProbe.ok && attempt < 6; attempt++) {
@@ -354,7 +358,7 @@ describe.skipIf(!RUN)('τ for an embedding model, set against bge-m3 (opt-in, fr
     const report = [
       `# τ for ${target}${variants.length > 1 ? ` at ${variants.length} widths` : ''}, set against ${BASE}, ${date}`,
       '',
-      `ESCO v1.2.1's alternative and hidden labels, ${perKind} strings each of occupations and of skills in English, Portuguese and Spanish, the same for both models, each snapped as a query against every other label of its kind (${plan.labels.filter((l) => l.token.startsWith('pos:')).length} occupation and ${plan.labels.filter((l) => l.token.startsWith('skill:')).length} skill labels; the string's own words on its token left out), ${CLIENT_EMBED_MODELS.has(target) ? `${BASE} over the Workers AI REST API and ${target} with llama.cpp's llama-embedding, both on the Mac` : 'over the Workers AI REST API from the Mac'}. Retrieval as the registry's: the 20 nearest labels, best per token, τ_auto through a label in the string's language or English. Right means the token whose label the string is. Texts a model would not embed (bge-m3 ${refusedBy.get(BASE) ?? 0}, ${target} ${refusedBy.get(variants[0]!) ?? 0}) are left out of its labels and its strings.`,
+      `ESCO v1.2.1's alternative and hidden labels, ${perKind} strings each of occupations and of skills in English, Portuguese and Spanish, the same for both models, each snapped as a query against every other label of its kind (${plan.labels.filter((l) => l.token.startsWith('pos:')).length} occupation and ${plan.labels.filter((l) => l.token.startsWith('skill:')).length} skill labels; the string's own words on its token left out), ${CLIENT_EMBED_MODELS.has(target) ? `${BASE} over the Workers AI REST API and ${target} with ${target.startsWith('litertlm:') ? "LiteRT-LM's Python API on the CPU (scripts/work/litert-embed.py)" : "llama.cpp's llama-embedding"}, both on the Mac` : 'over the Workers AI REST API from the Mac'}. Retrieval as the registry's: the 20 nearest labels, best per token, τ_auto through a label in the string's language or English. Right means the token whose label the string is. Texts a model would not embed (bge-m3 ${refusedBy.get(BASE) ?? 0}, ${target} ${refusedBy.get(variants[0]!) ?? 0}) are left out of its labels and its strings.`,
       '',
       `${variants.length > 1 ? `At each width (the vectors cut to their first dimensions and normalised again, from the same embedding), ` : ''}${target}'s τ_auto is the lowest that takes no more strings without Clef than bge-m3's ${DEFAULT_TAU.auto} does (${pct(baseTaken)}), so the band carries what it carries today and the gain is in precision: an auto-take is final, and under OD-27 its alias counts at once, so precision is not traded for fewer Clef calls. Its τ_low is the highest, below that, that leaves out no more strings whose token was among the best ${SHOWN} than bge-m3's at ${DEFAULT_TAU.low} (${pct(baseLost)}). Wrong takes are a share of all strings: what τ_auto snaps wrongly without a model.`,
       '',

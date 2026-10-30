@@ -14,8 +14,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { EMBED_PROMPTS_BY_MODEL, EMBEDDINGGEMMA_2_GGUF } from '../src/services/work/registry.js';
-import { cacheStem, exportedLabelLine, ggufOf, readLabelExport, readVectorCache, writeVectorCache } from './fixtures/work/registryTools.js';
+import { CLIENT_EMBED_MODELS, EMBED_DIMS_BY_MODEL, EMBED_PROMPTS_BY_MODEL, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT } from '../src/services/work/registry.js';
+import { cacheStem, exportedLabelLine, ggufOf, litertOf, readLabelExport, readVectorCache, writeVectorCache } from './fixtures/work/registryTools.js';
 
 const dirs: string[] = [];
 const scratch = () => {
@@ -33,6 +33,7 @@ describe('the vector cache', () => {
     expect(cacheStem('@cf/google/embeddinggemma-300m', 'skill')).toMatch(/^embeddinggemma-300m-doc-[0-9a-f]{8}-skill$/);
     // The script's names (scripts/work/embed-registry.mjs): no colon or slash in a file name.
     expect(cacheStem(EMBEDDINGGEMMA_2_GGUF, 'pos')).toBe('embeddinggemma-2-GGUF-Q8_0-doc-34669e56-pos');
+    expect(cacheStem(EMBEDDINGGEMMA_2_LITERT, 'skill')).toBe('embeddinggemma-2-text-270m-litert-lm-embeddinggemma-2-text-270m.litertlm-doc-34669e56-skill');
   });
 
   it('reads a vector only for the text it was made from, and no vector for a text the model refused', () => {
@@ -79,6 +80,21 @@ describe('EmbeddingGemma 2 on the Mac', () => {
     const script = readFileSync(join(__dirname, '..', 'scripts', 'work', 'embed-registry.mjs'), 'utf8');
     expect(script.match(/const DOCUMENT = '([^']*)';/)?.[1]).toBe(EMBED_PROMPTS_BY_MODEL[EMBEDDINGGEMMA_2_GGUF]!.document);
     expect(script).toContain("option('hf', 'ggml-org/embeddinggemma-2-GGUF:Q8_0')");
-    expect(script).toContain('`embeddinggemma-2-GGUF-Q8_0-doc-${');
+    // The script names the τ cache as cacheStem does, for either artefact.
+    expect(script).toContain(`const GGUF_MODEL = '${EMBEDDINGGEMMA_2_GGUF}';`);
+    expect(script).toContain(`const LITERT_MODEL = '${EMBEDDINGGEMMA_2_LITERT}';`);
+    expect(script).toContain("MODEL_ID.split('/').pop().replace(/[^A-Za-z0-9._-]+/g, '-')");
+  });
+
+  it("reads the LiteRT-LM file from the v2 generation's model id, which the plane cannot run, at 768 values with the same prompts", () => {
+    expect(litertOf(EMBEDDINGGEMMA_2_LITERT)).toBe('embeddinggemma-2-text-270m.litertlm');
+    expect(litertOf(EMBEDDINGGEMMA_2_GGUF)).toBeNull();
+    expect(litertOf('litertlm:a/b:c.gguf')).toBeNull();
+    expect(CLIENT_EMBED_MODELS.has(EMBEDDINGGEMMA_2_LITERT)).toBe(true);
+    expect(EMBED_DIMS_BY_MODEL[EMBEDDINGGEMMA_2_LITERT]).toBe(768);
+    expect(EMBED_PROMPTS_BY_MODEL[EMBEDDINGGEMMA_2_LITERT]).toEqual(EMBED_PROMPTS_BY_MODEL[EMBEDDINGGEMMA_2_GGUF]);
+    for (const script of ['tier2-floor.mjs', 'embed-registry.mjs']) {
+      expect(readFileSync(join(__dirname, '..', 'scripts', 'work', script), 'utf8')).toContain(`const LITERT_MODEL = '${EMBEDDINGGEMMA_2_LITERT}';`);
+    }
   });
 });

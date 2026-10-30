@@ -354,25 +354,41 @@ export function vectorizeIndex(binding: Vectorize): VectorIndex {
 // ── Embeddings ──────────────────────────────────────────────────────────────
 
 /**
- * EmbeddingGemma 2 on the phone (llama.rn), as a model id the plane pins: the
- * GGUF artefact itself, since Workers AI does not run it. Its vectors come
- * from the client and from a Mac script (`scripts/work/embed-registry.mjs`),
- * never from the plane, and only an index generation of its own holds them
- * (`token-registry-v3`, `jobs-listings-v3`).
+ * EmbeddingGemma 2's GGUF, as the phone ran it through llama.rn until
+ * 2026-10-30. Never published: the v3 generation it was to define
+ * (`token-registry-v3`, `jobs-listings-v3`) gave way to the LiteRT-LM file's v2
+ * below when llama.rn left the app; kept for the evaluations that measured it
+ * (its vectors from `scripts/work/embed-registry.mjs`).
  */
 export const EMBEDDINGGEMMA_2_GGUF = 'gguf:ggml-org/embeddinggemma-2-GGUF:Q8_0';
 
 /**
+ * EmbeddingGemma 2 on the phone through LiteRT-LM, as a model id the plane
+ * pins: the artefact itself, Google's text-only file in its repository
+ * (`litertlm:<repo>:<file>`), since Workers AI does not run it. Its vectors
+ * come from the client and from a Mac script (`scripts/work/embed-registry.mjs
+ * --litert`), never from the plane, and only the v2 index generation holds
+ * them (`token-registry-v2`, `jobs-listings-v2`): the founder's ruling of
+ * 2026-10-30 (workspace decision 0068), since its int4 vectors are not the
+ * GGUF's (cosine 0.990 at the median, `test/work-eval/embedder-litert-2026-10-30.md`)
+ * and v1 is the only generation ever published.
+ */
+export const EMBEDDINGGEMMA_2_LITERT = 'litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm';
+
+/**
  * The vector size of each model `work-embed` may be pinned to; any other model
  * fails closed. Each generation of indexes holds one model's vectors: v1
- * bge-m3's 1024, v2 EmbeddingGemma's 768 (decision 0067, rule 7), v3
- * EmbeddingGemma 2's 768 from the phone. Pinning another model in production
- * needs new indexes of its size and every label and listing embedded again.
+ * bge-m3's 1024, the one published; v2 EmbeddingGemma 2's 768 from the phone's
+ * LiteRT-LM file (2026-10-30). EmbeddingGemma's 768 on Workers AI (decision
+ * 0067, rule 7) and the GGUF's were measured for generations never published.
+ * Pinning another model in production needs new indexes of its size and every
+ * label and listing embedded again.
  */
 export const EMBED_DIMS_BY_MODEL: Readonly<Record<string, number>> = {
   '@cf/baai/bge-m3': 1024,
   '@cf/google/embeddinggemma-300m': 768,
   [EMBEDDINGGEMMA_2_GGUF]: 768,
+  [EMBEDDINGGEMMA_2_LITERT]: 768,
 };
 
 /**
@@ -381,7 +397,7 @@ export const EMBED_DIMS_BY_MODEL: Readonly<Record<string, number>> = {
  * sent its vector (`readClientVector`), and a snap without one meets the
  * registry by exact label only.
  */
-export const CLIENT_EMBED_MODELS: ReadonlySet<string> = new Set([EMBEDDINGGEMMA_2_GGUF]);
+export const CLIENT_EMBED_MODELS: ReadonlySet<string> = new Set([EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT]);
 
 /** How far a client vector's length may be from 1. */
 export const UNIT_NORM_TOLERANCE = 1e-3;
@@ -424,6 +440,7 @@ export const EMBED_PROMPTS_BY_MODEL: Readonly<Record<string, Readonly<Record<Emb
   '@cf/google/embeddinggemma-300m': { query: 'task: search result | query: ', document: 'title: none | text: ' },
   // The phone and the Mac script prefix the same two (the coordinator's spec, 2026-10-26).
   [EMBEDDINGGEMMA_2_GGUF]: { query: 'task: search result | query: ', document: 'title: none | text: ' },
+  [EMBEDDINGGEMMA_2_LITERT]: { query: 'task: search result | query: ', document: 'title: none | text: ' },
 };
 
 export interface EmbedOptions extends ExecutorOptions {

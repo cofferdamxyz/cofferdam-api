@@ -12,15 +12,18 @@
  * - the read-only export of the labels the plane minted, which no import file
  *   holds and a new index needs too (`wrangler d1 execute --json`, the runbook's
  *   query);
- * - embeddings on the Mac for a model the plane cannot run (EmbeddingGemma 2's
- *   GGUF), through brew's `llama-embedding`, as the script and the phone make them.
+ * - embeddings on the Mac for a model the plane cannot run, as the scripts and the
+ *   phone make them: EmbeddingGemma 2's GGUF through brew's `llama-embedding`, and
+ *   its LiteRT-LM file, the v2 generation's (workspace decision 0068), through
+ *   `scripts/work/litert-embed.py` (`macEmbed` picks by the model's id).
  */
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { vectorLine } from '../../../src/services/work/esco.js';
 import {
@@ -153,4 +156,50 @@ export function llamaEmbed(model: string, texts: readonly string[], role: EmbedR
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** The `.litertlm` file a client-embedded model names (`litertlm:<repo>:<file>`), else null. */
+export function litertOf(model: string): string | null {
+  if (!model.startsWith('litertlm:')) return null;
+  const file = model.split(':').pop()!;
+  return file.endsWith('.litertlm') ? file : null;
+}
+
+const LITERT_EMBED = join(dirname(fileURLToPath(import.meta.url)), '../../../scripts/work/litert-embed.py');
+
+/**
+ * Texts embedded on the Mac with LiteRT-LM (`scripts/work/litert-embed.py`, `uv run`), as
+ * the phone embeds them: the role's prompt before each text, LiteRT-LM's defaults (special
+ * tokens, pooling, L2 normalisation) on the CPU. `file` is the local `.litertlm` the model's
+ * id names, which this does not download. Runs of white space are one space, as
+ * `llamaEmbed` writes them. Stops on a failed run or a vector of another size.
+ */
+export function litertEmbed(model: string, texts: readonly string[], role: EmbedRole, file: string): number[][] {
+  const dims = EMBED_DIMS_BY_MODEL[model];
+  if (!litertOf(model) || !dims) throw new Error(`${model} is no LiteRT-LM file of a known size`);
+  if (!texts.length) return [];
+  const prompt = EMBED_PROMPTS_BY_MODEL[model]?.[role] ?? '';
+  const dir = mkdtempSync(join(tmpdir(), 'litert-embed-'));
+  try {
+    const inp = join(dir, 'texts.txt');
+    const out = join(dir, 'vectors.f32');
+    writeFileSync(inp, texts.map((t) => prompt + t.replace(/\s+/g, ' ').trim()).join('\n') + '\n');
+    const run = spawnSync('uv', ['run', '--quiet', LITERT_EMBED, '--model', file, '--in', inp, '--out', out, '--dims', String(dims)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+    if (run.status !== 0) throw new Error(`litert-embed exited ${run.status}: ${(run.stderr ?? '').split('\n').filter((l) => !/^(INFO|WARNING|I0000|W0000)/.test(l)).slice(-5).join(' ')}`);
+    const buf = readFileSync(out);
+    const all = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+    if (all.length !== texts.length * dims) throw new Error(`litert-embed wrote ${all.length} values for ${texts.length} texts of ${dims}`);
+    return texts.map((_, i) => Array.from(all.subarray(i * dims, (i + 1) * dims)));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** A client-embedded model's texts on the Mac, by its id: LiteRT-LM for a `litertlm:` file (which `file` must name), llama.cpp for a GGUF. */
+export function macEmbed(model: string, texts: readonly string[], role: EmbedRole, file?: string): number[][] {
+  if (litertOf(model)) {
+    if (!file) throw new Error(`${model} needs its local .litertlm file`);
+    return litertEmbed(model, texts, role, file);
+  }
+  return llamaEmbed(model, texts, role, file);
 }

@@ -14,9 +14,12 @@
  * gate a token miss meets in Curated mode, so the sweep asks, at each floor,
  * what share of each relation it admits.
  *
- *   node scripts/work/tier2-floor.mjs [--hf <repo:quant> | --model <path>] [--out test/work-eval]
+ *   node scripts/work/tier2-floor.mjs [--litert <file.litertlm> | --hf <repo:quant> | --model <path>] [--out test/work-eval]
  *
- * Needs brew's llama-embedding (llama.cpp). Writes nothing to Cloudflare.
+ * `--litert` measures the v2 generation's artefact, EmbeddingGemma 2's LiteRT-LM
+ * file, through `scripts/work/litert-embed.py` on the CPU, as the phone embeds
+ * (workspace decision 0068, 2026-10-30); otherwise its GGUF through brew's
+ * llama-embedding (llama.cpp). Writes nothing to Cloudflare.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -35,10 +38,12 @@ const opt = (name, fallback) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : fallback;
 };
+const litert = opt('--litert', null);
 const hf = opt('--hf', 'ggml-org/embeddinggemma-2-GGUF:Q8_0');
-const model = opt('--model', null) ?? resolveHf(hf);
+const model = litert ? null : (opt('--model', null) ?? resolveHf(hf));
 const out = opt('--out', 'test/work-eval');
-const generation = `gguf:${hf}`;
+const LITERT_MODEL = 'litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm';
+const generation = litert ? LITERT_MODEL : `gguf:${hf}`;
 
 /** llama.cpp's Hugging Face cache names a file `<owner>_<repo>_<file>`; the quant names the file. */
 function resolveHf(spec) {
@@ -58,8 +63,28 @@ function resolveHf(spec) {
 
 const oneLine = (t) => t.normalize('NFC').replace(/\s+/g, ' ').trim();
 
+/** One LiteRT-LM run (`litert-embed.py`): unit vectors, in order. */
+function embedLitert(texts) {
+  const dir = mkdtempSync(join(tmpdir(), 'tier2-floor-'));
+  try {
+    const inp = join(dir, 'texts.txt');
+    const outFile = join(dir, 'vectors.f32');
+    writeFileSync(inp, texts.map(oneLine).join('\n') + '\n');
+    const script = new URL('./litert-embed.py', import.meta.url).pathname;
+    const run = spawnSync('uv', ['run', '--quiet', script, '--model', litert, '--in', inp, '--out', outFile, '--dims', String(DIMS)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+    if (run.status !== 0) throw new Error(`litert-embed exited ${run.status}: ${(run.stderr ?? '').split('\n').filter((l) => !/^(INFO|WARNING|I0000|W0000)/.test(l)).slice(-5).join(' ')}`);
+    const buf = readFileSync(outFile);
+    const all = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+    if (all.length !== texts.length * DIMS) throw new Error(`litert-embed wrote ${all.length} values for ${texts.length} texts`);
+    return texts.map((_, i) => Array.from(all.subarray(i * DIMS, (i + 1) * DIMS)));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** One llama-embedding run: unit vectors, in order. */
 function embed(texts) {
+  if (litert) return embedLitert(texts);
   const dir = mkdtempSync(join(tmpdir(), 'tier2-floor-'));
   try {
     const file = join(dir, 'prompts.txt');
@@ -120,7 +145,7 @@ const texts = [
   ...prompts.map((p) => QUERY + p.text),
   ...fixtureListings.map((l) => DOCUMENT + l.text),
 ];
-console.log(`${texts.length} texts through ${model}`);
+console.log(`${texts.length} texts through ${litert ?? model}`);
 const t0 = Date.now();
 const vectors = embed(texts);
 console.log(`${((Date.now() - t0) / 1000).toFixed(1)} s`);
@@ -137,7 +162,7 @@ const say = (l = '') => lines.push(l);
 const date = new Date().toISOString().slice(0, 10);
 say(`# The Curated tier-2 floor for ${generation} at 2 widths, ${date}`);
 say();
-say(`What a listing scores against a hirer's sentence when it misses the token gate, by its relation to the sentence, embedded as recall embeds them: the sentence a query (\`${QUERY.trim()}\`), the listing's text a document (\`${DOCUMENT.trim()}\`; its titles, skills and certificates as the phone sends them, without the registry's English names), ${generation} through llama.cpp's llama-embedding on the Mac, mean-pooled and normalised, and at 512 the first 512 values normalised again. In Curated mode a token miss becomes a tier-2 finalist at \`TIER2_FLOOR\` (0.5 today, set on bge-m3's scale) or above, with no other gate, so the floor alone decides which of these a hirer is counted.`);
+say(`What a listing scores against a hirer's sentence when it misses the token gate, by its relation to the sentence, embedded as recall embeds them: the sentence a query (\`${QUERY.trim()}\`), the listing's text a document (\`${DOCUMENT.trim()}\`; its titles, skills and certificates as the phone sends them, without the registry's English names), ${generation} ${litert ? "through LiteRT-LM's Python API on the Mac's CPU, pooled as the file declares" : "through llama.cpp's llama-embedding on the Mac, mean-pooled"} and normalised, and at 512 the first 512 values normalised again. In Curated mode a token miss becomes a tier-2 finalist at \`TIER2_FLOOR\` (0.5 today, set on bge-m3's scale) or above, with no other gate, so the floor alone decides which of these a hirer is counted.`);
 say();
 say(`Two worlds. The synthetic set of \`test/fixtures/work/tier2-floor.json\`: ${synth.listings.length} listings and ${synth.sentences.length} sentences in English, Portuguese and Spanish, each sentence naming the listings that are right (the occupation it asks for, in any language), near (an adjacent occupation a hirer would still want counted as tier 2) and of the same industry (another occupation: never a finalist); every other listing is far. And the recall eval's world: the nine fixture CVs of \`cv-blocks.json\` as \`test/workRecall.eval.test.ts\` drafts them, against the ${prompts.length} hirer sentences of \`hirer-prompts.json\` that are not refused, right meaning the trade the sentence asks for in any region, and the recall eval's region-bound expectation beside it.`);
 
@@ -222,6 +247,6 @@ for (const width of WIDTHS) {
   }
 }
 
-const file = join(out, `tier2-floor-${hf.replace('/', '-').replace(':', '-')}-${WIDTHS.join('-')}-${date}.md`);
+const file = join(out, `tier2-floor-${litert ? 'litert-community-embeddinggemma-2-text-270m-litert-lm' : hf.replace('/', '-').replace(':', '-')}-${WIDTHS.join('-')}-${date}.md`);
 writeFileSync(file, lines.join('\n') + '\n');
 console.log(`wrote ${file}`);

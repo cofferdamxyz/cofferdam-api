@@ -61,7 +61,7 @@ import { clefInput, FIT_FLOOR, FIT_KEYS, fitQuestions, fitState, OTHER_FLOOR, re
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
 import { namespaceOf, REGION, type ListingRecord, type ListingStore, type Scope } from './listings.js';
-import { EMBEDDINGGEMMA_2_GGUF, embedTexts, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
+import { EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, embedTexts, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
 
 /** Results Vectorize returns per query when metadata comes back (decision 0019; re-check at build time). */
 export const RECALL_TOP_K = 50;
@@ -71,10 +71,16 @@ export const FINALIST_CAP = 50;
 export const TIER2_FLOOR = 0.5;
 /**
  * The tier-2 floor on each embedding model's own scale, as τ follows the pinned model: EmbeddingGemma 2's 0.65 was measured
- * on its scale (2026-10-27) and adopted by the founder with the v3 switch (decision 0069, 2026-10-28): a fifth fewer Clef
- * calls on real resumes for nothing lost.
+ * on its GGUF's scale (2026-10-27) and adopted by the founder (decision 0069, 2026-10-28): a fifth fewer Clef calls on real
+ * resumes for nothing lost. On the v2 generation's LiteRT-LM file (2026-10-30, `test/work-eval/tier2-floor-litert-*`),
+ * whose scale sits about 0.01 higher, 0.65 keeps the same right listings and admits 3.2% of far ones against 1.2%; the
+ * decision pass judges those, so the floor stays.
  */
-export const TIER2_FLOOR_BY_MODEL: Readonly<Record<string, number>> = { '@cf/baai/bge-m3': TIER2_FLOOR, [EMBEDDINGGEMMA_2_GGUF]: 0.65 };
+export const TIER2_FLOOR_BY_MODEL: Readonly<Record<string, number>> = {
+  '@cf/baai/bge-m3': TIER2_FLOOR,
+  [EMBEDDINGGEMMA_2_GGUF]: 0.65,
+  [EMBEDDINGGEMMA_2_LITERT]: 0.65,
+};
 export function tier2FloorFor(model: string): number {
   return TIER2_FLOOR_BY_MODEL[model] ?? TIER2_FLOOR;
 }

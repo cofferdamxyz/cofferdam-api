@@ -485,7 +485,18 @@ describe('the phone benchmark (the app reads, the Mac scores)', () => {
     ]);
     const lit = (o: Record<string, unknown>) => JSON.stringify([{ label: 'l', model: 'm', schema: 'regex', input: 'text', litert: { file: 'g.litertlm', backend: 'gpu', mtp: true, ...o } }]);
     expect(() => parsePhoneReaders(lit({ file: '../g.litertlm' }))).toThrow(/litertlm file name/);
-    expect(() => parsePhoneReaders(lit({ backend: 'npu' }))).toThrow(/backend/);
+    expect(() => parsePhoneReaders(lit({ backend: 'tpu' }))).toThrow(/backend/);
+    // The Pixel's reader: the TPU with its fixed context, and the CPU as the engine that reads again what it cuts.
+    const cpu = { file: 'c.litertlm', backend: 'cpu', mtp: true, activation: 'f32' };
+    expect(parsePhoneReaders(lit({ backend: 'npu', contextLimit: 4096, fallback: cpu }))[0]!.litert).toEqual({
+      file: 'g.litertlm',
+      backend: 'npu',
+      mtp: true,
+      contextLimit: 4096,
+      fallback: cpu,
+    });
+    expect(() => parsePhoneReaders(lit({ contextLimit: 0 }))).toThrow(/contextLimit/);
+    expect(() => parsePhoneReaders(lit({ fallback: { ...cpu, backend: 'tpu' } }))).toThrow(/fallback.backend/);
     expect(() => parsePhoneReaders(lit({ mtp: 1 }))).toThrow(/mtp/);
     expect(() => parsePhoneReaders(lit({ activation: 'bf16' }))).toThrow(/activation/);
     expect(parsePhoneReaders(lit({ activation: 'f32' }))[0]!.litert).toEqual({ file: 'g.litertlm', backend: 'gpu', mtp: true, activation: 'f32' });

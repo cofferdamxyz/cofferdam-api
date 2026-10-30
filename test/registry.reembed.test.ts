@@ -2,16 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Every registry label embedded again for a new `work-embed` model's index
- * (workspace decision 0067, rule 7: EmbeddingGemma into `token-registry-v2`),
- * from the Mac (opt-in: REEMBED=1). Nothing in D1 changes: a label's id is its
- * vector's id whatever the model, so the new index takes the same ids with new
- * values. Writes, for `wrangler vectorize upsert token-registry-v2`, one file
- * at a time:
+ * Every registry label embedded again for a new `work-embed` model's index,
+ * from the Mac (opt-in: REEMBED=1): the v2 generation, `token-registry-v2`,
+ * which holds EmbeddingGemma 2 from its LiteRT-LM file (the founder's ruling
+ * of 2026-10-30, workspace decision 0068; written first for decision 0067's
+ * EmbeddingGemma on Workers AI, a generation never published). Nothing in D1
+ * changes: a label's id is its vector's id whatever the model, so the new
+ * index takes the same ids with new values. Writes, for `wrangler vectorize
+ * upsert token-registry-v2`, one file at a time:
  *
  *   <REEMBED_OUT>/vectors-v2-001.ndjson, …   (5,000 vectors a file)
  *
- *   cd cofferdam-api && REEMBED=1 WORK_EMBED_MODEL=@cf/google/embeddinggemma-300m ESCO_DIR=~/Development/esco/import ONET_OUT=~/Development/us-layer-data/cofferdam-import direnv exec .. yarn vitest run test/registry.reembed.test.ts
+ *   cd cofferdam-api && REEMBED=1 WORK_EMBED_MODEL=litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm REEMBED_FILE=<the .litertlm> TAU_CACHE=~/Development/esco/import/registry-embeddinggemma-2-litert/tau-cache REEMBED_OUT=~/Development/esco/import/registry-embeddinggemma-2-litert ESCO_DIR=~/Development/esco/import ONET_OUT=~/Development/us-layer-data/cofferdam-import yarn vitest run test/registry.reembed.test.ts
+ *
+ * A model the plane cannot run (`CLIENT_EMBED_MODELS`) is embedded on the Mac
+ * as the phone embeds (`macEmbed`: LiteRT-LM for its file, which REEMBED_FILE
+ * names, or llama.cpp for a GGUF), with no Cloudflare credentials; its ESCO
+ * documents come from the cache `scripts/work/embed-registry.mjs --litert`
+ * writes (TAU_CACHE), so only what the cache lacks is embedded here.
  *
  * The labels, each embedded as a document:
  * - ESCO's, as the import planned them from the files in ESCO_DIR
@@ -33,8 +41,8 @@
  * may load (runbook, Cofferdam Work resources).
  *
  * WORK_EMBED_MODEL is required, so the run never writes another model's
- * vectors by mistake. Needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
- * (Workers AI run). Nothing is written to Cloudflare by this run.
+ * vectors by mistake. A model Workers AI runs needs CLOUDFLARE_ACCOUNT_ID and
+ * CLOUDFLARE_API_TOKEN. Nothing is written to Cloudflare by this run.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -45,9 +53,9 @@ import { describe, expect, it } from 'vitest';
 
 import { createInference } from '../src/services/inference/index.js';
 import { planEscoImport, vectorLine, type EscoLang } from '../src/services/work/esco.js';
-import { EMBED_DIMS_BY_MODEL, embedTexts } from '../src/services/work/registry.js';
+import { CLIENT_EMBED_MODELS, EMBED_DIMS_BY_MODEL, embedTexts } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
-import { exportedLabelLine, readLabelExport, readVectorCache } from './fixtures/work/registryTools.js';
+import { exportedLabelLine, macEmbed, readLabelExport, readVectorCache } from './fixtures/work/registryTools.js';
 
 const RUN = process.env.REEMBED === '1';
 const PER_FILE = 5_000;
@@ -63,16 +71,30 @@ describe.skipIf(!RUN)('registry labels embedded again for a new model (opt-in, f
     const model = process.env.WORK_EMBED_MODEL;
     const escoDir = home(process.env.ESCO_DIR ?? '');
     const onetOut = home(process.env.ONET_OUT ?? '');
-    if (!accountId || !apiToken || !escoDir || !onetOut || !model) throw new Error('REEMBED needs WORK_EMBED_MODEL, ESCO_DIR, ONET_OUT, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
+    // A model the plane cannot run is embedded on the Mac, as the phone embeds it, with no Workers AI call.
+    const local = model ? CLIENT_EMBED_MODELS.has(model) : false;
+    const localFile = process.env.REEMBED_FILE ? home(process.env.REEMBED_FILE) : undefined;
+    if (!escoDir || !onetOut || !model || (!local && (!accountId || !apiToken))) {
+      throw new Error('REEMBED needs WORK_EMBED_MODEL, ESCO_DIR, ONET_OUT and, for a model Workers AI runs, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
+    }
     const dims = EMBED_DIMS_BY_MODEL[model];
     if (!dims) throw new Error(`${model} is not in EMBED_DIMS_BY_MODEL`);
     const out = home(process.env.REEMBED_OUT ?? join(escoDir, `registry-${model.split('/').pop()}`));
     mkdirSync(out, { recursive: true });
-    const inference = createInference({ WORK_EMBED_MODEL: model }, { ai: createRestAi({ accountId, token: apiToken }) })!;
+    const inference = local ? null : createInference({ WORK_EMBED_MODEL: model }, { ai: createRestAi({ accountId: accountId!, token: apiToken! }) })!;
 
     /** Texts embedded as documents, 100 a call, PARALLEL calls at once; any failure after six tries stops the run. */
     const embed = async (texts: string[]): Promise<Map<string, number[]>> => {
       const vectors = new Map<string, number[]>();
+      if (!inference) {
+        // On the Mac (LiteRT-LM for its file, llama.cpp for a GGUF): 4,000 texts a run, each run loads the model once.
+        for (let i = 0; i < texts.length; i += 4_000) {
+          const chunk = texts.slice(i, i + 4_000);
+          macEmbed(model, chunk, 'document', localFile).forEach((v, j) => vectors.set(chunk[j]!, v));
+          process.stdout.write(`embedded ${Math.min(i + 4_000, texts.length)} of ${texts.length}\n`);
+        }
+        return vectors;
+      }
       const starts: number[] = [];
       for (let i = 0; i < texts.length; i += 100) starts.push(i);
       let next = 0;

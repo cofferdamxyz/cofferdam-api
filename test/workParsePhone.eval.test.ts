@@ -3,8 +3,9 @@
 
 /**
  * The whole-CV parse benchmark inside the app on a phone (opt-in; workspace
- * decision 0068): the readers only the app reaches, llama.rn on the iPhone's
- * Metal, measured with the truth and scorer of `test/workParse.eval.test.ts`.
+ * decision 0068): the readers only the app reaches, Gemma 4 E2B through
+ * LiteRT-LM on the iPhone's Metal and the Pixel's TPU, measured with the truth
+ * and scorer of `test/workParse.eval.test.ts`.
  * The app's half is cofferdam-app's Local AI test screen (`src/lib/localAi/readerBench.ts`).
  *
  * 1. Plan: the cloud parse's request (`parseRequest`: system prompt, user text,
@@ -16,8 +17,9 @@
  *
  *    WORK_PARSE_PHONE_RUNS sets the reads in a row per reader and CV (5), and
  *    WORK_PARSE_PHONE_READERS the readers (a JSON array of `{label, model,
- *    imageMaxTokens?, schema?, input?, litert?}`; `DEFAULT_READERS` below when
- *    absent). A reader with `input: "text"` reads the CV's OCR lines through
+ *    imageMaxTokens?, schema?, input?, litert?}`; when absent, `DEFAULT_READERS`
+ *    below, the iPhone's or with WORK_PARSE_PHONE_DEVICE=android the Pixel's;
+ *    the app refuses any reader but LiteRT-LM's since 2026-10-30). A reader with `input: "text"` reads the CV's OCR lines through
  *    the parse's text path, which the plan then carries (`text`); one with
  *    `litert: {file, backend, mtp}` and `schema: "regex"` reads them through
  *    LiteRT-LM with the schema as a regex, as the Mac's in-process reader does,
@@ -47,16 +49,41 @@ const PLAN_DIR = process.env.WORK_PARSE_PHONE_PLAN;
 const RESULTS = process.env.WORK_PARSE_PHONE;
 
 /**
- * The readers of decision 0068's iPhone check (2026-10-28): LFM3-VL on the full page and at 1,024 image tokens, Gemma 4
- * E2B at its own image limit and at 280 tokens, each with the schema as llama.rn's `json_schema` over a formatted prompt,
- * the path that reads like `llama-server` (`response_format` made LFM3-VL write its header again on llama.rn).
+ * The phones' readers since llama.rn left the app (decision 0068, 2026-10-30): Gemma 4 E2B through LiteRT-LM reading the
+ * CV's text with the schema as a regex, as each phone read twenty real resumes at the founder's bar. The iPhone: Metal at
+ * 32-bit activations with multi-token prediction. The Pixel (`WORK_PARSE_PHONE_DEVICE=android`): the Tensor G5's TPU file
+ * with its fixed 4,096-token context, then the CPU with MTP for what the TPU cuts or leaves out of shape. Each `.litertlm`
+ * file comes over the cable beside the plan, or from the app's downloaded document reader, which holds the same files.
  */
-const DEFAULT_READERS: PhoneReader[] = [
-  { label: 'LFM3-VL-2B QAD-Q4_0, full page', model: 'lfm3-vl-2b', imageMaxTokens: null, schema: 'json' },
-  { label: 'LFM3-VL-2B QAD-Q4_0, 1,024 image tokens', model: 'lfm3-vl-2b', imageMaxTokens: 1024, schema: 'json' },
-  { label: 'Gemma 4 E2B Q4_0, up to 1,120 image tokens', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'json' },
-  { label: 'Gemma 4 E2B Q4_0, 280 image tokens', model: 'gemma-4-e2b', imageMaxTokens: 280, schema: 'json' },
-];
+const DEFAULT_READERS: Record<'ios' | 'android', PhoneReader[]> = {
+  ios: [
+    {
+      label: 'Gemma 4 E2B, LiteRT-LM, Metal, 32-bit, MTP',
+      model: 'gemma-4-e2b',
+      imageMaxTokens: null,
+      schema: 'regex',
+      input: 'text',
+      litert: { file: 'gemma-4-E2B-it.litertlm', backend: 'gpu', mtp: true, activation: 'f32' },
+    },
+  ],
+  android: [
+    {
+      label: 'Gemma 4 E2B, LiteRT-LM, TPU, then CPU, 32-bit, MTP',
+      model: 'gemma-4-e2b',
+      imageMaxTokens: null,
+      schema: 'regex',
+      input: 'text',
+      litert: {
+        file: 'gemma-4-E2B-it_Google_Tensor_G5.litertlm',
+        backend: 'npu',
+        mtp: true,
+        activation: 'f32',
+        contextLimit: 4096,
+        fallback: { file: 'gemma-4-E2B-it.litertlm', backend: 'cpu', mtp: true, activation: 'f32' },
+      },
+    },
+  ],
+};
 
 interface FixtureCv {
   id: string;
@@ -81,7 +108,8 @@ function freePath(dir: string, stem: string): string {
 
 describe.skipIf(!PLAN_DIR)('Whole-CV parse on a phone: the plan', () => {
   it('writes the plan and the CV pages for the app', () => {
-    const readers = process.env.WORK_PARSE_PHONE_READERS ? parsePhoneReaders(process.env.WORK_PARSE_PHONE_READERS) : DEFAULT_READERS;
+    const device = process.env.WORK_PARSE_PHONE_DEVICE === 'android' ? 'android' : 'ios';
+    const readers = process.env.WORK_PARSE_PHONE_READERS ? parsePhoneReaders(process.env.WORK_PARSE_PHONE_READERS) : DEFAULT_READERS[device];
     const runs = Number(process.env.WORK_PARSE_PHONE_RUNS ?? 5);
     const all = cvs();
     const plan = phonePlan(all, readers, runs, `cofferdam-api test/workParsePhone.eval.test.ts, ${new Date().toISOString()}`);
