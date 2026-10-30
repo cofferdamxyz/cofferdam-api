@@ -691,7 +691,7 @@ describe('the locale the model steps read', () => {
         [officer],
       );
       const m = market ? { market } : {};
-      // ESCO's Spanish label decides a Spanish string from any market: a curated list, not the locale, is its fix.
+      // ESCO's Spanish label decides a Spanish string from any market: the locale is not its fix, and no curated list will be (workspace OD-28).
       expect(await snap(deps, { kind: 'pos', raw: 'Instructor', lang: 'es', ...m }), market).toMatchObject({ decision: 'label', token: 'pos:air-force-officer' });
       expect(await snap(deps, { kind: 'pos', raw: 'Plomero Oficial', lang: 'es', ...m }), market).toMatchObject({ decision: 'auto', token: 'pos:plumber' });
       expect(calls.map((c) => c.op), market).toEqual(['work-embed']);
