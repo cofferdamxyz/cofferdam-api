@@ -80,7 +80,12 @@
  * language, the titles against the search term that found their ad, recall
  * by ISCO relation, the pivot's English names, and the strings whose snaps
  * differ, judged by the Thinking model with the ad's own words (JOBS_JUDGE of
- * them, default 400; 0 judges none).
+ * them, default 400; 0 judges none) and counted by cause (`causeOf`) with a
+ * sign test. In every arm a band call (Clef's, the pivot's) that throws is
+ * tried again, twice at most, unless the registry cancelled it
+ * (`withBandRetries`): transient errors strike the arms unevenly, since they
+ * run one after the other, and a string whose call failed all three tries in
+ * either arm, or that Clef answered with nothing, is left out of the judge.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -98,10 +103,28 @@ import { hirerQuery, type HireDeps } from '../src/services/work/hire.js';
 import { claimKey, D1ListingStore, listingText, publishListing, type ClaimVectors, type ListingDraft, type PublishDeps } from '../src/services/work/listings.js';
 import { callCostMicroUsd } from '../src/services/work/meter.js';
 import { tier2FloorFor } from '../src/services/work/recall.js';
-import { DEFAULT_TAU_BY_MODEL, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, labelLangs, labelNorm, PIVOT_FIELDS, tauFor, validPivot, type RegistryDeps, type TokenKind, type VectorIndex } from '../src/services/work/registry.js';
+import { DEFAULT_TAU_BY_MODEL, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, labelLangs, labelNorm, PIVOT_FIELDS, tauFor, validPivot, type RegistryDeps, type SnapRecord, type TokenKind, type VectorIndex } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 import { memoryIndex } from './fixtures/work/fakes.js';
-import { armsOf, bandKey, judgeMessages, judgePick, marketPhrases, namesMarket, stringKey, termRelation, withoutMarket, type Arm, type Relation } from './work-eval/localeArms.js';
+import {
+  armsOf,
+  bandKey,
+  CAUSES,
+  causeOf,
+  judgeMessages,
+  judgePick,
+  marketPhrases,
+  namesMarket,
+  signTest,
+  stringKey,
+  termRelation,
+  withBandRetries,
+  withoutMarket,
+  type Arm,
+  type ArmSnap,
+  type Cause,
+  type Relation,
+} from './work-eval/localeArms.js';
 import { embedAll, GENERATION_OF_MODEL, loadReplica, ReplicaIndex } from './work-eval/replica.js';
 
 const RUN = process.env.JOBS_EVAL === '1';
@@ -302,6 +325,9 @@ const cell = (t: string) => cut(t.replace(/\s+/g, ' ').replace(/\|/g, '\\|'), 80
 const reasoningCost = (u: { tokensIn: number; tokensOut: number }) => u.tokensIn * 0.3 + u.tokensOut * 1.2;
 
 interface Decision {
+  /** When the snap started (`created_at`) and when it recorded this decision (ms; null if the eval did not see it end). */
+  at: number;
+  end: number | null;
   kind: TokenKind;
   raw: string;
   lang: string;
@@ -348,6 +374,8 @@ type Phase = 'publish' | 'hire';
 /** One Clef call in the registry's band, as the arm sent it. */
 interface ClefEntry {
   phase: Phase;
+  /** When the call was first sent (ms): a string's first answer is the one first asked, retries left out. */
+  startedAt: number;
   /** The state's first line: the kind and the locale, as sent. */
   head: string;
   /** The state's last line: the string. */
@@ -360,9 +388,22 @@ interface ClefEntry {
   probabilities: Record<string, number>;
 }
 
+/** A band call (Clef's or the pivot's) that still failed on its third try, which the registry read as no answer. */
+interface BandFailure {
+  phase: Phase;
+  /** When the call was first sent (ms). */
+  startedAt: number;
+  op: string;
+  /** The string it was about (`stringKey`). */
+  key: string | null;
+  error: string;
+}
+
 /** One answer of the pivot, as the arm asked it: the English name, or null when it named nothing valid. */
 interface PivotEntry {
   phase: Phase;
+  /** When the call was first sent (ms), as for Clef's. */
+  startedAt: number;
   key: string | null;
   english: string | null;
 }
@@ -393,6 +434,9 @@ interface ArmRun {
   workerDecisions: number;
   clefLog: ClefEntry[];
   pivots: PivotEntry[];
+  /** The band calls that failed three times, and how many tries the band calls took again, by phase. */
+  failures: BandFailure[];
+  retried: Record<Phase, number>;
   /** Each vacancy's title token, by pseudonym. */
   titleToken: Map<string, string | null>;
   /** Every token the arm reached or showed Clef, with its English name and ISCO code (a mint's has none). */
@@ -531,6 +575,10 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
       const clefLog: ClefEntry[] = [];
       const pivots: PivotEntry[] = [];
       const leaks: string[] = [];
+      const failures: BandFailure[] = [];
+      const retried: Record<Phase, number> = { publish: 0, hire: 0 };
+      // The errors the retried tries met (a timeout, the API's status and code), each with how often.
+      const retryErrors = new Map<string, number>();
       let rewritten = 0;
       let phase: Phase = 'publish';
       const pivotModel = await seam.model('work-pivot');
@@ -544,19 +592,34 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
             if (namesMarket(input)) rewritten++;
             if (namesMarket(sent)) leaks.push(`${op}: ${cell(JSON.stringify(sent))}`);
           }
-          const result = await seam.run(op, sent, call);
+          // A band call (Clef's or the pivot's) that throws is tried again, twice at most, unless the registry cancelled it
+          // (`withBandRetries`); one that fails three times fails in the registry too. Answers are paired with the snap that
+          // asked by when the call started, retries left out.
+          const startedAt = Date.now();
+          const result = await withBandRetries(
+            op,
+            call,
+            () => seam.run(op, sent, call),
+            (error, final) => {
+              if (final) failures.push({ phase, startedAt, op, key: bandKey(sent), error });
+              else {
+                retried[phase]++;
+                retryErrors.set(error, (retryErrors.get(error) ?? 0) + 1);
+              }
+            },
+          );
           if (op === 'work-adjudicate' && typeof sent.state === 'string') {
             const a = (result as { answers?: { match?: { choice?: unknown; probabilities?: Record<string, unknown> } } } | null)?.answers?.match;
             const probabilities: Record<string, number> = {};
             for (const [k, v] of Object.entries(a?.probabilities ?? {})) if (typeof v === 'number') probabilities[k] = v;
             const stateLines = sent.state.split('\n');
             const criteria = (sent.questions as { match?: { criteria?: Record<string, string> } } | undefined)?.match?.criteria ?? {};
-            clefLog.push({ phase, head: stateLines[0] ?? '', raw: stateLines[stateLines.length - 1] ?? '', key: bandKey(sent.state), entries: { ...criteria }, choice: typeof a?.choice === 'string' ? a.choice : null, probabilities });
+            clefLog.push({ phase, startedAt, head: stateLines[0] ?? '', raw: stateLines[stateLines.length - 1] ?? '', key: bandKey(sent.state), entries: { ...criteria }, choice: typeof a?.choice === 'string' ? a.choice : null, probabilities });
           }
           if (op === 'work-pivot') {
             const read = readFieldsAnswer(pivotModel, PIVOT_FIELDS, result);
             const english = read.ok ? read.fields.english?.value : null;
-            pivots.push({ phase, key: bandKey(sent), english: typeof english === 'string' ? validPivot(english) : null });
+            pivots.push({ phase, startedAt, key: bandKey(sent), english: typeof english === 'string' ? validPivot(english) : null });
           }
           return result;
         },
@@ -574,7 +637,21 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
           await index.deleteByIds(ids);
         },
       };
-      const registry: RegistryDeps = { inference, store: replica.store, index: armIndex, ...(pivotBand ? { pivotBand: true } : {}) };
+      // When each snap ended, by its decision's id: from its start (`created_at`) to then is the span its band calls fall in.
+      const endedAt = new Map<string, number>();
+      const store = new Proxy(replica.store, {
+        get(target, prop, receiver) {
+          if (prop === 'recordDecision') {
+            return (r: SnapRecord) => {
+              endedAt.set(r.id, Date.now());
+              return target.recordDecision(r);
+            };
+          }
+          const value: unknown = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        },
+      });
+      const registry: RegistryDeps = { inference, store, index: armIndex, ...(pivotBand ? { pivotBand: true } : {}) };
       const listings = new D1ListingStore(replica.db.d1);
       {
         const d1 = replica.db.d1 as unknown as { batch: (stmts: unknown[]) => Promise<unknown> };
@@ -616,8 +693,10 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
       phase = 'hire';
 
       // The snaps, as the registry recorded them: the hirer's come after every listing's.
-      const decisions = (replica.db.sqlite.prepare('SELECT kind, raw, lang, decision, token, score, probability, candidates, model FROM registry_decisions ORDER BY created_at, rowid').all() as Record<string, unknown>[]).map(
+      const decisions = (replica.db.sqlite.prepare('SELECT id, created_at, kind, raw, lang, decision, token, score, probability, candidates, model FROM registry_decisions ORDER BY created_at, rowid').all() as Record<string, unknown>[]).map(
         (r): Decision => ({
+          at: Number(r.created_at),
+          end: endedAt.get(String(r.id)) ?? null,
           kind: r.kind as TokenKind,
           raw: String(r.raw),
           lang: String(r.lang),
@@ -816,7 +895,7 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
         }
       }
       say();
-      say(`Clef in the band: ${decisions.filter((d) => d.model?.includes('clef')).length} calls; ${undecided.length} strings Clef left undecided with candidates at or above τ_low (none, below its floor, or no answer); the exact-label and auto paths need no model.${arm === 'language' ? ` The language arm took the market out of ${rewritten} requests.` : ''}`);
+      say(`Clef in the band: ${decisions.filter((d) => d.model?.includes('clef')).length} calls; ${undecided.length} strings Clef left undecided with candidates at or above τ_low (none, below its floor, or no answer); the exact-label and auto paths need no model. Retries of band calls (Clef's, the pivot's) after an error: ${retried.publish + retried.hire}${retryErrors.size ? ` (${[...retryErrors].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([e, k]) => `${k} × ${cell(e)}`).join('; ')})` : ''}; failed all three tries, which the registry read as no answer: ${failures.length}.${arm === 'language' ? ` The language arm took the market out of ${rewritten} requests.` : ''}`);
       say();
       say('A random 60 of the title snaps, for the eye:');
       say();
@@ -945,6 +1024,9 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
         workerDecisions,
         clef: clefLog,
         pivots,
+        failures,
+        retried,
+        retryErrors: Object.fromEntries(retryErrors),
         asked,
         thought: thought.map((t) => ({ raw: t.d.raw, kind: t.d.kind, lang: t.d.lang, decision: t.d.decision, pick: t.pick, ms: t.ms, usage: t.usage, text: t.text })),
         agreed: agreed.map((t) => ({ raw: t.d.raw, kind: t.d.kind, lang: t.d.lang, token: t.d.token, pick: t.pick, ms: t.ms, usage: t.usage })),
@@ -957,7 +1039,7 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
       // The arm's mints leave the index the next arm reads.
       await index.deleteByIds([...added]);
       const tokens = new Map([...tokenRows].map(([t, r]) => [t, { labelEn: r.labelEn, isco: r.iscoCode }]));
-      return { arm, decisions, workerDecisions, clefLog, pivots, titleToken, tokens, asked, costs: { publish: publishCost, hire: hireCost, think: thinkCost }, seconds: (Date.now() - armStarted) / 1000, rewritten };
+      return { arm, decisions, workerDecisions, clefLog, pivots, failures, retried, titleToken, tokens, asked, costs: { publish: publishCost, hire: hireCost, think: thinkCost }, seconds: (Date.now() - armStarted) / 1000, rewritten };
     };
 
     const runs: ArmRun[] = [];
@@ -993,27 +1075,57 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
     }
     const countryOf = (k: string) => contextOf.get(k)?.e.v.country ?? '?';
 
-    // The worker's snaps: each string's first decision in each arm.
-    const firsts = (r: ArmRun) => {
-      const m = new Map<string, Decision>();
+    /**
+     * The worker's snaps: each string's first snap in each arm, with the band calls it made: the string's calls first sent
+     * within the snap's span, from its start (`created_at`) to its decision's record, so a later snap's answers, a retry's
+     * late end and another listing's snap of the string are never read as its own. When a second snap of the string
+     * started before the first ended (two listings at once), which answers were the first's is unknown: `overlapped`.
+     */
+    interface FirstSnap {
+      d: Decision;
+      clef?: ClefEntry;
+      pivot?: PivotEntry;
+      failed: boolean;
+      overlapped: boolean;
+    }
+    const firstSnaps = (r: ArmRun): Map<string, FirstSnap> => {
+      const byKey = <T extends { phase: Phase; key: string | null }>(xs: readonly T[]) => {
+        const m = new Map<string, T[]>();
+        for (const x of xs) if (x.phase === 'publish' && x.key) (m.get(x.key) ?? m.set(x.key, []).get(x.key)!).push(x);
+        return m;
+      };
+      const [clefs, names, failed] = [byKey(r.clefLog), byKey(r.pivots), byKey(r.failures)];
+      const snaps = new Map<string, Decision[]>();
       for (const d of r.decisions.slice(0, r.workerDecisions)) {
         const k = stringKey(d.kind, d.lang, d.raw);
-        if (!m.has(k)) m.set(k, d);
+        (snaps.get(k) ?? snaps.set(k, []).get(k)!).push(d);
       }
-      return m;
+      const out = new Map<string, FirstSnap>();
+      for (const [k, ds] of snaps) {
+        const d = ds[0]!;
+        const end = d.end ?? Infinity;
+        const within = <T extends { startedAt: number }>(xs: readonly T[] | undefined) => (xs ?? []).filter((x) => x.startedAt >= d.at && x.startedAt <= end).sort((x, y) => x.startedAt - y.startedAt)[0];
+        out.set(k, { d, clef: within(clefs.get(k)), pivot: within(names.get(k)), failed: within(failed.get(k)) != null, overlapped: ds[1] != null && ds[1].at <= end });
+      }
+      return out;
     };
-    const [fa, fb] = both(firsts);
+    const [sa, sb] = both(firstSnaps);
+    /** One part of each string's first snap, where it has one. */
+    const partOf = <T>(snaps: Map<string, FirstSnap>, f: (s: FirstSnap) => T | undefined) => {
+      const out = new Map<string, T>();
+      for (const [k, s] of snaps) {
+        const v = f(s);
+        if (v !== undefined) out.set(k, v);
+      }
+      return out;
+    };
+    const [fa, fb] = [partOf(sa, (s) => s.d), partOf(sb, (s) => s.d)];
     const keys = [...new Set([...fa.keys(), ...fb.keys()])];
     const shared = keys.filter((k) => fa.has(k) && fb.has(k));
-    const differ = shared.filter((k) => fa.get(k)!.token !== fb.get(k)!.token);
+    const differing = shared.filter((k) => fa.get(k)!.token !== fb.get(k)!.token);
 
-    // Clef's answers on the bands both arms showed it: the same entries, the state's market the only difference.
-    const firstClef = (r: ArmRun) => {
-      const m = new Map<string, ClefEntry>();
-      for (const c of r.clefLog) if (c.phase === 'publish' && c.key && !m.has(c.key)) m.set(c.key, c);
-      return m;
-    };
-    const [ca, cb] = both(firstClef);
+    // Clef's answers on the bands both arms showed it, each string's first snap in each: the same entries, the state's market the only difference.
+    const [ca, cb] = [partOf(sa, (s) => s.clef), partOf(sb, (s) => s.clef)];
     const bandKeys = [...ca.keys()].filter((k) => cb.has(k));
     const sameBand = bandKeys.filter((k) => JSON.stringify(ca.get(k)!.entries) === JSON.stringify(cb.get(k)!.entries));
     const pOf = (c: ClefEntry) => (c.choice ? (c.probabilities[c.choice] ?? 0) : 0);
@@ -1023,15 +1135,25 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
     /** What an answer does at the shipped floor: a candidate by key, none, or neither (below the floor, or no answer). */
     const outcome = (c: ClefEntry) => (picked50(c) ? c.choice! : none50(c) ? 'none' : 'neither');
 
-    // The pivot's English names, where both arms asked it for the same string.
-    const firstPivot = (r: ArmRun) => {
-      const m = new Map<string, PivotEntry>();
-      for (const p of r.pivots) if (p.phase === 'publish' && p.key && !m.has(p.key)) m.set(p.key, p);
-      return m;
-    };
-    const [pa, pb] = both(firstPivot);
+    // The pivot's English names, where both arms asked it for the same string in its first snap.
+    const [pa, pb] = [partOf(sa, (s) => s.pivot), partOf(sb, (s) => s.pivot)];
     const pivotBoth = [...pa.keys()].filter((k) => pb.has(k));
     const pivotDiffer = pivotBoth.filter((k) => pa.get(k)!.english !== pb.get(k)!.english);
+
+    // Why each string's snaps differ (`causeOf`): a failed call, an overlap, the registry, Clef's answer, the pivot's name, or both.
+    const snapOf = ({ d, clef, pivot, failed, overlapped }: FirstSnap): ArmSnap => ({
+      decision: d.decision,
+      token: d.token,
+      nearest: d.candidates.filter((c) => c.pivot == null).map((c) => c.token),
+      clef: clef ? { entries: JSON.stringify(clef.entries), outcome: outcome(clef) } : null,
+      pivot: pivot ? { english: pivot.english } : null,
+      // Clef's answer with no probabilities is no answer to the registry, as a failed call is.
+      failed: failed || (clef != null && Object.keys(clef.probabilities).length === 0),
+      overlapped,
+    });
+    const causes = new Map<string, Cause>(differing.map((k) => [k, causeOf(snapOf(sa.get(k)!), snapOf(sb.get(k)!))]));
+    /** The strings whose snaps differ for a reason the market can be behind: what the judge reads. */
+    const differ = differing.filter((k) => causes.get(k) !== 'failed');
 
     // The judge: the strings whose snaps differ, with the ad's own words, every token either arm reached by English name only.
     interface Judged {
@@ -1067,10 +1189,12 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
       const tokens = [...new Set([...da.candidates.map((c) => c.token), ...db.candidates.map((c) => c.token), ...[da.token, db.token].filter((t): t is string => t != null)])].sort((x, y) => labelOf(x).localeCompare(labelOf(y)));
       const title = ctx ? cleanTitle(ctx.e.v.title) : '';
       const messages = judgeMessages({ kind: da.kind, raw: da.raw, lang: da.lang, region: ctx?.draft.region ?? '', title: title && !scanText(title) ? title : '', excerpt: ctx ? judgeExcerpt(da.raw, da.kind, ctx.e) : '', entries: tokens.map(labelOf) });
-      // Two tries, on an error or an answer that names no entry; the reasoning counts against the completion budget, so it is wide.
+      // An answer that names no entry is asked once more; an error (Workers AI answers 429 when DeepSeek is busy) is tried
+      // again after 5, 10 and 20 s. The reasoning counts against the completion budget, so it is wide.
       let failure = '';
+      let unread = 0;
       const usage = { tokensIn: 0, tokensOut: 0 };
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < 4 && unread < 2; attempt++) {
         try {
           const result = await seam.run('chat-reasoning', { messages, max_completion_tokens: 1_600, reasoning_effort: 'low' });
           const u = answerUsage(result);
@@ -1079,9 +1203,10 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
           const read = judgePick(answerText(result), tokens.length);
           if (read.pick != null) return { key: k, tokens, pick: read.pick === 'none' ? 'none' : tokens[read.pick]!, reason: read.reason, usage };
           failure = `no pick: ${cell(answerText(result)) || 'empty answer'}`;
+          unread++;
         } catch (err) {
-          failure = `error: ${(err as Error).message.replace(/\s+/g, ' ').slice(0, 80)}`;
-          await new Promise((r) => setTimeout(r, 3_000 * (attempt + 1)));
+          failure = `error: ${(err as Error).message.replace(/\s+/g, ' ').slice(0, 120)}`;
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 5_000 * 2 ** attempt));
         }
       }
       return { key: k, tokens, pick: null, reason: failure, usage };
@@ -1219,23 +1344,52 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
     say('## Where the snaps differ');
     say();
     say(
-      `Of ${shared.length} strings the worker's snaps decided in both arms, ${differ.length} ended on a different token (or on a token in one arm and none in the other)${keys.length - shared.length ? `; ${keys.length - shared.length} were decided in one arm only, by an alias in the other` : ''}. ${judged.length} of them${judged.length < differ.length ? ` (a random ${judged.length})` : ''} went to a judge: the Thinking model (DeepSeek V4.1 Flash, low effort) with the ad's title and its own words around the string, de-identified, choosing among every token either arm reached for it, by English name only, or none, with Clef's question (the same thing, or the broader thing it specializes). An arm is right when it reached the judge's pick, or nothing when the judge chose none.`,
+      `Of ${shared.length} strings the worker's snaps decided in both arms, ${differing.length} ended on a different token (or on a token in one arm and none in the other)${keys.length - shared.length ? `; ${keys.length - shared.length} were decided in one arm only, by an alias in the other` : ''}. ${differing.length > differ.length ? `${differing.length - differ.length} of them differ where a band call failed all three tries in either arm, or Clef answered nothing, which says nothing of the market: the judge leaves them out, and the table by cause counts them as failed` : 'None of them differ where a band call failed all three tries or Clef answered nothing'} (while the listings published: band calls that failed all three tries ${pair(...both((r) => r.failures.filter((f) => f.phase === 'publish').length))}, retries after an error ${pair(a.retried.publish, b.retried.publish)}, and Clef's answers with nothing in them ${pair(...both((r) => r.clefLog.filter((c) => c.phase === 'publish' && !Object.keys(c.probabilities).length).length))})${differing.some((k) => causes.get(k) === 'overlap') ? `; ${differing.filter((k) => causes.get(k) === 'overlap').length} differ where two snaps of the string ran at once in an arm, so their cause is unknown (judged, and counted apart below)` : ''}. ${judged.length} of the ${differ.length} left${judged.length < differ.length ? ` (a random ${judged.length})` : ''} went to a judge: the Thinking model (DeepSeek V4.1 Flash, low effort) with the ad's title and its own words around the string, de-identified, choosing among every token either arm reached for it, by English name only, or none, with Clef's question (the same thing, or the broader thing it specializes). An arm is right when it reached the judge's pick, or nothing when the judge chose none.`,
     );
     say();
-    say(`| Kind | Language | Differ | Judged | Right, ${a.arm} | Right, ${b.arm} | Neither | Judge chose none | No answer |`);
+    /** A row's counts: the strings that differ, those judged, each arm right (at most one is, the snaps differing), neither, the judge's none, no answer. */
+    const verdictCounts = (dk: readonly string[], js: readonly Judged[]) => {
+      const rightA = js.filter((j) => verdict(fa.get(j.key)!.token, j.pick) === 'right').length;
+      const rightB = js.filter((j) => verdict(fb.get(j.key)!.token, j.pick) === 'right').length;
+      const neither = js.filter((j) => verdict(fa.get(j.key)!.token, j.pick) === 'wrong' && verdict(fb.get(j.key)!.token, j.pick) === 'wrong').length;
+      return { cells: `${dk.length} | ${js.length} | ${rightA} | ${rightB} | ${neither} | ${js.filter((j) => j.pick === 'none').length} | ${js.filter((j) => j.pick == null).length}`, rightA, rightB };
+    };
+    const verdictHead = `Differ | Judged | Right, ${a.arm} | Right, ${b.arm} | Neither | Judge chose none | No answer`;
+    say(`| Kind | Language | ${verdictHead} |`);
     say('|---|---|---|---|---|---|---|---|---|');
     for (const kind of ['pos', 'skill', 'cert'] as const) {
       for (const lang of ['en', 'pt', 'es']) {
         const dk = differ.filter((k) => k.startsWith(`${kind}|${lang}|`));
         if (!dk.length) continue;
-        const js = judged.filter((j) => j.key.startsWith(`${kind}|${lang}|`));
-        const va = (j: Judged) => verdict(fa.get(j.key)!.token, j.pick);
-        const vb = (j: Judged) => verdict(fb.get(j.key)!.token, j.pick);
-        say(
-          `| ${kind} | ${lang} | ${dk.length} | ${js.length} | ${js.filter((j) => va(j) === 'right').length} | ${js.filter((j) => vb(j) === 'right').length} | ${js.filter((j) => va(j) === 'wrong' && vb(j) === 'wrong').length} | ${js.filter((j) => j.pick === 'none').length} | ${js.filter((j) => j.pick == null).length} |`,
-        );
+        say(`| ${kind} | ${lang} | ${verdictCounts(dk, judged.filter((j) => j.key.startsWith(`${kind}|${lang}|`))).cells} |`);
       }
     }
+    say(`| all | all | ${verdictCounts(differ, judged).cells} |`);
+    say();
+    say(
+      `By cause, the first that applies, each string's first snap in each arm (\`localeArms.ts\` \`causeOf\`): **failed**, a band call that failed all three tries in either arm, or Clef answered nothing (not judged); **overlap**, two snaps of the string ran at once in an arm (two listings), so which answers were the first's is unknown; **registry**, the nearest candidates differ, a vector one arm's earlier snaps added being behind it; **Clef**, both arms showed Clef the same entries and its answer differs at the floor, the state's market the only difference in what it was asked, and no arm went on past Clef with an English name the other arm's pivot gave otherwise; **Clef and pivot**, the names differ, and either the entries differ only by the token one name named, or Clef's answers differ and the language arm went on past Clef (its none, or an answer under the floor) with its own name, where the market's name would have gone on instead, so the name and Clef's state moved together; **pivot**, Clef saw the same entries and answered alike (or neither arm asked it), the names differ, and an arm's token came from its name (the token step 3 took, or a mint); **registry** also for the rest (an alias or a token one arm's earlier snaps made).`,
+    );
+    say();
+    /** The causes the market acts through directly: each of their strings made calls of its own, so the sign test holds. */
+    const direct: readonly Cause[] = ['Clef', 'Clef and pivot', 'pivot'];
+    const pText = (x: number, y: number) => (x + y ? (signTest(x, y) < 0.001 ? '<0.001' : f3(signTest(x, y))) : '—');
+    say(`| Cause | ${verdictHead} | Sign test p |`);
+    say('|---|---|---|---|---|---|---|---|---|');
+    const causeRow = (label: string, of: readonly Cause[], test: boolean) => {
+      const dk = differing.filter((k) => of.includes(causes.get(k)!));
+      if (!dk.length) return;
+      const v = verdictCounts(
+        dk,
+        judged.filter((j) => of.includes(causes.get(j.key)!)),
+      );
+      say(`| ${label} | ${v.cells} | ${test ? pText(v.rightA, v.rightB) : '—'} |`);
+    };
+    for (const cause of CAUSES) causeRow(cause, [cause], direct.includes(cause));
+    causeRow('the market directly (Clef, Clef and pivot, pivot)', direct, true);
+    say();
+    say(
+      `The sign test weighs the strings where exactly one arm reached the judge's pick: p is the chance of a split at least that uneven if each arm were as likely to be the right one (two-sided, exact). It holds where each string made its own calls, so it is given for the three causes the market acts through directly and their sum (four tests: a p under 0.0125 is under 0.05 once they are counted), not for the registry's knock-on effects, which move together, nor for the rows by kind and language, which hold them. What each answer for the founder keeps: dropping the market keeps the ${b.arm} arm everywhere, keeping it the ${a.arm} arm; keeping it for the pivot alone would keep the ${a.arm} arm's answers on the pivot's rows and the ${b.arm} arm's on Clef's, while on the Clef-and-pivot rows, where both moved at once, these two arms ran no such mix: only a third arm, the market in the pivot's message alone, would tell. One gap in Clef's rows: ${pivotBand ? 'an English string asks the pivot' : 'with the pivot out of the band, every string asks it'} only once Clef has passed it on, so where the ${b.arm} arm went past Clef and the ${a.arm} arm picked, the market's English name was never asked, and the pivot alone with the market could name it otherwise (the names differ for the share of strings the pivot's table above shows).`,
+    );
     say();
     const judgedPos = judged.filter((j) => j.key.startsWith('pos|') && j.pick && j.pick !== 'none');
     const relCounts = (m: Map<string, Decision>) => [...RELATIONS, null].map((rel) => judgedPos.filter((j) => relation(iscoOfToken(m.get(j.key)!.token), iscoOfToken(j.pick as string)) === rel).length);
@@ -1249,8 +1403,8 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
     ).slice(0, 80);
     say(`The judged strings: every occupation and certificate, and ${skillsShown.length < judged.length - shown.length ? `a random ${skillsShown.length} of the ${judged.length - shown.length} skills` : 'every skill'}; ${a.arm} and ${b.arm} give the decision, the token and Clef's p, the judge its pick and its reason.`);
     say();
-    say(`| String | Kind | Language, region | ${a.arm} | ${b.arm} | Judge |`);
-    say('|---|---|---|---|---|---|');
+    say(`| String | Kind | Language, region | Cause | ${a.arm} | ${b.arm} | Judge |`);
+    say('|---|---|---|---|---|---|---|');
     const snapCell = (d: Decision, pick: Judged['pick']) => {
       const v = verdict(d.token, pick);
       const what = `${d.decision} ${cell(labelOf(d.token))}${d.probability != null ? ` (${f3(d.probability)})` : ''}`;
@@ -1260,7 +1414,7 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
       const [kind, lang] = j.key.split('|');
       const da = fa.get(j.key)!;
       const pickText = j.pick === 'none' ? 'none' : j.pick ? cell(labelOf(j.pick)) : 'no answer';
-      say(`| ${cell(da.raw)} | ${kind} | ${lang}, ${contextOf.get(j.key)?.draft.region ?? countryOf(j.key)} | ${snapCell(da, j.pick)} | ${snapCell(fb.get(j.key)!, j.pick)} | ${pickText}${j.reason ? `: ${cell(j.reason)}` : ''} |`);
+      say(`| ${cell(da.raw)} | ${kind} | ${lang}, ${contextOf.get(j.key)?.draft.region ?? countryOf(j.key)} | ${causes.get(j.key)} | ${snapCell(da, j.pick)} | ${snapCell(fb.get(j.key)!, j.pick)} | ${pickText}${j.reason ? `: ${cell(j.reason)}` : ''} |`);
     }
     say();
     const compareFile = join('test', 'work-eval', `jobs-locale-${date}-n${picked.length}-seed${seed}${runName}.md`);
@@ -1273,7 +1427,7 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
       date,
       arms: runs.map((r) => r.arm),
       pivotBand,
-      differ: differ.map((k) => ({ key: k, [a.arm]: fa.get(k), [b.arm]: fb.get(k), judged: judged.find((j) => j.key === k) ?? null, region: contextOf.get(k)?.draft.region ?? null })),
+      differ: differing.map((k) => ({ key: k, cause: causes.get(k), [a.arm]: fa.get(k), [b.arm]: fb.get(k), judged: judged.find((j) => j.key === k) ?? null, region: contextOf.get(k)?.draft.region ?? null })),
       sameBand: sameBand.map((k) => ({ key: k, [a.arm]: ca.get(k), [b.arm]: cb.get(k) })),
       pivots: pivotBoth.map((k) => ({ key: k, [a.arm]: pa.get(k)!.english, [b.arm]: pb.get(k)!.english })),
       titles: drafts.map((x) => ({ pseudonym: x.draft.pseudonym, term: x.e.v.term, title: x.draft.titles[0] ?? null, [a.arm]: a.titleToken.get(x.draft.pseudonym) ?? null, [b.arm]: b.titleToken.get(x.draft.pseudonym) ?? null })),

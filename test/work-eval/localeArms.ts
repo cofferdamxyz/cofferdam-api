@@ -231,6 +231,105 @@ export function judgeMessages(c: JudgeCase): { role: 'system' | 'user'; content:
   ];
 }
 
+// ── A band call that fails, and why the arms' snaps of a string differ ─────
+
+/** The ops of the band whose failed calls the eval tries again: Clef's choice and the English pivot. */
+export const BAND_OPS: ReadonlySet<string> = new Set(['work-adjudicate', 'work-pivot']);
+
+/**
+ * A hosted call as production makes it, except that a band call that throws is tried again, twice at most, after 1 s
+ * and 2 s, unless its caller cancelled it: transient errors (a timeout, the API's own) strike the arms unevenly, since
+ * they run one after the other, and would read as differences the market did not make. A third failure is thrown, so
+ * the registry reads it as production would. `onError` hears every failure, `final` on the third.
+ */
+export async function withBandRetries<T>(
+  op: string,
+  call: { signal?: AbortSignal } | undefined,
+  run: () => Promise<T>,
+  onError: (error: string, final: boolean) => void,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      if (!BAND_OPS.has(op) || call?.signal?.aborted) throw err;
+      onError((err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').slice(0, 120), attempt === 3);
+      if (attempt === 3) throw err;
+      await wait(1_000 * attempt);
+    }
+  }
+}
+
+/** What the cause rule reads of one arm's first snap of a string. */
+export interface ArmSnap {
+  /** The registry's decision (`auto`, `chosen`, `pivot`, `minted`, `unmatched`) and its token. */
+  decision: string;
+  token: string | null;
+  /** The nearest candidates' tokens, in the order Clef saw them, without the entry of the pivot's name. */
+  nearest: readonly string[];
+  /** Clef's first answer for the string: the entries it saw, as sent, and what the answer does at the floor; null when Clef was not asked. */
+  clef: { entries: string; outcome: string } | null;
+  /** The pivot's first answer for the string (its English name, null when it named nothing valid); null when it was not asked. */
+  pivot: { english: string | null } | null;
+  /** A band call for the string failed all three tries, or Clef answered nothing: no answer, in the registry. */
+  failed: boolean;
+  /** Another snap of the string ran while this one did (two listings at once), so their band answers cannot be told apart. */
+  overlapped: boolean;
+}
+
+export const CAUSES = ['failed', 'overlap', 'registry', 'Clef', 'Clef and pivot', 'pivot'] as const;
+export type Cause = (typeof CAUSES)[number];
+
+/** An answer at the floor that sends the string on past Clef: none (a mint, or the refusal of the name's token) or below it (step 3). */
+const pastClef = (outcome: string) => outcome === 'none' || outcome === 'neither';
+
+/**
+ * Why the market arm's and the language arm's first snaps of a string differ, the first that applies. The causes
+ * serve the founder's three answers: under the market for the pivot alone, Clef would answer as in the language arm
+ * and the pivot as in the market arm.
+ * - `failed`: a band call failed all three tries in either arm, or Clef answered nothing, which says nothing of the market;
+ * - `overlap`: two snaps of the string ran at once in an arm, so which answers were its first is unknown;
+ * - `registry`: the nearest candidates differ, so a vector one arm's earlier snaps added (a mint's) is behind it;
+ * - `Clef`: Clef saw the same entries in both arms and its answer differs at the floor, the state's market the only
+ *   difference; the market for the pivot alone would give the language arm's snap;
+ * - `Clef and pivot`: the names differ, and either the entries differ only by the token a name named, or Clef's answers
+ *   differ and the language arm went on past Clef (its none, or an answer under the floor) with its own name, where the
+ *   market's name would have gone instead: the market for the pivot alone would give a snap neither arm made;
+ * - `pivot`: Clef saw the same entries and answered alike, or neither arm asked it, the names differ, and an arm's token
+ *   came from its name (step 3's token or a mint); the market for the pivot alone would give the market arm's snap;
+ * - `registry` for the rest (an alias or a token one arm's earlier snaps made, a token the same name names in one arm only).
+ */
+export function causeOf(market: ArmSnap, language: ArmSnap): Cause {
+  if (market.failed || language.failed) return 'failed';
+  if (market.overlapped || language.overlapped) return 'overlap';
+  if (market.nearest.join('\n') !== language.nearest.join('\n')) return 'registry';
+  const namesDiffer = market.pivot != null && language.pivot != null && market.pivot.english !== language.pivot.english;
+  if (market.clef && language.clef) {
+    if (market.clef.entries !== language.clef.entries) return namesDiffer ? 'Clef and pivot' : 'registry';
+    if (market.clef.outcome !== language.clef.outcome) return namesDiffer && pastClef(language.clef.outcome) ? 'Clef and pivot' : 'Clef';
+  } else if (market.clef || language.clef) return 'registry';
+  const fromName = (s: ArmSnap) => s.decision === 'pivot' || s.decision === 'minted';
+  return namesDiffer && (fromName(market) || fromName(language)) ? 'pivot' : 'registry';
+}
+
+/**
+ * The two-sided exact sign test on the strings where exactly one arm was right (where the snaps differ, at most one arm
+ * reaches the judge's pick): the chance of a split at least this uneven if each arm were as likely to be the right one.
+ * It holds for strings that each made their own calls, not for knock-on effects that move together.
+ */
+export function signTest(x: number, y: number): number {
+  const n = x + y;
+  if (!n) return 1;
+  let logChoose = 0;
+  let tail = 0;
+  for (let i = 0; i <= Math.min(x, y); i++) {
+    tail += Math.exp(logChoose - n * Math.LN2);
+    logChoose += Math.log(n - i) - Math.log(i + 1);
+  }
+  return Math.min(1, 2 * tail);
+}
+
 /** The judge's pick from its answer: an entry's index, `none`, or null when the answer names neither. */
 export function judgePick(text: string, entries: number): { pick: number | 'none' | null; reason: string } {
   const key = /"match"\s*:\s*"([^"]+)"/.exec(text)?.[1] ?? null;
