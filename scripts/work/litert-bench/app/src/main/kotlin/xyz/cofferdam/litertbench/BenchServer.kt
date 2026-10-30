@@ -3,7 +3,11 @@
 
 package xyz.cofferdam.litertbench
 
+import android.annotation.TargetApi
 import android.content.Context
+import android.graphics.pdf.PdfRenderer
+import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
@@ -41,6 +45,8 @@ private const val TAG = "LiteRtBench"
  * with the same truth and scorer as the others. Never part of the app. Synthetic CVs, or the
  * real-resume benchmark under workspace decision 0021's exception, after which the answers the
  * app keeps are deleted (`run-as xyz.cofferdam.litertbench rm -r files/answers`).
+ * `POST /v1/pdf-text` takes a PDF's bytes and answers its text layer as Android's own PDF renderer
+ * reads it (Android 15 and later), for the phones' test of 2026-10-30 (workspace decision 0021).
  * Steps: workspace `docs/runbooks/android-build.md`, TPU reader check.
  */
 
@@ -136,6 +142,21 @@ object BenchServer {
         unload()
         respond(socket, 200, "{\"ok\":true}")
       }
+      method == "POST" && path == "/v1/pdf-text" -> {
+        if (Build.VERSION.SDK_INT < 35) {
+          respond(socket, 501, JSONObject().put("error", JSONObject().put("message", "PdfRenderer reads text from Android 15 (API 35)")).toString())
+          return
+        }
+        val answer =
+          try {
+            pdfText(context, body)
+          } catch (t: Throwable) {
+            Log.e(TAG, "pdf-text failed", t)
+            respond(socket, 500, JSONObject().put("error", JSONObject().put("message", t.toString())).toString())
+            return
+          }
+        respond(socket, 200, answer.toString())
+      }
       method == "POST" && path.startsWith("/v1/chat/completions") -> {
         val answer =
           try {
@@ -152,6 +173,37 @@ object BenchServer {
         respond(socket, 200, answer.toString())
       }
       else -> respond(socket, 404, "{\"error\":\"not found\"}")
+    }
+  }
+
+  /**
+   * A PDF's text layer through Android's own PDF renderer (`PdfRenderer.Page.getTextContents`, API 35): each page's
+   * text in order, its pieces joined by line breaks, and how many pieces each page had. The phones' test of 2026-10-30
+   * (workspace decision 0021, the founder's ruling: the CV's text from the phone's native parser). The PDF goes to the
+   * cache for the renderer and is deleted after.
+   */
+  @TargetApi(35)
+  private fun pdfText(context: Context, pdf: ByteArray): JSONObject {
+    val file = java.io.File.createTempFile("cv-text", ".pdf", context.cacheDir)
+    try {
+      file.writeBytes(pdf)
+      val t0 = SystemClock.elapsedRealtime()
+      val pages = JSONArray()
+      val pieces = JSONArray()
+      ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+        PdfRenderer(fd).use { renderer ->
+          for (i in 0 until renderer.pageCount) {
+            renderer.openPage(i).use { page ->
+              val contents = page.textContents
+              pages.put(contents.joinToString("\n") { it.text })
+              pieces.put(contents.size)
+            }
+          }
+        }
+      }
+      return JSONObject().put("pages", pages).put("pieces", pieces).put("ms", SystemClock.elapsedRealtime() - t0)
+    } finally {
+      file.delete()
     }
   }
 

@@ -18,7 +18,7 @@
  */
 
 import { parseRequest, readParse, ParseShapeError } from '../../src/services/work/parse.js';
-import { SCHEMA_IN_PROMPT } from './localAi.js';
+import { localAnswerKey, localRequest, SCHEMA_IN_PROMPT, type LocalReader } from './localAi.js';
 import { scoreParse, sectionScore, type ParseScore, type ParseTruth } from './parseScore.js';
 import { withSchemaAsRegex } from './schemaRegex.js';
 
@@ -35,8 +35,12 @@ export interface PhoneReader {
    * `regex`: the plan's `text.regex`, for LiteRT-LM.
    */
   schema: 'grammar' | 'json' | 'prompt' | 'regex';
-  /** `text`: the CV's OCR lines through the cloud parse's text path (the plan's `text`), no image; the page image when absent. */
-  input?: 'text';
+  /**
+   * `text`: the CV's OCR lines through the cloud parse's text path (the plan's `text`), no image; `pdf`: the text layer the
+   * phone's own parser reads from the CV's PDF (PDFKit; LiteRT-LM readers only), after the plan's `text.userPrefix`; the
+   * page image when absent.
+   */
+  input?: 'text' | 'pdf';
   /**
    * A LiteRT-LM reader (the app's `modules/litert-lm`): the `.litertlm` file copied beside the plan, Metal (`gpu`) or the
    * CPU, multi-token prediction on or off. It reads text with the schema as a regex, as `scripts/work/litert-answers.py` does on the Mac.
@@ -53,6 +57,19 @@ export interface PhoneText {
   maxTokens: number;
   temperature: number;
   users: { id: string; user: string }[];
+  /** What the text path writes before a CV's text, for a reader that reads the CV's PDF itself (`input: "pdf"`). */
+  userPrefix?: string;
+}
+
+/** The text layer the phone's parser read from one CV's PDF, as the app writes it back (once per CV). */
+export interface PhonePdfText {
+  cv: string;
+  pages: number;
+  chars: number;
+  ms: number;
+  /** The pages joined as `scripts/work/pdf-pages.swift` joins them: each page's text and a blank line. */
+  text: string;
+  error: string | null;
 }
 
 export interface PhonePlan {
@@ -69,8 +86,8 @@ export interface PhonePlan {
   temperature: number;
   /** Reads in a row per reader and CV. */
   runs: number;
-  /** The page images, by file name beside `plan.json`. */
-  cvs: { id: string; file: string }[];
+  /** The page images, by file name beside `plan.json`, and a CV's PDF for a reader with `input: "pdf"`. */
+  cvs: { id: string; file: string; pdf?: string }[];
   readers: PhoneReader[];
   /** The text path, when a reader reads text; null otherwise. */
   text: PhoneText | null;
@@ -128,6 +145,8 @@ export interface PhoneResults {
     loadMinAvailable: number | null;
   }[];
   runs: PhoneRun[];
+  /** The text layer of each CV a reader read from its PDF. */
+  texts?: PhonePdfText[];
 }
 
 export interface ScoredPhoneRun extends PhoneRun {
@@ -188,6 +207,83 @@ export function phonePlan(cvs: PlanCv[], readers: PhoneReader[], runs: number, s
   };
 }
 
+/** What the parse's text path writes before a CV's text ("The CV, as OCR lines:" and a blank line), read from `parseRequest`. */
+export function textUserPrefix(): string {
+  const request = parseRequest('local:phone', { kind: 'text', text: '' });
+  const user = (request.messages as { role: string; content: unknown }[]).find((m) => m.role === 'user')?.content;
+  if (typeof user !== 'string') throw new Error('parseRequest changed shape: no user text on the text path');
+  return user;
+}
+
+/**
+ * The plan for real resumes read from their PDFs on the phone (workspace decision 0021, the founder's ruling of
+ * 2026-10-30): each CV's PDF beside the plan (`<id>.pdf`) and a blank page in place of its image, every reader with
+ * `input: "pdf"`, and the text path with its prefix and no users, since the phone's own parser gives the text.
+ */
+export function pdfPlan(ids: readonly string[], readers: PhoneReader[], runs: number, source: string): PhonePlan {
+  if (!readers.length || readers.some((r) => r.input !== 'pdf' || !r.litert)) throw new Error('a PDF plan reads with LiteRT-LM readers whose input is "pdf"');
+  const base = phonePlan(ids.map((id) => ({ id, image: PDF_PLAN_PAGE, ocr: ['-'] })), readers.map((r) => ({ ...r, input: 'text' as const })), runs, source);
+  return {
+    ...base,
+    cvs: ids.map((id) => ({ id, file: PDF_PLAN_PAGE, pdf: `${id}.pdf` })),
+    readers,
+    text: { ...base.text!, users: [], userPrefix: textUserPrefix() },
+  };
+}
+
+/** A PDF's pages as one text, joined as `scripts/work/pdf-pages.swift` and the app join them: each page's text and a blank line. */
+export function joinPdfPages(pages: readonly string[]): string {
+  return pages.map((p) => `${p}\n\n`).join('');
+}
+
+/** The blank page a PDF plan names in place of each CV's image (the app checks a page beside the plan). */
+export const PDF_PLAN_PAGE = 'blank.png';
+
+/**
+ * The phone's answers as an answers file for the real-resume benchmark (`localAnswerKey` of the body the eval sends for
+ * `reader` with each CV's phone text): the eval then scores them as any local reader's, reading the text from
+ * `reader.textDir`. A failed read is an answer with its error; a CV the phone read no text from has no answer.
+ */
+export function phoneAnswers(results: PhoneResults, phoneLabel: string, reader: LocalReader): { texts: { id: string; text: string }[]; answers: Record<string, unknown> } {
+  const texts = (results.texts ?? []).filter((t) => !t.error).map((t) => ({ id: t.cv, text: t.text }));
+  const answers: Record<string, unknown> = {};
+  for (const run of results.runs.filter((r) => r.reader === phoneLabel && r.run === 0)) {
+    const text = texts.find((t) => t.id === run.cv)?.text;
+    if (text == null) continue;
+    const key = localAnswerKey(JSON.stringify(localRequest(reader, parseRequest(`local:${reader.label}`, { kind: 'text', text }))));
+    answers[key] = run.ok
+      ? {
+          choices: [{ index: 0, message: { role: 'assistant', content: answerOf(run) }, finish_reason: run.stoppedLimit ? 'length' : 'stop' }],
+          usage: { prompt_tokens: run.promptTokens, completion_tokens: run.predictedTokens },
+          timing: {
+            ms: run.msToJson,
+            ttftMs: run.msFirstToken,
+            decodeTps: run.decodeTokensPerSec,
+            peakFootprintMb: run.peakFootprint == null ? null : Math.round(run.peakFootprint / 1e6),
+          },
+        }
+      : { error: run.error ?? 'the read failed' };
+  }
+  return { texts, answers };
+}
+
+/**
+ * How a phone's text layer compares with the Mac's (`pdf-pages.swift`), counts only: identical or not, and the share of
+ * the Mac's non-empty lines the phone's text holds in the same order (their longest common subsequence).
+ */
+export function textAgreement(phone: string, mac: string): { identical: boolean; macLines: number; phoneLines: number; sharedLines: number; charDelta: number } {
+  const lines = (t: string) => t.split(/\r?\n/).map((l) => l.trim().replace(/\s+/g, ' ')).filter(Boolean);
+  const a = lines(mac);
+  const b = lines(phone);
+  let prev = new Array<number>(b.length + 1).fill(0);
+  for (const x of a) {
+    const cur = new Array<number>(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) cur[j] = x === b[j - 1] ? prev[j - 1]! + 1 : Math.max(prev[j]!, cur[j - 1]!);
+    prev = cur;
+  }
+  return { identical: phone === mac, macLines: a.length, phoneLines: b.length, sharedLines: prev[b.length]!, charDelta: phone.length - mac.length };
+}
+
 /** Reads `WORK_PARSE_PHONE_READERS`: a JSON array of readers. Throws on anything else, naming what is wrong. */
 export function parsePhoneReaders(raw: string): PhoneReader[] {
   let parsed: unknown;
@@ -209,7 +305,7 @@ export function parsePhoneReaders(raw: string): PhoneReader[] {
       throw new Error(`WORK_PARSE_PHONE_READERS[${i}].schema must be "grammar", "json", "prompt" or "regex"`);
     }
     const input = o.input ?? 'image';
-    if (input !== 'image' && input !== 'text') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].input must be "image" or "text"`);
+    if (input !== 'image' && input !== 'text' && input !== 'pdf') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].input must be "image", "text" or "pdf"`);
     let litert: PhoneReader['litert'];
     if (o.litert != null) {
       const l = (o.litert ?? {}) as Record<string, unknown>;
@@ -221,7 +317,8 @@ export function parsePhoneReaders(raw: string): PhoneReader[] {
       if (l.activation != null && l.activation !== 'f32' && l.activation !== 'f16') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].litert.activation must be "f32" or "f16"`);
       litert = { file: l.file, backend: l.backend, mtp: l.mtp, ...(l.activation ? { activation: l.activation as 'f32' | 'f16' } : {}) };
     }
-    if (litert && (input !== 'text' || schema !== 'regex')) throw new Error(`WORK_PARSE_PHONE_READERS[${i}]: a LiteRT-LM reader reads text with schema "regex"`);
+    if (litert && (input === 'image' || schema !== 'regex')) throw new Error(`WORK_PARSE_PHONE_READERS[${i}]: a LiteRT-LM reader reads text with schema "regex"`);
+    if (input === 'pdf' && !litert) throw new Error(`WORK_PARSE_PHONE_READERS[${i}].input "pdf" is for LiteRT-LM readers`);
     if (!litert && schema === 'regex') throw new Error(`WORK_PARSE_PHONE_READERS[${i}].schema "regex" is for LiteRT-LM readers`);
     const label = o.label.trim();
     if (seen.has(label)) throw new Error(`WORK_PARSE_PHONE_READERS names the label ${JSON.stringify(label)} twice`);
@@ -231,7 +328,7 @@ export function parsePhoneReaders(raw: string): PhoneReader[] {
       model: o.model.trim(),
       imageMaxTokens: max as number | null,
       schema,
-      ...(input === 'text' ? { input: 'text' as const } : {}),
+      ...(input === 'text' || input === 'pdf' ? { input } : {}),
       ...(litert ? { litert } : {}),
     };
   });
@@ -280,6 +377,15 @@ export function parsePhoneResults(raw: unknown): PhoneResults {
     runtime: { llamaRn: strOrNull(runtime.llamaRn), llamaCpp: strOrNull(runtime.llamaCpp), litertLm: strOrNull(runtime.litertLm) },
     startedAt: strOrNull(raw.startedAt) ?? '',
     finishedAt: strOrNull(raw.finishedAt),
+    ...(Array.isArray(raw.texts)
+      ? {
+          texts: raw.texts.map((t, i): PhonePdfText => {
+            const o = obj(t);
+            if (typeof o.cv !== 'string' || typeof o.text !== 'string') throw new Error(`texts[${i}] has no cv or text`);
+            return { cv: o.cv, pages: numOrNull(o.pages) ?? 0, chars: numOrNull(o.chars) ?? 0, ms: numOrNull(o.ms) ?? 0, text: o.text, error: strOrNull(o.error) };
+          }),
+        }
+      : {}),
     readers: raw.readers.map((r) => {
       const o = obj(r);
       return {

@@ -25,8 +25,20 @@ import {
   SCHEMA_IN_PROMPT,
   THINKING_MAX_TOKENS,
   withSchemaInPrompt,
+  type LocalReader,
 } from './work-eval/localAi.js';
-import { answerOf, parsePhoneReaders, parsePhoneResults, phonePlan, phoneReport, scorePhoneRuns } from './work-eval/phoneBench.js';
+import {
+  answerOf,
+  parsePhoneReaders,
+  parsePhoneResults,
+  PDF_PLAN_PAGE,
+  pdfPlan,
+  phoneAnswers,
+  phonePlan,
+  phoneReport,
+  scorePhoneRuns,
+  textAgreement,
+} from './work-eval/phoneBench.js';
 import { schemaRegex, withSchemaAsRegex } from './work-eval/schemaRegex.js';
 
 interface FixtureCv {
@@ -531,3 +543,70 @@ describe('the phone benchmark (the app reads, the Mac scores)', () => {
     expect(() => scorePhoneRuns(parsePhoneResults({ ...raw, runs: [run('cv-x', 0, '{}')] }), new Map())).toThrow(/cv-x/);
   });
 });
+
+describe('the phones reading real resumes from their PDFs (test/workResumePhone.eval.test.ts)', () => {
+  const litert = {
+    label: 'Gemma 4 E2B, Metal, PDFKit',
+    model: 'gemma-4-e2b',
+    imageMaxTokens: null,
+    schema: 'regex' as const,
+    input: 'pdf' as const,
+    litert: { file: 'gemma-4-E2B-it.litertlm', backend: 'gpu' as const, mtp: true, activation: 'f32' as const },
+  };
+  const reader: LocalReader = { label: 'phone', model: 'gemma-4-e2b-litert', answers: '/tmp/a.json', paths: ['text'], schema: 'regex', maxTokens: 4000, textDir: '/tmp/texts' };
+  const keyOf = (text: string) => localAnswerKey(JSON.stringify(localRequest(reader, parseRequest(`local:${reader.label}`, { kind: 'text', text }))));
+
+  it("plans the PDFs with the text path's prefix, so the phone sends what the Mac sends for the same text", () => {
+    const plan = pdfPlan(['123', '456'], [litert], 1, 'test');
+    expect(plan.cvs).toEqual([
+      { id: '123', file: PDF_PLAN_PAGE, pdf: '123.pdf' },
+      { id: '456', file: PDF_PLAN_PAGE, pdf: '456.pdf' },
+    ]);
+    expect(plan.readers).toEqual([litert]);
+    expect(plan.text!.users).toEqual([]);
+    const text = 'Maria\n\nElectrician\n\n';
+    const request = localRequest(reader, parseRequest('local:phone', { kind: 'text', text }));
+    expect(plan.text!.userPrefix! + text).toBe((request.messages as { content: string }[])[1]!.content);
+    expect(plan.text!.regex).toBe((request.response_format as { pattern: string }).pattern);
+    expect(plan.text).toMatchObject({ system: PARSE_SYSTEM, maxTokens: 4000, temperature: 0 });
+    expect(() => pdfPlan(['1'], [{ ...litert, input: 'text' as const }], 1, 'test')).toThrow(/input is "pdf"/);
+  });
+
+  it("turns the phone's results into answers the benchmark finds by the request it sends", () => {
+    const results = parsePhoneResults({
+      v: 1,
+      readers: [],
+      runs: [
+        { reader: 'p', cv: '123', run: 0, ok: true, text: '{"a":1}', content: '{"a":1}', msToJson: 15000, msFirstToken: 900, promptTokens: 1000, predictedTokens: 500, decodeTokensPerSec: 40, peakFootprint: 3.04e9, stoppedLimit: false },
+        { reader: 'p', cv: '456', run: 0, ok: false, error: 'boom', text: '', content: null, msToJson: 0 },
+        { reader: 'other', cv: '123', run: 0, ok: true, text: 'x', content: 'x', msToJson: 1 },
+      ],
+      texts: [
+        { cv: '123', pages: 1, chars: 7, ms: 12, text: 'Maria\n\n', error: null },
+        { cv: '456', pages: 1, chars: 4, ms: 9, text: 'Juan', error: null },
+      ],
+    });
+    const { texts, answers } = phoneAnswers(results, 'p', reader);
+    expect(texts).toEqual([
+      { id: '123', text: 'Maria\n\n' },
+      { id: '456', text: 'Juan' },
+    ]);
+    expect(answers[keyOf('Maria\n\n')]).toMatchObject({ choices: [{ message: { content: '{"a":1}' }, finish_reason: 'stop' }], timing: { ms: 15000, peakFootprintMb: 3040 } });
+    expect(answers[keyOf('Juan')]).toEqual({ error: 'boom' });
+    expect(Object.keys(answers)).toHaveLength(2);
+  });
+
+  it("compares a phone's text layer with the Mac's, counts only", () => {
+    expect(textAgreement('a\nb\n\nc\n', 'a\nb\n\nc\n')).toEqual({ identical: true, macLines: 3, phoneLines: 3, sharedLines: 3, charDelta: 0 });
+    expect(textAgreement('b\na  x\nc', 'a x\nb\nc')).toMatchObject({ identical: false, macLines: 3, phoneLines: 3, sharedLines: 2 });
+  });
+
+  it('reads a textDir only on the text path, and never beside textSource "ocr"', () => {
+    const one = (o: Record<string, unknown>) => parseLocalReaders(JSON.stringify([{ label: 'l', answers: '/tmp/a.json', model: 'm', ...o }]));
+    expect(one({ paths: ['text'], textDir: '/tmp/t' })[0]).toMatchObject({ textDir: '/tmp/t' });
+    expect(() => one({ paths: ['text'], textDir: 'relative/t' })).toThrow(/absolute/);
+    expect(() => one({ textDir: '/tmp/t' })).toThrow(/text path alone/);
+    expect(() => one({ paths: ['text'], textDir: '/tmp/t', textSource: 'ocr' })).toThrow(/give one/);
+  });
+});
+

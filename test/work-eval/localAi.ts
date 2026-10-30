@@ -78,6 +78,12 @@ export interface LocalReader {
    * when absent (`pdf`). The parse benchmark's fixtures carry their own OCR text and ignore it.
    */
   textSource?: 'ocr';
+  /**
+   * The real-resume benchmark's text path reads each resume's text from `<textDir>/<id>.txt` instead: the text layer a
+   * phone's own PDF parser gave (PDFKit on the iPhone, Android's `PdfRenderer` on the Pixel; workspace decision 0021, the
+   * founder's ruling of 2026-10-30), written by `test/workResumePhone.eval.test.ts`. An absolute path; the text path alone.
+   */
+  textDir?: string;
 }
 
 /** The answer's cap with thinking on: the reasoning block and the JSON after it (LFM3-VL's card allows 16,384). */
@@ -138,7 +144,7 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url or answers, model, paths?, thinking?, schema?, maxTokens?, sampling?, pages?, textSource?}');
+    throw new Error('WORK_PARSE_LOCAL must be a JSON array of {label, url or answers, model, paths?, thinking?, schema?, maxTokens?, sampling?, pages?, textSource?, textDir?}');
   }
   if (!Array.isArray(parsed)) throw new Error('WORK_PARSE_LOCAL must be a JSON array');
   const readers = parsed.map((r, i): LocalReader => {
@@ -186,6 +192,9 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
     if (o.pages === 'each' && paths && !paths.includes('image')) throw new Error(`WORK_PARSE_LOCAL[${i}].pages "each" reads page images and needs the image path`);
     if (o.textSource != null && o.textSource !== 'pdf' && o.textSource !== 'ocr') throw new Error(`WORK_PARSE_LOCAL[${i}].textSource must be "pdf" or "ocr"`);
     if (o.textSource === 'ocr' && !(paths?.length === 1 && paths[0] === 'text')) throw new Error(`WORK_PARSE_LOCAL[${i}].textSource "ocr" needs paths ["text"], the text path alone`);
+    if (o.textDir != null && (typeof o.textDir !== 'string' || !o.textDir.startsWith('/'))) throw new Error(`WORK_PARSE_LOCAL[${i}].textDir must be an absolute path`);
+    if (o.textDir != null && !(paths?.length === 1 && paths[0] === 'text')) throw new Error(`WORK_PARSE_LOCAL[${i}].textDir needs paths ["text"], the text path alone`);
+    if (o.textDir != null && o.textSource === 'ocr') throw new Error(`WORK_PARSE_LOCAL[${i}] names a textDir and textSource "ocr"; give one`);
     return {
       label: field('label'),
       ...(url ? { url } : {}),
@@ -198,6 +207,7 @@ export function parseLocalReaders(raw: string | undefined): LocalReader[] {
       ...(o.sampling != null ? { sampling: o.sampling as Record<string, number> } : {}),
       ...(o.pages === 'each' ? { pages: 'each' as const } : {}),
       ...(o.textSource === 'ocr' ? { textSource: 'ocr' as const } : {}),
+      ...(typeof o.textDir === 'string' ? { textDir: o.textDir } : {}),
     };
   });
   // The report groups runs by label, so two readers must not share one.

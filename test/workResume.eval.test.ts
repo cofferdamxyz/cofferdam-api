@@ -228,7 +228,7 @@ function readerSettings(r: LocalReader): Record<string, unknown> {
     maxTokens: r.maxTokens ?? null,
     sampling: r.sampling ?? {},
     pages: r.pages ?? 'all',
-    textSource: r.textSource ?? 'pdf',
+    textSource: r.textDir ? `dir:${r.textDir}` : (r.textSource ?? 'pdf'),
     ...(r.schema === 'regex' ? { regex: createHash('sha256').update(schemaRegex(PARSE_JSON_SCHEMA)).digest('hex').slice(0, 8) } : {}),
   };
 }
@@ -565,6 +565,9 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       if (missing) throw new Error(`ocr-pages.swift recognised no text for ${missing} sampled resumes: ${(ocr.stderr ?? '').trim().split('\n').slice(-3).join('; ')}`);
     }
     const ocrOf = (id: string) => readFileSync(join(pagesDir, id, 'ocr.txt'), 'utf8');
+    // A local text reader's text: a phone's own parser's (`textDir`), Apple's recognised lines, or the PDF's text layer.
+    const localTextOf = (reader: LocalReader, id: string) =>
+      reader.textDir ? readFileSync(join(reader.textDir, `${id}.txt`), 'utf8') : reader.textSource === 'ocr' ? ocrOf(id) : textOf(id);
 
     // The cloud: both readers per resume in parallel, then the pipeline.
     const ai = cloudReaders.length ? createRestAi({ accountId: accountId!, token: token! }) : null;
@@ -632,6 +635,10 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       // Vision recognises on the pages (a photo's or a scan's); `pages: each` reads one page a call, each page cached on its
       // own, and joins them when every page read.
       const textOnly = reader.paths?.length === 1 && reader.paths[0] === 'text';
+      if (textOnly && reader.textDir) {
+        const missing = sample.filter((r) => !existsSync(join(reader.textDir!, `${r.id}.txt`))).length;
+        if (missing) throw new Error(`${reader.label}: ${missing} sampled resumes have no text in ${reader.textDir}`);
+      }
       guardReaderCache(cacheDir, `local-${reader.label}`, readerSettings(reader));
       const readParseOf = (key: string, input: Parameters<typeof parseRequest>[1]) =>
         readOnce(cacheDir, `local-${reader.label}`, key, async () => ({
@@ -640,7 +647,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         }));
       for (const [i, r] of sample.entries()) {
         let reading: CachedReading;
-        if (textOnly) reading = await readParseOf(r.id, { kind: 'text', text: reader.textSource === 'ocr' ? ocrOf(r.id) : textOf(r.id) });
+        if (textOnly) reading = await readParseOf(r.id, { kind: 'text', text: localTextOf(reader, r.id) });
         else if (reader.pages === 'each') {
           const parts: CachedReading[] = [];
           for (const [n, page] of pagesOf(r.id).entries()) parts.push(await readParseOf(`${r.id}-p${n + 1}`, { kind: 'image', pages: [page] }));
@@ -714,7 +721,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
         // The text a phone would check the answer against: the text the reader read, else Apple's recognised text.
         const lr = localReaders.find((l) => l.label === label);
         const textRead = lr?.paths?.length === 1 && lr.paths[0] === 'text';
-        groundedRows(`${label} (on device)`, r, x.reading, x.ms, null, () => (textRead && lr?.textSource !== 'ocr' ? textOf(r.id) : ocrOf(r.id)));
+        groundedRows(`${label} (on device)`, r, x.reading, x.ms, null, () => (textRead && lr ? localTextOf(lr, r.id) : ocrOf(r.id)));
       }
       if (local.size === 2) {
         const [x, y] = [...local.values()].map((m) => m.get(r.id)!);
