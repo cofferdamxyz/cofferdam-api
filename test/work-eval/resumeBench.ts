@@ -322,6 +322,9 @@ export interface Reading {
   skills?: string[];
   /** The name read, and the languages with their levels; not scored (the dataset removed every name and labels no languages), kept to count what the worker's review would have to catch. */
   name?: string | null;
+  /** The email and phone read, unscored; the identity strip's benchmark compares them with the made-up person's. */
+  email?: string | null;
+  phone?: string | null;
   languages?: { name: string; level: string }[];
 }
 
@@ -402,6 +405,8 @@ export function readingOf(p: ParsedCv): Reading {
     certificates: p.claimed.certificates.map((c) => c.raw),
     skills: distinctSkills([...p.claimed.skills.map((c) => c.raw), ...p.claimed.experience.flatMap((e) => e.skills.map((c) => c.raw))]),
     name: p.identity.name,
+    email: p.identity.email,
+    phone: p.identity.phone,
     languages: p.claimed.languages.map((l) => ({ name: l.raw, level: l.level })),
   };
 }

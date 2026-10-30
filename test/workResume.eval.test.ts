@@ -42,7 +42,11 @@
  * `1` (or `pdf`) or `ocr` to send one cloud reader the PDF's text layer or
  * Apple Vision's lines instead of the page images, as a cloud parse would read
  * a CV whose identity the phone stripped first (workspace decision 0021),
- * RESUME_PARALLEL
+ * RESUME_STRIP `unbound` or `bound` (with RESUME_CLOUD_TEXT) to give each
+ * resume a made-up identity and strip it before the cloud reads the text: the
+ * emails, and when bound also the passport's name and birth date
+ * (`test/work-eval/identityStrip.ts`, `stripBench.ts`; decision 0021, the
+ * founder's ruling of 2026-10-30), RESUME_PARALLEL
  * resumes at once on the cloud (4), RESUME_CLEF_FLOOR Clef's floor (0.6),
  * RESUME_REVIEW=1 the full check. The cloud needs CLOUDFLARE_ACCOUNT_ID and
  * CLOUDFLARE_API_TOKEN; the local readers need their servers
@@ -71,7 +75,9 @@ import { createRestAi } from './chat-eval/restAi.js';
 import { memoryIndex } from './fixtures/work/fakes.js';
 import { createLocalAi, localAnswersPending, parseLocalReaders, type LocalReader } from './work-eval/localAi.js';
 import { ungroundedPaths } from './work-eval/grounding.js';
+import { stripIdentity, type StripResult } from './work-eval/identityStrip.js';
 import { schemaRegex } from './work-eval/schemaRegex.js';
+import { injectIdentity, nameRead, phoneRead, STRIP_BENCH_VERSION, stripCounts, syntheticPerson, type Injected, type InjectedKind, type SyntheticPerson } from './work-eval/stripBench.js';
 import { embedAll, loadReplica, ReplicaIndex } from './work-eval/replica.js';
 import {
   addScores,
@@ -505,6 +511,11 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     if (cloudTextEnv && !['1', 'pdf', 'ocr'].includes(cloudTextEnv)) throw new Error('RESUME_CLOUD_TEXT must be 1 (or pdf) or ocr');
     const cloudText: 'pdf' | 'ocr' | null = cloudTextEnv === 'ocr' ? 'ocr' : cloudTextEnv ? 'pdf' : null;
     if (cloudText && cloudReaders.length !== 1) throw new Error('RESUME_CLOUD_TEXT reads text with one cloud reader');
+    // RESUME_STRIP: each resume given a made-up identity, stripped before the cloud reads it (workspace decision 0021,
+    // the founder's ruling of 2026-10-30): `unbound` strips the emails, `bound` also the passport's name and birth date.
+    const stripMode = (process.env.RESUME_STRIP ?? '').trim();
+    if (stripMode && stripMode !== 'unbound' && stripMode !== 'bound') throw new Error('RESUME_STRIP must be unbound or bound');
+    if (stripMode && !cloudText) throw new Error('RESUME_STRIP strips text: set RESUME_CLOUD_TEXT too');
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const token = process.env.CLOUDFLARE_API_TOKEN;
     if (cloudReaders.length && (!accountId || !token)) throw new Error('the cloud pipeline needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
@@ -558,16 +569,29 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     // The cloud: both readers per resume in parallel, then the pipeline.
     const ai = cloudReaders.length ? createRestAi({ accountId: accountId!, token: token! }) : null;
     const cloud = new Map<string, { a: CachedReading; b: CachedReading | null; trace: PipelineTrace | null }>();
+    // With RESUME_STRIP, each resume's made-up person, its text with them, what the strip sent, and (bound) the same
+    // passport stripped from the resume without them, where anything removed is not the person's.
+    const strips = new Map<string, { person: SyntheticPerson; injected: Injected; sent: StripResult; plain: StripResult | null }>();
     if (ai) {
       await parallel(sample, parallelN, async (r, i) => {
         const pages = pagesOf(r.id);
+        const text = cloudText === 'ocr' ? ocrOf(r.id) : cloudText ? textOf(r.id) : '';
+        let sentText = text;
+        if (stripMode) {
+          const person = syntheticPerson((Number(r.id) || 0) + 1_000_003 * seed);
+          const injected = injectIdentity(text, person);
+          const holder = stripMode === 'bound' ? person.passport : null;
+          const sent = stripIdentity(injected.text, holder);
+          strips.set(r.id, { person, injected, sent, plain: holder ? stripIdentity(text, holder) : null });
+          sentText = sent.text;
+        }
         const [a, b] = await Promise.all(
           cloudReaders.map((model) =>
-            readOnce(cacheDir, cloudText ? `${model} ${cloudText === 'ocr' ? 'ocr' : 'text'}` : model, r.id, async () => ({
+            readOnce(cacheDir, cloudText ? `${model} ${cloudText === 'ocr' ? 'ocr' : 'text'}${stripMode ? ` strip-${stripMode}-v${STRIP_BENCH_VERSION}` : ''}` : model, r.id, async () => ({
               model,
               result: await ai.run(
                 model as never,
-                parseRequest(model, cloudText ? { kind: 'text', text: cloudText === 'ocr' ? ocrOf(r.id) : textOf(r.id) } : { kind: 'image', pages }) as never,
+                parseRequest(model, cloudText ? { kind: 'text', text: sentText } : { kind: 'image', pages }) as never,
                 { signal: AbortSignal.timeout(180_000) } as never,
               ),
             })),
@@ -659,7 +683,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     };
     const short = (m: string) => m.split('/').pop()!;
     const cloudCacheReaders = cloudReaders.length
-      ? cloudReaders.map((m) => (cloudText === 'ocr' ? `${m}, Apple Vision's lines` : cloudText ? `${m}, the text layer` : m))
+      ? cloudReaders.map((m) => `${cloudText === 'ocr' ? `${m}, Apple Vision's lines` : cloudText ? `${m}, the text layer` : m}${stripMode ? `, identity stripped (${stripMode})` : ''}`)
       : [];
     for (const r of sample) {
       const c = cloud.get(r.id);
@@ -870,8 +894,57 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
       for (const l of summaryRows(paths, (r) => GROUPS[r.category] === group)) say(l);
       say();
     }
+    // The identity strip's section, counts only: no made-up name, address or date is written.
+    let stripSummary: Record<string, unknown> | null = null;
+    if (stripMode) {
+      const cases = sample.flatMap((r) => {
+        const s = strips.get(r.id);
+        const c = cloud.get(r.id);
+        return s && c ? [{ s, reading: c.a.reading }] : [];
+      });
+      const counts = cases.map(({ s }) => stripCounts(s.injected, s.sent.removed, s.person));
+      const left = (k: InjectedKind) => counts.filter((c) => c.left[k]).length;
+      const read = cases.filter((x) => x.reading);
+      const names = { right: 0, placeholder: 0, none: 0, other: 0 };
+      for (const x of read) names[nameRead(x.reading!.name, x.s.person)]++;
+      const phones = read.filter((x) => phoneRead(x.reading!.phone, x.s.person)).length;
+      const emailPlaceholders = read.filter((x) => /\[EMAIL_\d+\]/.test(x.reading!.email ?? '')).length;
+      const emailNone = read.filter((x) => !x.reading!.email?.trim()).length;
+      const shownEmail = cases.filter((x) => x.s.sent.removed.find((r) => r.kind === 'email')?.text.toLowerCase() === x.s.person.email.toLowerCase()).length;
+      const layouts = (['top', 'end', 'middle'] as const).map((l) => `${cases.filter((x) => x.s.person.layout === l).length} ${l}`).join(', ');
+      const extraSpans = counts.reduce((n, c) => n + c.extraSpans, 0);
+      const extraChars = counts.reduce((n, c) => n + c.extraChars, 0);
+      const withoutThePerson = cases.reduce((n, x) => n + (x.s.plain?.removed.length ?? 0), 0);
+      stripSummary = {
+        mode: stripMode,
+        version: STRIP_BENCH_VERSION,
+        resumes: cases.length,
+        withBirthDate: cases.filter((x) => x.s.person.birthDate).length,
+        left: { name: left('name'), birthDate: left('birthDate'), email: left('email'), phone: left('phone') },
+        extraSpans,
+        extraChars,
+        withoutThePerson,
+        read: read.length,
+        names,
+        phones,
+        emailPlaceholders,
+        emailNone,
+        shownEmail,
+      };
+      say('## The identity strip');
+      say();
+      say(
+        `Each resume was given a made-up identity (\`test/work-eval/stripBench.ts\`, version ${STRIP_BENCH_VERSION}): a name in one of five spellings, an email, a US phone and, on ${cases.filter((x) => x.s.person.birthDate).length} of ${cases.length}, a birth date in one of six formats, at the top, the end or in the middle (${layouts}), the name repeated in a closing line on ${cases.filter((x) => x.s.person.names.length > 1).length}. ${stripMode === 'bound' ? "The account was bound: the passport's name and birth date, as the app keeps them, and every email were stripped" : 'The account was not bound: only the emails were stripped'} before the text went to the cloud reader.`,
+      );
+      say();
+      say(`- Still readable in the text sent: names ${left('name')}/${cases.length}, birth dates ${left('birthDate')}/${cases.filter((x) => x.s.person.birthDate).length}, emails ${left('email')}/${cases.length}, phones ${left('phone')}/${cases.length} (phones are not stripped).`);
+      say(`- Removed and not the person's: ${extraSpans} spans, ${extraChars} characters.${stripMode === 'bound' ? ` The same passports on the resumes without the made-up identity removed ${withoutThePerson} spans.` : ''}`);
+      say(`- The reader's identity, on the ${read.length} resumes read: the name ${names.right} the person's, ${names.placeholder} a placeholder, ${names.none} none, ${names.other} another; the phone ${phones} the person's; the email ${emailPlaceholders} a placeholder, ${emailNone} none.`);
+      say(`- The email the phone would show, the first the strip removed: ${shownEmail}/${cases.length} the person's.`);
+      say();
+    }
     // The pipeline's section only when two cloud readers made one.
-    const pipelineTraces = [...cloud.values()].map((c) => c.trace).filter((t): t is PipelineTrace => !!t);
+    const pipelineTraces =[...cloud.values()].map((c) => c.trace).filter((t): t is PipelineTrace => !!t);
     if (pipelineTraces.length) {
       const traces = pipelineTraces;
       const disputes = traces.flatMap((t) => t.disputes);
@@ -927,7 +1000,7 @@ describe.skipIf(!RUN)('Real-resume benchmark (live: Workers AI and local readers
     const reportPath = join(__dirname, 'work-eval', `resumes-${date}-n${n}${suffix}.md`);
     writeFileSync(reportPath, lines.join('\n'));
     mkdirSync(join(out, 'reports'), { recursive: true });
-    writeFileSync(join(out, 'reports', `resumes-${date}-n${n}${suffix}.json`), JSON.stringify({ date, seed, plan, sample: sample.map((r) => r.id), paths: Object.fromEntries(paths), cwp }, null, 1) + '\n');
+    writeFileSync(join(out, 'reports', `resumes-${date}-n${n}${suffix}.json`), JSON.stringify({ date, seed, plan, sample: sample.map((r) => r.id), paths: Object.fromEntries(paths), cwp, strip: stripSummary }, null, 1) + '\n');
     process.stdout.write(`report: ${reportPath}\n`);
     expect(sample.length).toBeGreaterThan(0);
   }, 12 * 3_600_000);
