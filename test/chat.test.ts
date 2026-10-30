@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createChatRoutes, parseFloor, type ChatRouteDeps } from '../src/routes/chat.js';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
-import { actionTool, decideRoute, routerQuestions } from '../src/services/chat/router.js';
+import { actionTool, CHAT_ACTIONS, decideRoute, HIRE_OVER_PAYMENT, HIRE_QUESTION, ROUTER_THRESHOLDS, routerQuestions } from '../src/services/chat/router.js';
 import {
   CHOOSE_TEXT,
   CLARIFY_TEXT,
@@ -142,6 +142,46 @@ describe('decideRoute', () => {
     expect(Object.keys(routerQuestions())).toContain('reasoning');
   });
 
+  it('opens the hirer’s flow from the hiring check, after the safety checks and before any other route', () => {
+    const hired = (base: ReturnType<typeof clef>, hire: number) => ({ ...base.answers, hire: { type: 'noul', noul: hire } });
+    const on = { hireFloor: 0.5 };
+    // "Hi, I am looking for a plumber to fix my sink": the founder's example (2026-10-30).
+    expect(decideRoute(hired(clef('looking_for', 0.7), 0.92), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'action', action: 'post_job', confidence: 0.92 });
+    expect(decideRoute(hired(clef('none', 0.8), 0.5), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'action', action: 'post_job' });
+    // Below the floor the turn routes as before; so does a missing answer.
+    expect(decideRoute(hired(clef('none', 0.8), 0.49), ROUTER_THRESHOLDS, CHAT_ACTIONS, on).route).toBe('answer');
+    expect(decideRoute(hired(clef('send', 0.97), 0.2), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'action', action: 'send' });
+    expect(decideRoute(clef('none', 0.8).answers, ROUTER_THRESHOLDS, CHAT_ACTIONS, on).route).toBe('answer');
+    // An unsafe request is refused, however much it asks for a worker.
+    expect(decideRoute(hired(clef('none', 0.8, 'short', 0.9, 0.93), 0.95), ROUTER_THRESHOLDS, CHAT_ACTIONS, on).route).toBe('refuse');
+    // Over a payment or a message the action question chose, at any probability, the check needs HIRE_OVER_PAYMENT:
+    // paying a tradesperson is not hiring one ("Manda 100 pro eletricista @joao").
+    expect(decideRoute(hired(clef('send', 0.92), 0.6), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'action', action: 'send' });
+    expect(decideRoute(hired(clef('send', 0.4, 'short', 0.9, 0.01, 0.01, { message: 0.3 }), 0.56), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'clarify', candidates: ['send', 'message'] });
+    expect(decideRoute(hired(clef('message', 0.36), 0.91), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'action', action: 'post_job' });
+    expect(decideRoute(hired(clef('send', 0.92), HIRE_OVER_PAYMENT), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'action', action: 'post_job' });
+    // Any other choice leaves the check at its own floor.
+    expect(decideRoute(hired(clef('looking_for', 0.9), 0.6), ROUTER_THRESHOLDS, CHAT_ACTIONS, on)).toMatchObject({ route: 'action', action: 'post_job' });
+    // The action question never opens or offers a hiring screen, even from an answer that names it.
+    expect(decideRoute(clef('post_job', 0.99).answers).route).toBe('answer');
+    expect(decideRoute(clef('send', 0.3, 'short', 0.9, 0.01, 0.01, { post_job: 0.5, message: 0.2 }).answers).candidates).toEqual(['send', 'message']);
+    // Without a floor the check is off, whatever Clef says.
+    expect(decideRoute(hired(clef('none', 0.8), 0.99)).route).toBe('answer');
+    expect(decideRoute(hired(clef('none', 0.8), 0.99), ROUTER_THRESHOLDS, CHAT_ACTIONS, { hireFloor: null }).route).toBe('answer');
+  });
+
+  it('asks the hiring check only when it is on, and never offers post_job on the action question', () => {
+    expect(routerQuestions()).not.toHaveProperty('hire');
+    expect(routerQuestions(CHAT_ACTIONS, { hire: true })).toMatchObject({ hire: { type: 'noul', instructions: HIRE_QUESTION } });
+    expect(routerQuestions(CHAT_ACTIONS, { hire: 'Another wording?' }).hire).toEqual({ type: 'noul', instructions: 'Another wording?' });
+    for (const opts of [{}, { hire: true }]) {
+      const criteria = routerQuestions(CHAT_ACTIONS, opts).action.criteria;
+      expect(criteria).not.toHaveProperty('post_job');
+      expect(criteria).toHaveProperty('looking_for');
+    }
+    expect(CHAT_ACTIONS.filter((a) => a.hiring).map((a) => a.id)).toEqual(['post_job']);
+  });
+
   it('builds tools only for actions with fields', () => {
     expect(actionTool('send')?.function.parameters.properties).toHaveProperty('recipient');
     expect(actionTool('looking_for')).toBeNull();
@@ -213,6 +253,24 @@ describe('runChat', () => {
     expect(events).toContainEqual({ type: 'action', request: { id: 'import_cv' } });
     expect(texts(events)).toMatch(/isn't available yet; it's coming/);
     expect(texts(events)).not.toMatch(/is ready/);
+  });
+
+  it('opens the hirer’s flow when the hiring check is on, says it is coming, and asks nothing when it is off', async () => {
+    const calls: Call[] = [];
+    const answers = { answers: { ...clef('none', 0.8).answers, hire: { type: 'noul', noul: 0.94 } } };
+    const inference = fakeInference({ 'chat-router': answers, 'chat-answer': () => sse(['x']) }, calls);
+    const events = await collect(runChat({ inference, messages: user('Hi, I am looking for a plumber to fix my sink'), hireFloor: 0.5 }));
+    expect(events).toContainEqual({ type: 'action', request: { id: 'post_job' } });
+    expect(texts(events)).toMatch(/Posting a job isn't available yet; it's coming/);
+    const router = calls.find((c) => c.op === 'chat-router')!;
+    expect(router.input).toMatchObject({ questions: { hire: { instructions: HIRE_QUESTION } } });
+    expect(calls.some((c) => c.op === 'chat-action')).toBe(false);
+
+    const offCalls: Call[] = [];
+    const off = fakeInference({ 'chat-router': answers, 'chat-answer': () => sse(['An answer']) }, offCalls);
+    const offEvents = await collect(runChat({ inference: off, messages: user('Hi, I am looking for a plumber to fix my sink') }));
+    expect(offEvents.some((e) => e.type === 'action')).toBe(false);
+    expect(offCalls.find((c) => c.op === 'chat-router')!.input).not.toHaveProperty('questions.hire');
   });
 
   it('opens a field-less action without calling the action model', async () => {

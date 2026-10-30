@@ -9,9 +9,11 @@
  * Pure: `routerQuestions` builds the Clef request, `decideRoute` reads its
  * answers, so both are tested without Workers AI.
  *
- * The action list mirrors `cofferdam-app/src/lib/actions.ts`. The chat only
- * proposes an action; the app validates it (`parseActionRequest`) and opens
- * the panel, where the user confirms (decision 0024).
+ * The action list mirrors `cofferdam-app/src/lib/actions.ts`, apart from
+ * `post_job`, which the app adds before `CHAT_HIRE_FLOOR` is set (workspace
+ * decision 0073). The chat only proposes an action; the app validates it
+ * (`parseActionRequest`) and opens the panel, where the user confirms
+ * (decision 0024).
  */
 
 /**
@@ -33,6 +35,8 @@ export interface ChatActionDef {
   fields?: Record<string, { type: 'number' | 'string'; description: string }>;
   /** The screen shows a notice today (`docs/app/ux.md`): the chat still opens it, but says it is coming, never "ready". */
   planned?: true;
+  /** Opened only by the router's hiring check (`HIRE_QUESTION`), never offered by the action question. */
+  hiring?: true;
 }
 
 /**
@@ -81,7 +85,31 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
   { id: 'looking_for', description: "Turn the user's own job search on or off, or change where they can work; not a question about jobs or the industry" },
   { id: 'message', description: 'Write a text message to a friend or a contact (tell someone something), not a payment' },
   { id: 'create_group', description: 'Create a group chat' },
+  // The hirer's flow (workspace decision 0065): only the hiring check opens it,
+  // so it never takes probability from the screens above.
+  { id: 'post_job', description: 'Post a job: hire a worker for work the user wants done', planned: true, hiring: true },
 ];
+
+/**
+ * The router's hiring check, the founder's "layer 0" (2026-10-30): a message
+ * that asks for a worker opens the hirer's flow before any other route, after
+ * the safety checks; over a payment or a message the action question chose,
+ * only at `HIRE_OVER_PAYMENT`. The rules for every other message are unchanged,
+ * though Clef's other answers can shift when it is asked (four of the 97 chat
+ * prompts on clef-flash). Asked only when `CHAT_HIRE_FLOOR` sets its floor,
+ * since the app opens no post-a-job screen yet.
+ *
+ * Of four wordings measured on 142 prompts in three languages, this one did
+ * best on clef-flash (`test/chatRouter.eval.test.ts`,
+ * `test/chat-eval/router-hire-2026-10-30-v4-wording.md`). At 0.5 it caught 22
+ * of 23 requests for a worker and sent no other message to the hirer's flow,
+ * apart from a harmful one the safety checks refuse first. The first wording
+ * sent fee and hiring questions there at 0.53 to 0.84. The miss is a Mexican
+ * "velador" (a night guard), which flash read at 0.21 and Clef (not flash)
+ * caught.
+ */
+export const HIRE_QUESTION =
+  "Is the latest user message a request for a worker: does it name work the user wants done (a repair, a task, a shift, a vacancy or a job ad) and ask for someone to do it? Asking how hiring, fees or payments work, paying or messaging someone, and the user's own job search are no.";
 
 /**
  * The reasoning question's legend, in order. Clef's `score` is the expected
@@ -117,14 +145,19 @@ export const ROUTER_THRESHOLDS = {
  * picks the answer tier, and the two yes-no checks refuse. An earlier shape
  * with one combined route question (action / answer / refuse) refused every
  * money request (checked 2026-10-17: "send 20 dollars to @ana" scored refuse
- * 0.69); split, Clef chose correctly on all eleven test prompts.
+ * 0.69); split, Clef chose correctly on all eleven test prompts. With `hire`,
+ * the hiring check joins them (`HIRE_QUESTION`, or another wording an
+ * evaluation passes); Clef answers each question on its own, but its answers
+ * to the others can shift when one is added.
  */
-export function routerQuestions(actions: ChatActionDef[] = CHAT_ACTIONS) {
+export function routerQuestions(actions: ChatActionDef[] = CHAT_ACTIONS, opts: { hire?: boolean | string } = {}) {
   const actionCriteria: Record<string, string> = {
     none: 'Nothing to open: the user wants information, an explanation, advice or small talk, including any question about jobs, pay, rotations, contracts or the industry',
   };
-  for (const a of actions) actionCriteria[a.id] = a.description;
+  for (const a of actions) if (!a.hiring) actionCriteria[a.id] = a.description;
+  const hire = opts.hire ? { hire: { type: 'noul' as const, instructions: typeof opts.hire === 'string' ? opts.hire : HIRE_QUESTION } } : {};
   return {
+    ...hire,
     action: {
       type: 'choice' as const,
       instructions: 'Should the app open one of its screens for the latest user message? Pick the screen, or none.',
@@ -189,8 +222,30 @@ export interface RouteDecision {
 
 const MAX_CANDIDATES = 3;
 
-/** Read Clef's answers into a route; a missing or malformed answer falls back to a short answer. */
-export function decideRoute(answers: unknown, thresholds = ROUTER_THRESHOLDS, actions: ChatActionDef[] = CHAT_ACTIONS): RouteDecision {
+/**
+ * The screens the hiring check yields to: paying or messaging a tradesperson is not hiring one. When one of them is
+ * the action question's own choice, at any probability, the hiring check opens the hirer's flow only at
+ * `HIRE_OVER_PAYMENT` or above. "Manda 100 pro eletricista @joao" scored 0.45 to 0.56 on the hiring check across four
+ * wordings, with Send as the action question's choice. Replayed on the measured decisions of 2026-10-30, the rule
+ * kept every request for a worker on both models: "urgent: I need someone to fix a gas leak today" had Message on top
+ * at 0.36 with the check at 0.91.
+ */
+const HIRING_YIELDS_TO: ReadonlySet<string> = new Set(['send', 'add_money', 'message']);
+/** The hiring check's score that opens the hirer's flow over a payment or a message the action question chose. */
+export const HIRE_OVER_PAYMENT = 0.7;
+
+/**
+ * Read Clef's answers into a route; a missing or malformed answer falls back to a short answer. With `hireFloor`, the
+ * hiring check comes first after the safety checks: at or above its floor (or `HIRE_OVER_PAYMENT` over a payment or a
+ * message the action question chose) the turn opens the hirer's flow (`post_job`), and below it the turn routes by
+ * the same rules as before. A missing hiring answer is no hiring.
+ */
+export function decideRoute(
+  answers: unknown,
+  thresholds = ROUTER_THRESHOLDS,
+  actions: ChatActionDef[] = CHAT_ACTIONS,
+  opts: { hireFloor?: number | null } = {},
+): RouteDecision {
   const a = (answers && typeof answers === 'object' ? answers : {}) as Record<string, ClefChoice & ClefNoul & ClefScore>;
   const lang = a.language?.choice;
   const language: ChatLanguage = lang === 'pt' || lang === 'es' ? lang : 'en';
@@ -205,9 +260,17 @@ export function decideRoute(answers: unknown, thresholds = ROUTER_THRESHOLDS, ac
   const id = a.action?.choice;
   const probabilities = a.action?.probabilities ?? {};
   const actionP = Number(probabilities[id ?? ''] ?? 0);
-  if (id && id !== 'none') {
+  const hiring = actions.find((x) => x.hiring);
+  if (opts.hireFloor != null && hiring) {
+    const hire = Number(a.hire?.noul ?? 0);
+    const over = id != null && HIRING_YIELDS_TO.has(id) ? Math.max(opts.hireFloor, HIRE_OVER_PAYMENT) : opts.hireFloor;
+    if (Number.isFinite(hire) && hire >= over) return { ...none, route: 'action', action: hiring.id, confidence: hire };
+  }
+  // A hiring screen is never the action question's to open, even from an answer that names it.
+  if (id && id !== 'none' && !actions.some((x) => x.id === id && x.hiring)) {
     if (actionP >= thresholds.action) return { ...none, route: 'action', action: id, confidence: actionP };
-    const known = new Set(actions.map((x) => x.id));
+    // A screen only the hiring check opens is never offered.
+    const known = new Set(actions.filter((x) => !x.hiring).map((x) => x.id));
     const candidates = Object.entries(probabilities)
       .filter(([k, p]) => known.has(k) && Number(p) >= thresholds.candidate)
       .sort((x, y) => Number(y[1]) - Number(x[1]))

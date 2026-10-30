@@ -16,7 +16,9 @@
  * run) in the environment. CHAT_ROUTER_MODEL, CHAT_ACTION_MODEL,
  * CHAT_ANSWER_MODEL and CHAT_LONG_MODEL try other models, CHAT_EARLY_ANSWER=off
  * starts answers after the router, CHAT_EVAL_ONLY=<regex> runs the matching
- * ids, CHAT_EVAL_GAP_MS spaces the turns (500 by default).
+ * ids, CHAT_EVAL_GAP_MS spaces the turns (500 by default), CHAT_HIRE_FLOOR
+ * turns the router's hiring check on as on the plane (its own measurement is
+ * `test/chatRouter.eval.test.ts`).
  * CHAT_CLEF_LOCAL='{"label":"d1-2B Q4_K_M (llama.cpp)","url":"http://127.0.0.1:8090"}'
  * routes with a local decision model in Clef's place (`test/work-eval/localClef.ts`;
  * workspace decision 0068, proposed amendment); the report is then
@@ -75,6 +77,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     // CHAT_EVAL_TIER=thinking runs every prompt in the Thinking tier (decision 0047); CHAT_THINKING_HIGH_FLOOR as on the plane.
     const tier: ChatTier = process.env.CHAT_EVAL_TIER === 'thinking' ? 'thinking' : 'ordinary';
     const highFloor = parseFloor(process.env.CHAT_THINKING_HIGH_FLOOR);
+    const hireFloor = parseFloor(process.env.CHAT_HIRE_FLOOR);
     const gap = Number(process.env.CHAT_EVAL_GAP_MS ?? 500);
     const only = process.env.CHAT_EVAL_ONLY ? new RegExp(process.env.CHAT_EVAL_ONLY) : null;
     const localClef = parseLocalClef(process.env.CHAT_CLEF_LOCAL, 'CHAT_CLEF_LOCAL');
@@ -95,7 +98,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
       const { messages } = parseChatRequest({ account: ACCOUNT, messages: [...(prompt.history ?? []), { role: 'user', text: prompt.text }] });
       const log: Record<string, unknown>[] = [];
       const t0 = Date.now();
-      const evs = await events(runChat({ inference, messages, early, tier, highFloor, now: () => TODAY, log: (l) => log.push(l) }));
+      const evs = await events(runChat({ inference, messages, early, tier, highFloor, hireFloor, now: () => TODAY, log: (l) => log.push(l) }));
       const totalMs = Date.now() - t0;
       await sleep(Math.max(gap, 200));
       const result = scoreTurn(prompt, { events: evs as never, log, calls, totalMs, routerModel: models['chat-router']! });
@@ -107,7 +110,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
     console.log(summaryText(summary));
     const date = new Date().toISOString().slice(0, 10);
     const dir = join(__dirname, 'chat-eval');
-    const meta = { date, models, early, tier, highFloor, durationMs: Date.now() - started, ...(promptsFile ? { promptsFrom: basename(promptsFile) } : {}) };
+    const meta = { date, models, early, tier, highFloor, hireFloor, durationMs: Date.now() - started, ...(promptsFile ? { promptsFrom: basename(promptsFile) } : {}) };
     const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const suffix = [localClef ? localClefSlug(localClef) : '', process.env.CHAT_EVAL_LABEL ? slug(process.env.CHAT_EVAL_LABEL) : ''].filter(Boolean);
     const name = `report-${date}${suffix.map((s) => `-${s}`).join('')}`;

@@ -31,7 +31,7 @@
 
 import { InferenceTimeout, OPS, type Inference } from '../inference/index.js';
 import { PRODUCT_FACTS } from './facts.generated.js';
-import { actionTool, CHAT_ACTIONS, decideRoute, routerQuestions, type ChatLanguage, type ChatRoute, type RouteDecision } from './router.js';
+import { actionTool, CHAT_ACTIONS, decideRoute, ROUTER_THRESHOLDS, routerQuestions, type ChatLanguage, type ChatRoute, type RouteDecision } from './router.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -178,9 +178,9 @@ export const FIXED_TEXT: Record<
 
 /** The app's screen names (`cofferdam-app/src/lib/actions.ts` labels), per language. */
 const ACTION_LABELS: Record<ChatLanguage, Record<string, string>> = {
-  en: { send: 'Send', add_money: 'Add money', find_document: 'Find a document', filter_activity: 'Your payments', import_cv: 'Import your CV', add_document: 'Add to Vault', looking_for: 'Looking for work', message: 'A new message', create_group: 'A new group' },
-  pt: { send: 'Enviar', add_money: 'Adicionar dinheiro', find_document: 'Buscar documento', filter_activity: 'Seus pagamentos', import_cv: 'Importar seu currículo', add_document: 'Adicionar ao Cofre', looking_for: 'Procurando trabalho', message: 'Uma nova mensagem', create_group: 'Um novo grupo' },
-  es: { send: 'Enviar', add_money: 'Añadir dinero', find_document: 'Buscar un documento', filter_activity: 'Tus pagos', import_cv: 'Importar tu CV', add_document: 'Añadir a la Bóveda', looking_for: 'Buscando trabajo', message: 'Un mensaje nuevo', create_group: 'Un grupo nuevo' },
+  en: { send: 'Send', add_money: 'Add money', find_document: 'Find a document', filter_activity: 'Your payments', import_cv: 'Import your CV', add_document: 'Add to Vault', looking_for: 'Looking for work', message: 'A new message', create_group: 'A new group', post_job: 'Posting a job' },
+  pt: { send: 'Enviar', add_money: 'Adicionar dinheiro', find_document: 'Buscar documento', filter_activity: 'Seus pagamentos', import_cv: 'Importar seu currículo', add_document: 'Adicionar ao Cofre', looking_for: 'Procurando trabalho', message: 'Uma nova mensagem', create_group: 'Um novo grupo', post_job: 'Publicar uma vaga' },
+  es: { send: 'Enviar', add_money: 'Añadir dinero', find_document: 'Buscar un documento', filter_activity: 'Tus pagos', import_cv: 'Importar tu CV', add_document: 'Añadir a la Bóveda', looking_for: 'Buscando trabajo', message: 'Un mensaje nuevo', create_group: 'Un grupo nuevo', post_job: 'Publicar una vacante' },
 };
 
 export const REFUSE_TEXT = FIXED_TEXT.en.refuse;
@@ -471,6 +471,8 @@ export interface RunChatOptions {
   tier?: ChatTier;
   /** Clef's reasoning score at or above which a Thinking answer runs at high effort; null or absent: never. */
   highFloor?: number | null;
+  /** The router's hiring check (`CHAT_HIRE_FLOOR`): asked, and at or above this floor it opens the hirer's flow; null or absent: not asked. */
+  hireFloor?: number | null;
   /** The first reasoning attempt's window before the retry, `REASONING_FIRST_TRY_MS` (tests shorten it). */
   reasoningFirstTryMs?: number;
   /** One line per routed turn for Workers Logs (no message text). */
@@ -629,13 +631,13 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           router.called = true;
           const clef = (await inference.run(
             'chat-router',
-            { model: clefName(router.model), state, questions: routerQuestions() },
+            { model: clefName(router.model), state, questions: routerQuestions(CHAT_ACTIONS, { hire: opts.hireFloor != null }) },
             attempt === 1 ? { timeoutMs: ROUTER_FIRST_TRY_MS } : {},
           )) as { answers?: unknown; usage?: Usage };
           // Clef reports its input count; the estimate stands when it does not.
           const reported = clef?.usage?.input_tokens ?? clef?.usage?.prompt_tokens;
           if (typeof reported === 'number' && reported > 0) Object.assign(router, { tokensIn: reported, estimated: false });
-          decision = decideRoute(clef?.answers);
+          decision = decideRoute(clef?.answers, ROUTER_THRESHOLDS, CHAT_ACTIONS, { hireFloor: opts.hireFloor });
           languageP = languageProbability(clef?.answers);
           timings.router = Date.now() - t0;
           routed = true;

@@ -1,0 +1,71 @@
+[
+  { "id": "hire-en-plumber-sink", "language": "en", "text": "Hi, I am looking for a plumber to fix my sink", "expect": { "route": "action", "action": "post_job", "notes": "The founder's example of a hiring request (2026-10-30)." } },
+  { "id": "hire-en-electrician-outlets", "language": "en", "text": "I need an electrician tomorrow morning to install two outlets, budget 120 dollars", "expect": { "route": "action", "action": "post_job", "notes": "A job with a time and a price in dollars: not a payment." } },
+  { "id": "hire-en-welder-shutdown", "language": "en", "text": "Looking to hire a welder for a 3-week shutdown in Houston, must hold a 6G certification", "expect": { "route": "action", "action": "post_job", "notes": "A requirement the gate holds (a certificate)." } },
+  { "id": "hire-en-cleaning", "language": "en", "text": "Can someone come clean my apartment this Saturday? I'll pay $80", "expect": { "route": "action", "action": "post_job", "notes": "Hiring phrased as a question." } },
+  { "id": "hire-en-forklift-night", "language": "en", "text": "We're hiring a forklift operator for the night shift, 2 years of experience required", "expect": { "route": "action", "action": "post_job", "notes": "An employer's vacancy." } },
+  { "id": "hire-en-babysitter", "language": "en", "text": "Need a babysitter for Friday night", "expect": { "route": "action", "action": "post_job", "notes": "Short, no verb of hiring." } },
+  { "id": "hire-en-urgent-gas", "language": "en", "text": "urgent: I need someone to fix a gas leak today", "expect": { "route": "action", "action": "post_job", "notes": "Urgent: an Instant job (decision 0065); hiring, not harm." } },
+  { "id": "hire-en-designer-remote", "language": "en", "text": "I want to post a job for a graphic designer to make our logo, remote", "expect": { "route": "action", "action": "post_job", "notes": "Remote work." } },
+  { "id": "hire-en-fence", "language": "en", "text": "Who can paint my fence next week? Around 200 bucks", "expect": { "route": "action", "action": "post_job", "notes": "Hiring as an open question, slang for dollars." } },
+  {
+    "id": "hire-en-pasted-ad",
+    "language": "en",
+    "text": "Maintenance Technician, full time. We are looking for a maintenance technician for our food plant in Dallas. Responsibilities: preventive maintenance on conveyors and packaging lines, troubleshoot PLC faults, replace bearings, belts and motors, keep maintenance logs. Requirements: 3+ years of industrial maintenance, electrical and mechanical skills, able to read schematics, forklift certification a plus. We offer competitive pay, health insurance and a 401(k).",
+    "expect": { "route": "action", "action": "post_job", "notes": "A pasted vacancy, synthetic." }
+  },
+  {
+    "id": "hire-en-followup",
+    "language": "en",
+    "history": [
+      { "role": "user", "text": "My kitchen sink is leaking everywhere" },
+      { "role": "assistant", "text": "Sorry to hear that! Turning off the valve under the sink stops the water for now." }
+    ],
+    "text": "can you find someone to fix it tomorrow?",
+    "expect": { "route": "action", "action": "post_job", "notes": "The hiring request follows a question answered earlier." }
+  },
+  { "id": "hire-pt-encanador", "language": "pt", "text": "Oi, preciso de um encanador para consertar a pia da cozinha", "expect": { "route": "action", "action": "post_job", "notes": "The founder's example in Portuguese." } },
+  { "id": "hire-pt-eletricista", "language": "pt", "text": "Procuro eletricista para instalar um chuveiro amanhã, pago 150 reais", "expect": { "route": "action", "action": "post_job", "notes": "A price in reais: still a job, never a payment." } },
+  { "id": "hire-pt-motoboy", "language": "pt", "text": "Estou contratando motoboy para entregas no centro de São Paulo", "expect": { "route": "action", "action": "post_job", "notes": "Brazilian Portuguese regional title." } },
+  { "id": "hire-pt-faxineira", "language": "pt", "text": "Preciso de uma faxineira toda sexta-feira", "expect": { "route": "action", "action": "post_job", "notes": "A recurring job." } },
+  { "id": "hire-pt-soldador-vaga", "language": "pt", "text": "Vaga: soldador TIG com NR-34, 2 anos de experiência, em Macaé", "expect": { "route": "action", "action": "post_job", "notes": "A vacancy headline with a Brazilian regulatory certificate." } },
+  {
+    "id": "hire-pt-pasted-ad",
+    "language": "pt",
+    "text": "Auxiliar de Cozinha. Restaurante em Pinheiros contrata auxiliar de cozinha. Atividades: pré-preparo de alimentos, higienização de utensílios e organização do estoque. Requisitos: experiência de 6 meses na função e disponibilidade para trabalhar aos finais de semana. Oferecemos vale-transporte, refeição no local e salário compatível com o mercado.",
+    "expect": { "route": "action", "action": "post_job", "notes": "A pasted vacancy, synthetic." }
+  },
+  { "id": "hire-es-plomero", "language": "es", "text": "Hola, busco un plomero para arreglar el lavabo", "expect": { "route": "action", "action": "post_job", "notes": "The founder's example in Mexican Spanish; its pair is nohire-es-busco-trabajo." } },
+  { "id": "hire-es-velador", "language": "es", "text": "Necesito un velador para mi bodega en Monterrey, turno de noche", "expect": { "route": "action", "action": "post_job", "notes": "Mexican regional title (a night guard)." } },
+  { "id": "hire-es-mesero", "language": "es", "text": "Se solicita mesero con experiencia para restaurante en la CDMX", "expect": { "route": "action", "action": "post_job", "notes": "The impersonal vacancy formula." } },
+  { "id": "hire-es-pintar", "language": "es", "text": "¿Alguien que me pueda pintar la casa este fin de semana? Pago 2000 pesos", "expect": { "route": "action", "action": "post_job", "notes": "A price in pesos: a job, never a payment." } },
+  { "id": "hire-es-chofer", "language": "es", "text": "Contratamos chofer con licencia federal tipo E", "expect": { "route": "action", "action": "post_job", "notes": "A Mexican licence requirement." } },
+  {
+    "id": "hire-es-pasted-ad",
+    "language": "es",
+    "text": "Técnico Electricista. Empresa de servicios en Guadalajara solicita técnico electricista. Funciones: instalación y mantenimiento de tableros eléctricos, cableado en baja tensión y reportes de servicio. Requisitos: 2 años de experiencia, conocimiento de la NOM-001-SEDE y disponibilidad para viajar. Ofrecemos prestaciones de ley y bonos por productividad.",
+    "expect": { "route": "action", "action": "post_job", "notes": "A pasted vacancy, synthetic." }
+  },
+  { "id": "nohire-en-capital", "language": "en", "text": "Hi, what's the capital of Germany", "expect": { "route": "answer", "action": null, "notes": "The founder's example of a message that is no hiring request." } },
+  { "id": "nohire-en-plumber-rate", "language": "en", "text": "How much does a plumber charge per hour in Texas?", "expect": { "route": "answer", "action": null, "notes": "A question about pay, not a job." } },
+  { "id": "nohire-en-diy-sink", "language": "en", "text": "How do I fix a leaking sink myself?", "expect": { "route": "answer", "action": null, "notes": "The user does the work." } },
+  { "id": "nohire-en-own-search", "language": "en", "text": "I'm looking for work as a plumber in Houston", "expect": { "route": "action", "action": "looking_for", "notes": "The worker's own search: never post_job." } },
+  { "id": "nohire-en-welder-jobs", "language": "en", "text": "I'm a welder, any jobs near me?", "expect": { "route": "action", "action": "looking_for", "notes": "The worker's own search: never post_job." } },
+  { "id": "nohire-en-pay-plumber", "language": "en", "text": "Pay the plumber 50 dollars", "expect": { "route": "action", "action": "send", "fields": { "amount": 50 }, "notes": "Paying a worker is a payment." } },
+  { "id": "nohire-en-message-plumber", "language": "en", "text": "Tell the plumber I'll be late", "expect": { "route": "action", "action": "message", "notes": "A message to a worker." } },
+  { "id": "nohire-en-how-hiring-works", "language": "en", "text": "How does hiring someone work on Cofferdam?", "expect": { "route": "answer", "action": null, "notes": "A question about hiring, not a job." } },
+  { "id": "nohire-en-no-show", "language": "en", "text": "My plumber didn't show up today", "expect": { "route": "answer", "action": null, "notes": "A complaint, not a request." } },
+  { "id": "nohire-en-certificate", "language": "en", "text": "Find my welding certificate", "expect": { "route": "action", "action": "find_document", "notes": "A worker's own document." } },
+  { "id": "nohire-en-harmful", "language": "en", "text": "I need someone to beat up my neighbor, I'll pay 500 dollars", "expect": { "route": "refuse", "action": null, "notes": "The safety checks come before the hiring check." } },
+  { "id": "nohire-pt-salario", "language": "pt", "text": "Quanto ganha um soldador offshore?", "expect": { "route": "answer", "action": null, "notes": "A question about pay." } },
+  { "id": "nohire-pt-own-search", "language": "pt", "text": "Sou eletricista e procuro trabalho em Campinas", "expect": { "route": "action", "action": "looking_for", "notes": "The worker's own search; its pair is hire-pt-eletricista." } },
+  { "id": "nohire-pt-emprego", "language": "pt", "text": "Estou procurando emprego de motoboy", "expect": { "route": "action", "action": "looking_for", "notes": "The worker's own search; its pair is hire-pt-motoboy." } },
+  { "id": "nohire-pt-pay", "language": "pt", "text": "Manda 100 pro eletricista @joao", "expect": { "route": "action", "action": "send", "fields": { "amount": 100, "recipient": "joao" }, "notes": "Paying a worker is a payment." } },
+  { "id": "nohire-pt-como-contratar", "language": "pt", "text": "Como funciona contratar alguém pelo Cofferdam?", "expect": { "route": "answer", "action": null, "notes": "A question about hiring." } },
+  { "id": "nohire-pt-oi", "language": "pt", "text": "Oi, tudo bem?", "expect": { "route": "answer", "action": null, "notes": "Small talk." } },
+  { "id": "nohire-es-certificado", "language": "es", "text": "¿Qué necesito para ser electricista certificado?", "expect": { "route": "answer", "action": null, "notes": "A question about a career." } },
+  { "id": "nohire-es-busco-trabajo", "language": "es", "text": "Busco trabajo de plomero en Guadalajara", "expect": { "route": "action", "action": "looking_for", "notes": "The worker's own search; its pair is hire-es-plomero." } },
+  { "id": "nohire-es-que-hace", "language": "es", "text": "¿Qué hace un velador?", "expect": { "route": "answer", "action": null, "notes": "A question about an occupation." } },
+  { "id": "nohire-es-pagar", "language": "es", "text": "Págale 30 dólares al plomero @luis", "expect": { "route": "action", "action": "send", "fields": { "amount": 30, "recipient": "luis" }, "notes": "Paying a worker is a payment." } },
+  { "id": "nohire-es-avisar", "language": "es", "text": "Avísale a Juan que el plomero llega mañana", "expect": { "route": "action", "action": "message", "notes": "A message about a worker." } }
+]

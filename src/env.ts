@@ -109,6 +109,13 @@ export interface Env {
    * high effort instead of low. Unset: never, high effort is unmeasured.
    */
   CHAT_THINKING_HIGH_FLOOR?: string;
+  /**
+   * The router's hiring check (the founder's "layer 0", 2026-10-30): a number
+   * in (0, 1] asks Clef whether the message asks for a worker, and at or above
+   * it the turn opens the hirer's flow (`post_job`). Unset: not asked, since
+   * the app opens no post-a-job screen yet.
+   */
+  CHAT_HIRE_FLOOR?: string;
   /** `off` stops starting the everyday answer alongside the router; anything else keeps it on. */
   CHAT_EARLY_ANSWER?: string;
   /** `POST /v1/chat`: a global brake, and per account after the gate passes. */
@@ -145,6 +152,8 @@ export interface Env {
   WORK_EXTRACT_FALLBACK_MODEL?: string;
   /** The hirer's sentence into the intent's fields (S5); unset, llama-3.3-70b in JSON mode. */
   WORK_INTENT_MODEL?: string;
+  /** A hirer's request into a job profile in the work profile's shape (`services/work/jobProfile.ts`); unset, DeepSeek V4.1 Flash, low reasoning for a short request and none for a vacancy (`effortFor`). */
+  WORK_JOB_PROFILE_MODEL?: string;
   /**
    * The token registry's models (decision 0018): embeddings (unset, `bge-m3`;
    * changing it is a re-embed migration of `token-registry-v1`, never a quiet

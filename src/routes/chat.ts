@@ -90,7 +90,7 @@ export const defaultChatRouteDeps: ChatRouteDeps = {
 
 const GLOBAL_KEY = 'chat:global';
 
-/** `CHAT_THINKING_HIGH_FLOOR` as a number in (0, 1], or null (never). */
+/** A floor setting (`CHAT_THINKING_HIGH_FLOOR`, `CHAT_HIRE_FLOOR`) as a number in (0, 1], or null (never). */
 export function parseFloor(raw: string | undefined): number | null {
   const n = Number(raw);
   return raw && Number.isFinite(n) && n > 0 && n <= 1 ? n : null;
@@ -300,6 +300,7 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       early: c.env.CHAT_EARLY_ANSWER !== 'off',
       tier: parsed.tier,
       highFloor: parseFloor(c.env.CHAT_THINKING_HIGH_FLOOR),
+      hireFloor: parseFloor(c.env.CHAT_HIRE_FLOOR),
       log,
       fallbackLanguage: headerLanguage(c.req.header('accept-language')),
       onTurn: store

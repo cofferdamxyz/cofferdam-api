@@ -474,6 +474,8 @@ export function sweepThresholds(
   results: TurnResult[],
   actionFloors = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7],
   candidateFloors = [0.05, 0.1, 0.15, 0.2, 0.25],
+  /** The router's hiring check as the live turns ran it (`CHAT_HIRE_FLOOR`), so the sweep decides as they did. */
+  hireFloor: number | null = null,
 ): SweepRow[] {
   const recorded = results.filter((r) => r.clef !== undefined);
   const rows: SweepRow[] = [];
@@ -482,7 +484,7 @@ export function sweepThresholds(
       const row: SweepRow = { action, candidate, routeOk: 0, softOk: 0, wrongAction: 0, clarifyForAction: 0, candidatesOk: 0, candidatesScored: 0, n: recorded.length };
       for (const r of recorded) {
         // The live floors are typed as constants; the sweep varies them.
-        const d = decideRoute(r.clef, { ...ROUTER_THRESHOLDS, action, candidate } as unknown as typeof ROUTER_THRESHOLDS);
+        const d = decideRoute(r.clef, { ...ROUTER_THRESHOLDS, action, candidate } as unknown as typeof ROUTER_THRESHOLDS, CHAT_ACTIONS, { hireFloor });
         const e = r.expect;
         const ok = d.route === e.route && (e.route !== 'action' || d.action === e.action);
         if (ok) row.routeOk++;
@@ -515,6 +517,8 @@ export interface ReportMeta {
   tier?: 'ordinary' | 'thinking';
   /** The high-effort floor of a Thinking run; null or absent: never high. */
   highFloor?: number | null;
+  /** The router's hiring check (`CHAT_HIRE_FLOOR`); null or absent: off. */
+  hireFloor?: number | null;
   durationMs: number;
   /** The prompt file when it is not `test/chat-eval/prompts.json` (CHAT_EVAL_PROMPTS), such as spoken prompts' transcripts. */
   promptsFrom?: string;
@@ -539,7 +543,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   out.push(
     `Decision 0037's evaluation: ${s.n} prompts from \`${meta.promptsFrom ?? 'test/chat-eval/prompts.json'}\` through the real turn (\`runChat\`, the inference seam, Workers AI over REST). Models: ${Object.entries(meta.models)
       .map(([op, m]) => `${op} \`${m}\``)
-      .join(', ')}. Early answer ${meta.early ? 'on' : 'off'}. Tier ${meta.tier ?? 'ordinary'}${meta.tier === 'thinking' ? ` (high effort at or above ${meta.highFloor ?? 'never'})` : ''}. Run time ${Math.round(meta.durationMs / 1000)} s.`,
+      .join(', ')}. Early answer ${meta.early ? 'on' : 'off'}. Tier ${meta.tier ?? 'ordinary'}${meta.tier === 'thinking' ? ` (high effort at or above ${meta.highFloor ?? 'never'})` : ''}.${meta.hireFloor != null ? ` The router's hiring check on, at ${meta.hireFloor} (not production's default).` : ''} Run time ${Math.round(meta.durationMs / 1000)} s.`,
     '',
   );
   out.push('## Summary', '', '```', summaryText(s), '```', '');
@@ -571,7 +575,7 @@ export function reportMarkdown(results: TurnResult[], meta: ReportMeta): string 
   for (const [k, v] of Object.entries(s.cost.byRoute)) out.push(`| ${k} | ${usd(v)} |`);
   out.push('');
 
-  const sweep = sweepThresholds(results);
+  const sweep = sweepThresholds(results, undefined, undefined, meta.hireFloor ?? null);
   if (sweep.length && sweep[0]!.n) {
     out.push(
       '## Threshold sweep',

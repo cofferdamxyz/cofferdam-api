@@ -125,6 +125,7 @@ import {
   type Cause,
   type Relation,
 } from './work-eval/localeArms.js';
+import { deidentify } from './work-eval/jobAds.js';
 import { embedAll, GENERATION_OF_MODEL, loadReplica, ReplicaIndex } from './work-eval/replica.js';
 
 const RUN = process.env.JOBS_EVAL === '1';
@@ -220,32 +221,7 @@ function sample(all: Vacancy[], n: number, seed: number): Vacancy[] {
   return out;
 }
 
-// ── De-identification and blocks ───────────────────────────────────────────
-
-/** Contact details and links as the phone's placeholders, so the plane's tripwire reads an ad as it reads a CV. */
-function deidentify(text: string): string {
-  const counters: Record<string, number> = {};
-  const mark = (cls: string) => {
-    counters[cls] = Math.min(99, (counters[cls] ?? 0) + 1);
-    return `[${cls}_${counters[cls]}]`;
-  };
-  return text
-    .replace(/\r/g, '')
-    .replace(/\[([^\]]+)\]\((?:https?:)?[^)]*\)/g, (_m, label: string) => `${label} ${mark('LINK')}`)
-    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, () => mark('EMAIL'))
-    .replace(/\bhttps?:\/\/\S+/gi, () => mark('LINK'))
-    .replace(/\bwww\.\S+/gi, () => mark('LINK'))
-    .replace(/\b[\w-]+\.(com|net|org|io|co|gov|edu|br|mx)\b(\/\S*)?/gi, () => mark('LINK'))
-    .replace(/(^|\s)@[\w.]{3,}/g, (_m, lead: string) => `${lead}${mark('ID')}`)
-    .replace(/\+?\(?\d{2,4}\)?[\s.-]\d{3,5}[\s.-]\d{4}\b/g, () => mark('PHONE'))
-    .replace(/^\s*#{1,6}\s+/gm, '')
-    .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
-    .replace(/\\([*_#\-.])/g, '$1')
-    .replace(/^\s*[*•·]\s+/gm, '- ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+// ── Blocks (the de-identification is `test/work-eval/jobAds.ts`) ─────────────
 
 const HEADING =
   /^\s*(?:-\s*)?(requirements?|job requirements|qualifications?|minimum qualifications|basic qualifications|required qualifications|preferred qualifications|what you.ll need|what you.ll bring|what we.re looking for|who you are|skills?(?:\s*(?:and|&|\/)\s*(?:experience|qualifications|abilities))?|experience(?: required)?|education|required|requisitos(?: obrigat[óo]rios)?|qualifica[çc][õo]es|diferenciais|forma[çc][ãa]o desejada|escolaridade|experi[êe]ncia|perfil(?: desejado| del puesto| requerido)?|habilidades|compet[êe]ncias|conocimientos|experiencia requerida|requerimientos|escolaridad)\b[^\n]{0,40}$/i;

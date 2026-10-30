@@ -1,0 +1,4314 @@
+{
+  "date": "2026-10-30",
+  "model": "@cf/cloudflare/clef",
+  "wording": "Is the latest user message a request for a worker: does it name work the user wants done (a repair, a task, a shift, a vacancy or a job ad) and ask for someone to do it? Asking how hiring, fees or payments work, paying or messaging someone, and the user's own job search are no.",
+  "floor": 0.5,
+  "rows": [
+    {
+      "id": "send-en-dollars-handle",
+      "set": "chat",
+      "hire": 0.0109,
+      "today": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.105,
+        "route": "action",
+        "confidence": 0.9663
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.101,
+        "route": "action",
+        "confidence": 0.9688
+      },
+      "asked": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.101,
+        "route": "action",
+        "confidence": 0.9688
+      },
+      "error": null
+    },
+    {
+      "id": "send-en-no-currency",
+      "set": "chat",
+      "hire": 0.0103,
+      "today": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.118,
+        "route": "action",
+        "confidence": 0.9811
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.108,
+        "route": "action",
+        "confidence": 0.9775
+      },
+      "asked": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.108,
+        "route": "action",
+        "confidence": 0.9775
+      },
+      "error": null
+    },
+    {
+      "id": "send-en-usdc",
+      "set": "chat",
+      "hire": 0.0082,
+      "today": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.162,
+        "route": "action",
+        "confidence": 0.9677
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.138,
+        "route": "action",
+        "confidence": 0.9689
+      },
+      "asked": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.138,
+        "route": "action",
+        "confidence": 0.9689
+      },
+      "error": null
+    },
+    {
+      "id": "send-en-euros",
+      "set": "chat",
+      "hire": 0.0107,
+      "today": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.128,
+        "route": "action",
+        "confidence": 0.9626
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.138,
+        "route": "action",
+        "confidence": 0.9566
+      },
+      "asked": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.138,
+        "route": "action",
+        "confidence": 0.9566
+      },
+      "error": null
+    },
+    {
+      "id": "send-pt-manda-dolares",
+      "set": "chat",
+      "hire": 0.0208,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.101,
+        "route": "action",
+        "confidence": 0.9461
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.131,
+        "route": "action",
+        "confidence": 0.8703
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.131,
+        "route": "action",
+        "confidence": 0.8703
+      },
+      "error": null
+    },
+    {
+      "id": "send-pt-passa-reais",
+      "set": "chat",
+      "hire": 0.0132,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.133,
+        "route": "action",
+        "confidence": 0.9578
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.163,
+        "route": "action",
+        "confidence": 0.9539
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.163,
+        "route": "action",
+        "confidence": 0.9539
+      },
+      "error": null
+    },
+    {
+      "id": "send-pt-transfere-brl",
+      "set": "chat",
+      "hire": 0.0169,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.142,
+        "route": "action",
+        "confidence": 0.9673
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.156,
+        "route": "action",
+        "confidence": 0.9596
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.156,
+        "route": "action",
+        "confidence": 0.9596
+      },
+      "error": null
+    },
+    {
+      "id": "send-pt-paga-usdc",
+      "set": "chat",
+      "hire": 0.0334,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.164,
+        "route": "action",
+        "confidence": 0.9635
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.154,
+        "route": "action",
+        "confidence": 0.9284
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.154,
+        "route": "action",
+        "confidence": 0.9284
+      },
+      "error": null
+    },
+    {
+      "id": "send-pt-envia-sem-moeda",
+      "set": "chat",
+      "hire": 0.0145,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.116,
+        "route": "action",
+        "confidence": 0.9254
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.123,
+        "route": "action",
+        "confidence": 0.8534
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.123,
+        "route": "action",
+        "confidence": 0.8534
+      },
+      "error": null
+    },
+    {
+      "id": "send-es-envia-dolares",
+      "set": "chat",
+      "hire": 0.0104,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.103,
+        "route": "action",
+        "confidence": 0.9655
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.103,
+        "route": "action",
+        "confidence": 0.958
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.103,
+        "route": "action",
+        "confidence": 0.958
+      },
+      "error": null
+    },
+    {
+      "id": "send-es-transfiere-pesos",
+      "set": "chat",
+      "hire": 0.0141,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.166,
+        "route": "action",
+        "confidence": 0.9711
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.132,
+        "route": "action",
+        "confidence": 0.9676
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.132,
+        "route": "action",
+        "confidence": 0.9676
+      },
+      "error": null
+    },
+    {
+      "id": "send-es-paga-usd",
+      "set": "chat",
+      "hire": 0.0127,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.12,
+        "route": "action",
+        "confidence": 0.9705
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.147,
+        "route": "action",
+        "confidence": 0.9751
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.147,
+        "route": "action",
+        "confidence": 0.9751
+      },
+      "error": null
+    },
+    {
+      "id": "send-es-dollar-sign",
+      "set": "chat",
+      "hire": 0.0174,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.152,
+        "route": "action",
+        "confidence": 0.9563
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.119,
+        "route": "action",
+        "confidence": 0.9349
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.119,
+        "route": "action",
+        "confidence": 0.9349
+      },
+      "error": null
+    },
+    {
+      "id": "send-es-manda-sin-moneda",
+      "set": "chat",
+      "hire": 0.0443,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.137,
+        "route": "action",
+        "confidence": 0.7492
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "send",
+          "message"
+        ],
+        "reasoning": 0.148,
+        "route": "clarify",
+        "confidence": 0.5166
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "send",
+          "message"
+        ],
+        "reasoning": 0.148,
+        "route": "clarify",
+        "confidence": 0.5166
+      },
+      "error": null
+    },
+    {
+      "id": "add-en-dollars",
+      "set": "chat",
+      "hire": 0.0166,
+      "today": {
+        "action": "add_money",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.111,
+        "route": "action",
+        "confidence": 0.9879
+      },
+      "withCheck": {
+        "action": "add_money",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.118,
+        "route": "action",
+        "confidence": 0.9873
+      },
+      "asked": {
+        "action": "add_money",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.118,
+        "route": "action",
+        "confidence": 0.9873
+      },
+      "error": null
+    },
+    {
+      "id": "add-en-euros",
+      "set": "chat",
+      "hire": 0.0276,
+      "today": {
+        "action": "add_money",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.114,
+        "route": "action",
+        "confidence": 0.9699
+      },
+      "withCheck": {
+        "action": "add_money",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.108,
+        "route": "action",
+        "confidence": 0.9718
+      },
+      "asked": {
+        "action": "add_money",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.108,
+        "route": "action",
+        "confidence": 0.9718
+      },
+      "error": null
+    },
+    {
+      "id": "add-pt-reais",
+      "set": "chat",
+      "hire": 0.0238,
+      "today": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.11,
+        "route": "action",
+        "confidence": 0.9832
+      },
+      "withCheck": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.11,
+        "route": "action",
+        "confidence": 0.9808
+      },
+      "asked": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.11,
+        "route": "action",
+        "confidence": 0.9808
+      },
+      "error": null
+    },
+    {
+      "id": "add-pt-dolares",
+      "set": "chat",
+      "hire": 0.0244,
+      "today": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.146,
+        "route": "action",
+        "confidence": 0.9882
+      },
+      "withCheck": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.109,
+        "route": "action",
+        "confidence": 0.9855
+      },
+      "asked": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.109,
+        "route": "action",
+        "confidence": 0.9855
+      },
+      "error": null
+    },
+    {
+      "id": "add-es-usdc",
+      "set": "chat",
+      "hire": 0.0105,
+      "today": {
+        "action": "add_money",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.224,
+        "route": "action",
+        "confidence": 0.891
+      },
+      "withCheck": {
+        "action": "add_money",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.176,
+        "route": "action",
+        "confidence": 0.8992
+      },
+      "asked": {
+        "action": "add_money",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.176,
+        "route": "action",
+        "confidence": 0.8992
+      },
+      "error": null
+    },
+    {
+      "id": "add-es-sin-monto",
+      "set": "chat",
+      "hire": 0.0116,
+      "today": {
+        "action": "add_money",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.225,
+        "route": "action",
+        "confidence": 0.9735
+      },
+      "withCheck": {
+        "action": "add_money",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.235,
+        "route": "action",
+        "confidence": 0.9603
+      },
+      "asked": {
+        "action": "add_money",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.235,
+        "route": "action",
+        "confidence": 0.9603
+      },
+      "error": null
+    },
+    {
+      "id": "find-en-passport",
+      "set": "chat",
+      "hire": 0.0073,
+      "today": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.052,
+        "route": "action",
+        "confidence": 0.9721
+      },
+      "withCheck": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.047,
+        "route": "action",
+        "confidence": 0.9611
+      },
+      "asked": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.047,
+        "route": "action",
+        "confidence": 0.9611
+      },
+      "error": null
+    },
+    {
+      "id": "find-pt-certificado",
+      "set": "chat",
+      "hire": 0.011,
+      "today": {
+        "action": "find_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.117,
+        "route": "action",
+        "confidence": 0.9661
+      },
+      "withCheck": {
+        "action": "find_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.118,
+        "route": "action",
+        "confidence": 0.9618
+      },
+      "asked": {
+        "action": "find_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.118,
+        "route": "action",
+        "confidence": 0.9618
+      },
+      "error": null
+    },
+    {
+      "id": "find-es-contrato",
+      "set": "chat",
+      "hire": 0.0524,
+      "today": {
+        "action": "find_document",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.069,
+        "route": "action",
+        "confidence": 0.9629
+      },
+      "withCheck": {
+        "action": "find_document",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.079,
+        "route": "action",
+        "confidence": 0.9545
+      },
+      "asked": {
+        "action": "find_document",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.079,
+        "route": "action",
+        "confidence": 0.9545
+      },
+      "error": null
+    },
+    {
+      "id": "activity-en-app-month",
+      "set": "chat",
+      "hire": 0.008,
+      "today": {
+        "action": "filter_activity",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.089,
+        "route": "action",
+        "confidence": 0.9777
+      },
+      "withCheck": {
+        "action": "filter_activity",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.082,
+        "route": "action",
+        "confidence": 0.9863
+      },
+      "asked": {
+        "action": "filter_activity",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.082,
+        "route": "action",
+        "confidence": 0.9863
+      },
+      "error": null
+    },
+    {
+      "id": "activity-pt-mes",
+      "set": "chat",
+      "hire": 0.0124,
+      "today": {
+        "action": "filter_activity",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.196,
+        "route": "action",
+        "confidence": 0.8936
+      },
+      "withCheck": {
+        "action": "filter_activity",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.181,
+        "route": "action",
+        "confidence": 0.7441
+      },
+      "asked": {
+        "action": "filter_activity",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.181,
+        "route": "action",
+        "confidence": 0.7441
+      },
+      "error": null
+    },
+    {
+      "id": "activity-es-app",
+      "set": "chat",
+      "hire": 0.0186,
+      "today": {
+        "action": "filter_activity",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.089,
+        "route": "action",
+        "confidence": 0.9773
+      },
+      "withCheck": {
+        "action": "filter_activity",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.11,
+        "route": "action",
+        "confidence": 0.9748
+      },
+      "asked": {
+        "action": "filter_activity",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.11,
+        "route": "action",
+        "confidence": 0.9748
+      },
+      "error": null
+    },
+    {
+      "id": "cv-en",
+      "set": "chat",
+      "hire": 0.0166,
+      "today": {
+        "action": "import_cv",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.116,
+        "route": "action",
+        "confidence": 0.9893
+      },
+      "withCheck": {
+        "action": "import_cv",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.11,
+        "route": "action",
+        "confidence": 0.9863
+      },
+      "asked": {
+        "action": "import_cv",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.11,
+        "route": "action",
+        "confidence": 0.9863
+      },
+      "error": null
+    },
+    {
+      "id": "cv-pt",
+      "set": "chat",
+      "hire": 0.0167,
+      "today": {
+        "action": "import_cv",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.17,
+        "route": "action",
+        "confidence": 0.9924
+      },
+      "withCheck": {
+        "action": "import_cv",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.128,
+        "route": "action",
+        "confidence": 0.9901
+      },
+      "asked": {
+        "action": "import_cv",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.128,
+        "route": "action",
+        "confidence": 0.9901
+      },
+      "error": null
+    },
+    {
+      "id": "cv-es",
+      "set": "chat",
+      "hire": 0.0338,
+      "today": {
+        "action": "import_cv",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.15,
+        "route": "action",
+        "confidence": 0.9841
+      },
+      "withCheck": {
+        "action": "import_cv",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.146,
+        "route": "action",
+        "confidence": 0.9804
+      },
+      "asked": {
+        "action": "import_cv",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.146,
+        "route": "action",
+        "confidence": 0.9804
+      },
+      "error": null
+    },
+    {
+      "id": "adddoc-en",
+      "set": "chat",
+      "hire": 0.0126,
+      "today": {
+        "action": "add_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.119,
+        "route": "action",
+        "confidence": 0.9679
+      },
+      "withCheck": {
+        "action": "add_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.134,
+        "route": "action",
+        "confidence": 0.9739
+      },
+      "asked": {
+        "action": "add_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.134,
+        "route": "action",
+        "confidence": 0.9739
+      },
+      "error": null
+    },
+    {
+      "id": "adddoc-pt",
+      "set": "chat",
+      "hire": 0.011,
+      "today": {
+        "action": "add_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.151,
+        "route": "action",
+        "confidence": 0.9481
+      },
+      "withCheck": {
+        "action": "add_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.156,
+        "route": "action",
+        "confidence": 0.963
+      },
+      "asked": {
+        "action": "add_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.156,
+        "route": "action",
+        "confidence": 0.963
+      },
+      "error": null
+    },
+    {
+      "id": "adddoc-es",
+      "set": "chat",
+      "hire": 0.0581,
+      "today": {
+        "action": "add_document",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.15,
+        "route": "action",
+        "confidence": 0.931
+      },
+      "withCheck": {
+        "action": "add_document",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.113,
+        "route": "action",
+        "confidence": 0.9387
+      },
+      "asked": {
+        "action": "add_document",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.113,
+        "route": "action",
+        "confidence": 0.9387
+      },
+      "error": null
+    },
+    {
+      "id": "looking-en",
+      "set": "chat",
+      "hire": 0.0315,
+      "today": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.264,
+        "route": "action",
+        "confidence": 0.8146
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.19,
+        "route": "action",
+        "confidence": 0.9024
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.19,
+        "route": "action",
+        "confidence": 0.9024
+      },
+      "error": null
+    },
+    {
+      "id": "looking-pt",
+      "set": "chat",
+      "hire": 0.2509,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.234,
+        "route": "clarify",
+        "confidence": 0.4561
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.282,
+        "route": "action",
+        "confidence": 0.7829
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.282,
+        "route": "action",
+        "confidence": 0.7829
+      },
+      "error": null
+    },
+    {
+      "id": "looking-es",
+      "set": "chat",
+      "hire": 0.0205,
+      "today": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.089,
+        "route": "action",
+        "confidence": 0.9694
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.105,
+        "route": "action",
+        "confidence": 0.9689
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.105,
+        "route": "action",
+        "confidence": 0.9689
+      },
+      "error": null
+    },
+    {
+      "id": "message-en",
+      "set": "chat",
+      "hire": 0.0097,
+      "today": {
+        "action": "message",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.105,
+        "route": "action",
+        "confidence": 0.9761
+      },
+      "withCheck": {
+        "action": "message",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.082,
+        "route": "action",
+        "confidence": 0.9806
+      },
+      "asked": {
+        "action": "message",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.082,
+        "route": "action",
+        "confidence": 0.9806
+      },
+      "error": null
+    },
+    {
+      "id": "message-pt",
+      "set": "chat",
+      "hire": 0.019,
+      "today": {
+        "action": "message",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.112,
+        "route": "action",
+        "confidence": 0.9743
+      },
+      "withCheck": {
+        "action": "message",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.092,
+        "route": "action",
+        "confidence": 0.9817
+      },
+      "asked": {
+        "action": "message",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.092,
+        "route": "action",
+        "confidence": 0.9817
+      },
+      "error": null
+    },
+    {
+      "id": "message-es",
+      "set": "chat",
+      "hire": 0.0127,
+      "today": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.139,
+        "route": "action",
+        "confidence": 0.9769
+      },
+      "withCheck": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.103,
+        "route": "action",
+        "confidence": 0.9778
+      },
+      "asked": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.103,
+        "route": "action",
+        "confidence": 0.9778
+      },
+      "error": null
+    },
+    {
+      "id": "group-en",
+      "set": "chat",
+      "hire": 0.0095,
+      "today": {
+        "action": "create_group",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.207,
+        "route": "action",
+        "confidence": 0.9864
+      },
+      "withCheck": {
+        "action": "create_group",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.141,
+        "route": "action",
+        "confidence": 0.9896
+      },
+      "asked": {
+        "action": "create_group",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.141,
+        "route": "action",
+        "confidence": 0.9896
+      },
+      "error": null
+    },
+    {
+      "id": "group-pt",
+      "set": "chat",
+      "hire": 0.1014,
+      "today": {
+        "action": "create_group",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.264,
+        "route": "action",
+        "confidence": 0.9816
+      },
+      "withCheck": {
+        "action": "create_group",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.208,
+        "route": "action",
+        "confidence": 0.9833
+      },
+      "asked": {
+        "action": "create_group",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.208,
+        "route": "action",
+        "confidence": 0.9833
+      },
+      "error": null
+    },
+    {
+      "id": "group-es",
+      "set": "chat",
+      "hire": 0.2924,
+      "today": {
+        "action": "create_group",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.399,
+        "route": "action",
+        "confidence": 0.9721
+      },
+      "withCheck": {
+        "action": "create_group",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.315,
+        "route": "action",
+        "confidence": 0.9714
+      },
+      "asked": {
+        "action": "create_group",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.315,
+        "route": "action",
+        "confidence": 0.9714
+      },
+      "error": null
+    },
+    {
+      "id": "greet-en",
+      "set": "chat",
+      "hire": 0.0127,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.037,
+        "route": "answer",
+        "confidence": 0.9927
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.04,
+        "route": "answer",
+        "confidence": 0.9934
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.04,
+        "route": "answer",
+        "confidence": 0.9934
+      },
+      "error": null
+    },
+    {
+      "id": "greet-pt",
+      "set": "chat",
+      "hire": 0.0114,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.041,
+        "route": "answer",
+        "confidence": 0.9944
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.051,
+        "route": "answer",
+        "confidence": 0.9939
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.051,
+        "route": "answer",
+        "confidence": 0.9939
+      },
+      "error": null
+    },
+    {
+      "id": "greet-es",
+      "set": "chat",
+      "hire": 0.0168,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.038,
+        "route": "answer",
+        "confidence": 0.9898
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.037,
+        "route": "answer",
+        "confidence": 0.9934
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.037,
+        "route": "answer",
+        "confidence": 0.9934
+      },
+      "error": null
+    },
+    {
+      "id": "smalltalk-en",
+      "set": "chat",
+      "hire": 0.0134,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.172,
+        "route": "answer",
+        "confidence": 0.8873
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.186,
+        "route": "answer",
+        "confidence": 0.8759
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.186,
+        "route": "answer",
+        "confidence": 0.8759
+      },
+      "error": null
+    },
+    {
+      "id": "smalltalk-pt",
+      "set": "chat",
+      "hire": 0.0133,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.084,
+        "route": "answer",
+        "confidence": 0.9858
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.092,
+        "route": "answer",
+        "confidence": 0.9872
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.092,
+        "route": "answer",
+        "confidence": 0.9872
+      },
+      "error": null
+    },
+    {
+      "id": "smalltalk-es",
+      "set": "chat",
+      "hire": 0.0103,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.052,
+        "route": "answer",
+        "confidence": 0.9944
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.065,
+        "route": "answer",
+        "confidence": 0.9945
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.065,
+        "route": "answer",
+        "confidence": 0.9945
+      },
+      "error": null
+    },
+    {
+      "id": "short-en",
+      "set": "chat",
+      "hire": 0.0233,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.216,
+        "route": "answer",
+        "confidence": 0.9051
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.213,
+        "route": "answer",
+        "confidence": 0.9579
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.213,
+        "route": "answer",
+        "confidence": 0.9579
+      },
+      "error": null
+    },
+    {
+      "id": "short-pt",
+      "set": "chat",
+      "hire": 0.0115,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.435,
+        "route": "answer",
+        "confidence": 0.5248
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.462,
+        "route": "answer",
+        "confidence": 0.5307
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.462,
+        "route": "answer",
+        "confidence": 0.5307
+      },
+      "error": null
+    },
+    {
+      "id": "short-es",
+      "set": "chat",
+      "hire": 0.0372,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.248,
+        "route": "answer",
+        "confidence": 0.95
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.233,
+        "route": "answer",
+        "confidence": 0.9308
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.233,
+        "route": "answer",
+        "confidence": 0.9308
+      },
+      "error": null
+    },
+    {
+      "id": "long-en-escrow",
+      "set": "chat",
+      "hire": 0.0143,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.882,
+        "route": "answer_long",
+        "confidence": 0.9966
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.885,
+        "route": "answer_long",
+        "confidence": 0.9953
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.885,
+        "route": "answer_long",
+        "confidence": 0.9953
+      },
+      "error": null
+    },
+    {
+      "id": "long-en-difference",
+      "set": "chat",
+      "hire": 0.0128,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.713,
+        "route": "answer_long",
+        "confidence": 0.9949
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.772,
+        "route": "answer_long",
+        "confidence": 0.9952
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.772,
+        "route": "answer_long",
+        "confidence": 0.9952
+      },
+      "error": null
+    },
+    {
+      "id": "long-pt",
+      "set": "chat",
+      "hire": 0.0275,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.826,
+        "route": "answer_long",
+        "confidence": 0.9964
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.817,
+        "route": "answer_long",
+        "confidence": 0.9941
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.817,
+        "route": "answer_long",
+        "confidence": 0.9941
+      },
+      "error": null
+    },
+    {
+      "id": "long-es",
+      "set": "chat",
+      "hire": 0.0119,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.764,
+        "route": "answer_long",
+        "confidence": 0.9918
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.769,
+        "route": "answer_long",
+        "confidence": 0.9942
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.769,
+        "route": "answer_long",
+        "confidence": 0.9942
+      },
+      "error": null
+    },
+    {
+      "id": "refuse-en-launder",
+      "set": "chat",
+      "hire": 0.0101,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.679,
+        "route": "refuse",
+        "confidence": 0.9815
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.706,
+        "route": "refuse",
+        "confidence": 0.9821
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.706,
+        "route": "refuse",
+        "confidence": 0.9821
+      },
+      "error": null
+    },
+    {
+      "id": "refuse-pt-cartao",
+      "set": "chat",
+      "hire": 0.009,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.47,
+        "route": "refuse",
+        "confidence": 0.9786
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.456,
+        "route": "refuse",
+        "confidence": 0.9789
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.456,
+        "route": "refuse",
+        "confidence": 0.9789
+      },
+      "error": null
+    },
+    {
+      "id": "refuse-es-hack",
+      "set": "chat",
+      "hire": 0.009,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.529,
+        "route": "refuse",
+        "confidence": 0.9772
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.518,
+        "route": "refuse",
+        "confidence": 0.9759
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.518,
+        "route": "refuse",
+        "confidence": 0.9759
+      },
+      "error": null
+    },
+    {
+      "id": "refuse-en-threat",
+      "set": "chat",
+      "hire": 0.0108,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.409,
+        "route": "refuse",
+        "confidence": 0.9799
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.346,
+        "route": "refuse",
+        "confidence": 0.9813
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.346,
+        "route": "refuse",
+        "confidence": 0.9813
+      },
+      "error": null
+    },
+    {
+      "id": "refuse-pt-ameaca",
+      "set": "chat",
+      "hire": 0.0374,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.298,
+        "route": "refuse",
+        "confidence": 0.9469
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.28,
+        "route": "refuse",
+        "confidence": 0.9374
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.28,
+        "route": "refuse",
+        "confidence": 0.9374
+      },
+      "error": null
+    },
+    {
+      "id": "inject-en-system",
+      "set": "chat",
+      "hire": 0.0113,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.317,
+        "route": "refuse",
+        "confidence": 0.9858
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.238,
+        "route": "refuse",
+        "confidence": 0.9826
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.238,
+        "route": "refuse",
+        "confidence": 0.9826
+      },
+      "error": null
+    },
+    {
+      "id": "inject-en-devmode-send",
+      "set": "chat",
+      "hire": 0.0106,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.535,
+        "route": "refuse",
+        "confidence": 0.9795
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.447,
+        "route": "refuse",
+        "confidence": 0.9759
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.447,
+        "route": "refuse",
+        "confidence": 0.9759
+      },
+      "error": null
+    },
+    {
+      "id": "inject-pt",
+      "set": "chat",
+      "hire": 0.0095,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.315,
+        "route": "refuse",
+        "confidence": 0.9847
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.271,
+        "route": "refuse",
+        "confidence": 0.9786
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.271,
+        "route": "refuse",
+        "confidence": 0.9786
+      },
+      "error": null
+    },
+    {
+      "id": "inject-es",
+      "set": "chat",
+      "hire": 0.0082,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.331,
+        "route": "refuse",
+        "confidence": 0.9808
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.234,
+        "route": "refuse",
+        "confidence": 0.9798
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.234,
+        "route": "refuse",
+        "confidence": 0.9798
+      },
+      "error": null
+    },
+    {
+      "id": "clarify-en-ana-20",
+      "set": "chat",
+      "hire": 0.0403,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.184,
+        "route": "action",
+        "confidence": 0.6145
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.149,
+        "route": "action",
+        "confidence": 0.5799
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.149,
+        "route": "action",
+        "confidence": 0.5799
+      },
+      "error": null
+    },
+    {
+      "id": "clarify-en-thing",
+      "set": "chat",
+      "hire": 0.0391,
+      "today": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.379,
+        "route": "action",
+        "confidence": 0.6968
+      },
+      "withCheck": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.312,
+        "route": "action",
+        "confidence": 0.6172
+      },
+      "asked": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.312,
+        "route": "action",
+        "confidence": 0.6172
+      },
+      "error": null
+    },
+    {
+      "id": "clarify-pt-documento",
+      "set": "chat",
+      "hire": 0.0416,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "find_document",
+          "add_document"
+        ],
+        "reasoning": 0.188,
+        "route": "clarify",
+        "confidence": 0.5412
+      },
+      "withCheck": {
+        "action": "add_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.207,
+        "route": "action",
+        "confidence": 0.5543
+      },
+      "asked": {
+        "action": "add_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.207,
+        "route": "action",
+        "confidence": 0.5543
+      },
+      "error": null
+    },
+    {
+      "id": "clarify-pt-joao",
+      "set": "chat",
+      "hire": 0.0344,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "message"
+        ],
+        "reasoning": 0.198,
+        "route": "clarify",
+        "confidence": 0.5454
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.186,
+        "route": "answer",
+        "confidence": 0.9894
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.186,
+        "route": "answer",
+        "confidence": 0.9894
+      },
+      "error": null
+    },
+    {
+      "id": "clarify-es-trabajo",
+      "set": "chat",
+      "hire": 0.0786,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.267,
+        "route": "answer",
+        "confidence": 0.8982
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.241,
+        "route": "answer",
+        "confidence": 0.91
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.241,
+        "route": "answer",
+        "confidence": 0.91
+      },
+      "error": null
+    },
+    {
+      "id": "multi-pt-manda-joao",
+      "set": "chat",
+      "hire": 0.0726,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.167,
+        "route": "action",
+        "confidence": 0.6313
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "message",
+          "send"
+        ],
+        "reasoning": 0.189,
+        "route": "clarify",
+        "confidence": 0.5492
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "message",
+          "send"
+        ],
+        "reasoning": 0.189,
+        "route": "clarify",
+        "confidence": 0.5492
+      },
+      "error": null
+    },
+    {
+      "id": "multi-pt-conto-bia",
+      "set": "chat",
+      "hire": 0.0284,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.173,
+        "route": "action",
+        "confidence": 0.9608
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.207,
+        "route": "action",
+        "confidence": 0.943
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.207,
+        "route": "action",
+        "confidence": 0.943
+      },
+      "error": null
+    },
+    {
+      "id": "multi-pt-quanto-tempo",
+      "set": "chat",
+      "hire": 0.0151,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.245,
+        "route": "answer",
+        "confidence": 0.9519
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.224,
+        "route": "answer",
+        "confidence": 0.9253
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.224,
+        "route": "answer",
+        "confidence": 0.9253
+      },
+      "error": null
+    },
+    {
+      "id": "multi-pt-add-dolares",
+      "set": "chat",
+      "hire": 0.0316,
+      "today": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.1,
+        "route": "action",
+        "confidence": 0.9793
+      },
+      "withCheck": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.098,
+        "route": "action",
+        "confidence": 0.9743
+      },
+      "asked": {
+        "action": "add_money",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.098,
+        "route": "action",
+        "confidence": 0.9743
+      },
+      "error": null
+    },
+    {
+      "id": "multi-pt-passaporte",
+      "set": "chat",
+      "hire": 0.0134,
+      "today": {
+        "action": "find_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.093,
+        "route": "action",
+        "confidence": 0.961
+      },
+      "withCheck": {
+        "action": "find_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.081,
+        "route": "action",
+        "confidence": 0.9585
+      },
+      "asked": {
+        "action": "find_document",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.081,
+        "route": "action",
+        "confidence": 0.9585
+      },
+      "error": null
+    },
+    {
+      "id": "multi-pt-correction",
+      "set": "chat",
+      "hire": 0.0092,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.099,
+        "route": "action",
+        "confidence": 0.9714
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.122,
+        "route": "action",
+        "confidence": 0.9713
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.122,
+        "route": "action",
+        "confidence": 0.9713
+      },
+      "error": null
+    },
+    {
+      "id": "multi-pt-valeu",
+      "set": "chat",
+      "hire": 0.01,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.101,
+        "route": "answer",
+        "confidence": 0.9902
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.096,
+        "route": "answer",
+        "confidence": 0.9905
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.096,
+        "route": "answer",
+        "confidence": 0.9905
+      },
+      "error": null
+    },
+    {
+      "id": "multi-es-envia-sofi",
+      "set": "chat",
+      "hire": 0.0157,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.171,
+        "route": "action",
+        "confidence": 0.9703
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.135,
+        "route": "action",
+        "confidence": 0.9604
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.135,
+        "route": "action",
+        "confidence": 0.9604
+      },
+      "error": null
+    },
+    {
+      "id": "multi-es-transfiere",
+      "set": "chat",
+      "hire": 0.0266,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.161,
+        "route": "action",
+        "confidence": 0.954
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.137,
+        "route": "action",
+        "confidence": 0.9563
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.137,
+        "route": "action",
+        "confidence": 0.9563
+      },
+      "error": null
+    },
+    {
+      "id": "multi-es-pagos-agosto",
+      "set": "chat",
+      "hire": 0.0112,
+      "today": {
+        "action": "filter_activity",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.097,
+        "route": "action",
+        "confidence": 0.9814
+      },
+      "withCheck": {
+        "action": "filter_activity",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.073,
+        "route": "action",
+        "confidence": 0.9806
+      },
+      "asked": {
+        "action": "filter_activity",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.073,
+        "route": "action",
+        "confidence": 0.9806
+      },
+      "error": null
+    },
+    {
+      "id": "multi-es-pausa",
+      "set": "chat",
+      "hire": 0.0242,
+      "today": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.109,
+        "route": "action",
+        "confidence": 0.9748
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.122,
+        "route": "action",
+        "confidence": 0.9741
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.122,
+        "route": "action",
+        "confidence": 0.9741
+      },
+      "error": null
+    },
+    {
+      "id": "multi-es-dile-marta",
+      "set": "chat",
+      "hire": 0.0214,
+      "today": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.162,
+        "route": "action",
+        "confidence": 0.9739
+      },
+      "withCheck": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.139,
+        "route": "action",
+        "confidence": 0.9803
+      },
+      "asked": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.139,
+        "route": "action",
+        "confidence": 0.9803
+      },
+      "error": null
+    },
+    {
+      "id": "multi-es-inyeccion",
+      "set": "chat",
+      "hire": 0.0089,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.248,
+        "route": "refuse",
+        "confidence": 0.9829
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.274,
+        "route": "refuse",
+        "confidence": 0.9779
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.274,
+        "route": "refuse",
+        "confidence": 0.9779
+      },
+      "error": null
+    },
+    {
+      "id": "multi-es-explica",
+      "set": "chat",
+      "hire": 0.0268,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.76,
+        "route": "answer_long",
+        "confidence": 0.9935
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.7,
+        "route": "answer_long",
+        "confidence": 0.9911
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.7,
+        "route": "answer_long",
+        "confidence": 0.9911
+      },
+      "error": null
+    },
+    {
+      "id": "work-en-rotation",
+      "set": "chat",
+      "hire": 0.0132,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.253,
+        "route": "answer",
+        "confidence": 0.8177
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.222,
+        "route": "answer",
+        "confidence": 0.864
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.222,
+        "route": "answer",
+        "confidence": 0.864
+      },
+      "error": null
+    },
+    {
+      "id": "work-en-rotation-after-search",
+      "set": "chat",
+      "hire": 0.0195,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.225,
+        "route": "answer",
+        "confidence": 0.6811
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.229,
+        "route": "answer",
+        "confidence": 0.9464
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.229,
+        "route": "answer",
+        "confidence": 0.9464
+      },
+      "error": null
+    },
+    {
+      "id": "work-en-rigger-pay",
+      "set": "chat",
+      "hire": 0.0784,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.298,
+        "route": "answer",
+        "confidence": 0.7926
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.282,
+        "route": "answer",
+        "confidence": 0.9206
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.282,
+        "route": "answer",
+        "confidence": 0.9206
+      },
+      "error": null
+    },
+    {
+      "id": "work-pt-marinheiro",
+      "set": "chat",
+      "hire": 0.1718,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.289,
+        "route": "answer",
+        "confidence": 0.6376
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.277,
+        "route": "answer",
+        "confidence": 0.9248
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.277,
+        "route": "answer",
+        "confidence": 0.9248
+      },
+      "error": null
+    },
+    {
+      "id": "work-es-horas-after-search",
+      "set": "chat",
+      "hire": 0.0556,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.267,
+        "route": "answer",
+        "confidence": 0.8812
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.251,
+        "route": "answer",
+        "confidence": 0.9231
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.251,
+        "route": "answer",
+        "confidence": 0.9231
+      },
+      "error": null
+    },
+    {
+      "id": "work-en-drillship",
+      "set": "chat",
+      "hire": 0.0168,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.345,
+        "route": "answer",
+        "confidence": 0.7179
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.303,
+        "route": "answer",
+        "confidence": 0.8755
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.303,
+        "route": "answer",
+        "confidence": 0.8755
+      },
+      "error": null
+    },
+    {
+      "id": "facts-en-employer-vault",
+      "set": "chat",
+      "hire": 0.015,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.312,
+        "route": "answer",
+        "confidence": 0.6762
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.295,
+        "route": "answer",
+        "confidence": 0.848
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.295,
+        "route": "answer",
+        "confidence": 0.848
+      },
+      "error": null
+    },
+    {
+      "id": "facts-pt-patrao-documentos",
+      "set": "chat",
+      "hire": 0.0212,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.274,
+        "route": "answer",
+        "confidence": 0.7279
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.282,
+        "route": "answer",
+        "confidence": 0.8545
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.282,
+        "route": "answer",
+        "confidence": 0.8545
+      },
+      "error": null
+    },
+    {
+      "id": "facts-en-fees",
+      "set": "chat",
+      "hire": 0.0203,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.225,
+        "route": "answer",
+        "confidence": 0.9422
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.226,
+        "route": "answer",
+        "confidence": 0.9523
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.226,
+        "route": "answer",
+        "confidence": 0.9523
+      },
+      "error": null
+    },
+    {
+      "id": "facts-es-comision",
+      "set": "chat",
+      "hire": 0.0203,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.246,
+        "route": "answer",
+        "confidence": 0.9171
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.267,
+        "route": "answer",
+        "confidence": 0.8878
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.267,
+        "route": "answer",
+        "confidence": 0.8878
+      },
+      "error": null
+    },
+    {
+      "id": "facts-en-custody",
+      "set": "chat",
+      "hire": 0.021,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.274,
+        "route": "answer",
+        "confidence": 0.8125
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.266,
+        "route": "answer",
+        "confidence": 0.8945
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.266,
+        "route": "answer",
+        "confidence": 0.8945
+      },
+      "error": null
+    },
+    {
+      "id": "facts-en-lost-phone",
+      "set": "chat",
+      "hire": 0.0121,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.687,
+        "route": "answer_long",
+        "confidence": 0.9476
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.657,
+        "route": "answer_long",
+        "confidence": 0.9123
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.657,
+        "route": "answer_long",
+        "confidence": 0.9123
+      },
+      "error": null
+    },
+    {
+      "id": "facts-pt-recuperar",
+      "set": "chat",
+      "hire": 0.0103,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.677,
+        "route": "answer_long",
+        "confidence": 0.9484
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.663,
+        "route": "answer_long",
+        "confidence": 0.9444
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.663,
+        "route": "answer_long",
+        "confidence": 0.9444
+      },
+      "error": null
+    },
+    {
+      "id": "facts-en-send-for-me",
+      "set": "chat",
+      "hire": 0.0091,
+      "today": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.169,
+        "route": "action",
+        "confidence": 0.9703
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.149,
+        "route": "action",
+        "confidence": 0.9654
+      },
+      "asked": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.149,
+        "route": "action",
+        "confidence": 0.9654
+      },
+      "error": null
+    },
+    {
+      "id": "facts-en-cv-upload",
+      "set": "chat",
+      "hire": 0.0299,
+      "today": {
+        "action": "import_cv",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.436,
+        "route": "action",
+        "confidence": 0.9688
+      },
+      "withCheck": {
+        "action": "import_cv",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.374,
+        "route": "action",
+        "confidence": 0.9593
+      },
+      "asked": {
+        "action": "import_cv",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.374,
+        "route": "action",
+        "confidence": 0.9593
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-plumber-sink",
+      "set": "hire",
+      "hire": 0.9723,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.256,
+        "route": "answer",
+        "confidence": 0.9043
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.263,
+        "route": "action",
+        "confidence": 0.9723
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.263,
+        "route": "answer",
+        "confidence": 0.7922
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-electrician-outlets",
+      "set": "hire",
+      "hire": 0.9613,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.463,
+        "route": "answer",
+        "confidence": 0.912
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.586,
+        "route": "action",
+        "confidence": 0.9613
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.586,
+        "route": "answer",
+        "confidence": 0.7707
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-welder-shutdown",
+      "set": "hire",
+      "hire": 0.9765,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.573,
+        "route": "answer",
+        "confidence": 0.7755
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.605,
+        "route": "action",
+        "confidence": 0.9765
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.605,
+        "route": "answer",
+        "confidence": 0.6553
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-cleaning",
+      "set": "hire",
+      "hire": 0.9467,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.248,
+        "route": "answer",
+        "confidence": 0.9156
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.285,
+        "route": "action",
+        "confidence": 0.9467
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "send"
+        ],
+        "reasoning": 0.285,
+        "route": "clarify",
+        "confidence": 0.3605
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-forklift-night",
+      "set": "hire",
+      "hire": 0.9619,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.348,
+        "route": "answer",
+        "confidence": 0.867
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.35,
+        "route": "action",
+        "confidence": 0.9619
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.35,
+        "route": "answer",
+        "confidence": 0.7557
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-babysitter",
+      "set": "hire",
+      "hire": 0.9665,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.381,
+        "route": "answer",
+        "confidence": 0.8094
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.302,
+        "route": "action",
+        "confidence": 0.9665
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.302,
+        "route": "answer",
+        "confidence": 0.8606
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-urgent-gas",
+      "set": "hire",
+      "hire": 0.9666,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.502,
+        "route": "answer",
+        "confidence": 0.6214
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.453,
+        "route": "action",
+        "confidence": 0.9666
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.453,
+        "route": "answer",
+        "confidence": 0.6347
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-designer-remote",
+      "set": "hire",
+      "hire": 0.946,
+      "today": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.35,
+        "route": "action",
+        "confidence": 0.744
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.367,
+        "route": "action",
+        "confidence": 0.946
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.367,
+        "route": "clarify",
+        "confidence": 0.4666
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-fence",
+      "set": "hire",
+      "hire": 0.9402,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.398,
+        "route": "answer",
+        "confidence": 0.9355
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.396,
+        "route": "action",
+        "confidence": 0.9402
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.396,
+        "route": "answer",
+        "confidence": 0.8826
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-pasted-ad",
+      "set": "hire",
+      "hire": 0.9116,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.355,
+        "route": "answer",
+        "confidence": 0.73
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.398,
+        "route": "action",
+        "confidence": 0.9116
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.398,
+        "route": "answer",
+        "confidence": 0.6939
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-followup",
+      "set": "hire",
+      "hire": 0.9657,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.347,
+        "route": "answer",
+        "confidence": 0.9519
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.378,
+        "route": "action",
+        "confidence": 0.9657
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.378,
+        "route": "answer",
+        "confidence": 0.7867
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-encanador",
+      "set": "hire",
+      "hire": 0.9703,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.337,
+        "route": "answer",
+        "confidence": 0.8902
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.284,
+        "route": "action",
+        "confidence": 0.9703
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.284,
+        "route": "answer",
+        "confidence": 0.783
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-eletricista",
+      "set": "hire",
+      "hire": 0.9554,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.351,
+        "route": "action",
+        "confidence": 0.5882
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.226,
+        "route": "action",
+        "confidence": 0.9554
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "send"
+        ],
+        "reasoning": 0.226,
+        "route": "clarify",
+        "confidence": 0.3092
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-motoboy",
+      "set": "hire",
+      "hire": 0.947,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.381,
+        "route": "answer",
+        "confidence": 0.837
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.338,
+        "route": "action",
+        "confidence": 0.947
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.338,
+        "route": "answer",
+        "confidence": 0.7222
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-faxineira",
+      "set": "hire",
+      "hire": 0.9623,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.36,
+        "route": "answer",
+        "confidence": 0.8634
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.328,
+        "route": "action",
+        "confidence": 0.9623
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.328,
+        "route": "answer",
+        "confidence": 0.6725
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-soldador-vaga",
+      "set": "hire",
+      "hire": 0.8949,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.381,
+        "route": "clarify",
+        "confidence": 0.4243
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.386,
+        "route": "action",
+        "confidence": 0.8949
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.386,
+        "route": "clarify",
+        "confidence": 0.3263
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-pasted-ad",
+      "set": "hire",
+      "hire": 0.9423,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.22,
+        "route": "clarify",
+        "confidence": 0.449
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.248,
+        "route": "action",
+        "confidence": 0.9423
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.248,
+        "route": "clarify",
+        "confidence": 0.3797
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-plomero",
+      "set": "hire",
+      "hire": 0.9695,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.196,
+        "route": "answer",
+        "confidence": 0.9282
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.221,
+        "route": "action",
+        "confidence": 0.9695
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.221,
+        "route": "answer",
+        "confidence": 0.83
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-velador",
+      "set": "hire",
+      "hire": 0.9578,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.504,
+        "route": "answer",
+        "confidence": 0.8335
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.441,
+        "route": "action",
+        "confidence": 0.9578
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.441,
+        "route": "clarify",
+        "confidence": 0.3225
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-mesero",
+      "set": "hire",
+      "hire": 0.9611,
+      "today": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.236,
+        "route": "action",
+        "confidence": 0.561
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.252,
+        "route": "action",
+        "confidence": 0.9611
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.252,
+        "route": "clarify",
+        "confidence": 0.2951
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-pintar",
+      "set": "hire",
+      "hire": 0.9491,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.337,
+        "route": "answer",
+        "confidence": 0.9215
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.281,
+        "route": "action",
+        "confidence": 0.9491
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.281,
+        "route": "answer",
+        "confidence": 0.8808
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-chofer",
+      "set": "hire",
+      "hire": 0.9468,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.26,
+        "route": "answer",
+        "confidence": 0.908
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.254,
+        "route": "action",
+        "confidence": 0.9468
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.254,
+        "route": "answer",
+        "confidence": 0.7919
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-pasted-ad",
+      "set": "hire",
+      "hire": 0.9514,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.263,
+        "route": "clarify",
+        "confidence": 0.3848
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.302,
+        "route": "action",
+        "confidence": 0.9514
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.302,
+        "route": "clarify",
+        "confidence": 0.3139
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-capital",
+      "set": "hire",
+      "hire": 0.007,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.13,
+        "route": "answer",
+        "confidence": 0.9947
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.119,
+        "route": "answer",
+        "confidence": 0.9945
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.119,
+        "route": "answer",
+        "confidence": 0.9945
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-plumber-rate",
+      "set": "hire",
+      "hire": 0.102,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.203,
+        "route": "answer",
+        "confidence": 0.8447
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.203,
+        "route": "answer",
+        "confidence": 0.9489
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.203,
+        "route": "answer",
+        "confidence": 0.9489
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-diy-sink",
+      "set": "hire",
+      "hire": 0.0396,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.771,
+        "route": "answer_long",
+        "confidence": 0.9759
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.77,
+        "route": "answer_long",
+        "confidence": 0.9631
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.77,
+        "route": "answer_long",
+        "confidence": 0.9631
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-own-search",
+      "set": "hire",
+      "hire": 0.0431,
+      "today": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.241,
+        "route": "action",
+        "confidence": 0.8434
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.206,
+        "route": "action",
+        "confidence": 0.921
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.206,
+        "route": "action",
+        "confidence": 0.921
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-welder-jobs",
+      "set": "hire",
+      "hire": 0.024,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.298,
+        "route": "answer",
+        "confidence": 0.9579
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.274,
+        "route": "action",
+        "confidence": 0.7255
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.274,
+        "route": "action",
+        "confidence": 0.7255
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-pay-plumber",
+      "set": "hire",
+      "hire": 0.0177,
+      "today": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.157,
+        "route": "action",
+        "confidence": 0.973
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.148,
+        "route": "action",
+        "confidence": 0.9734
+      },
+      "asked": {
+        "action": "send",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.148,
+        "route": "action",
+        "confidence": 0.9734
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-message-plumber",
+      "set": "hire",
+      "hire": 0.03,
+      "today": {
+        "action": "message",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.129,
+        "route": "action",
+        "confidence": 0.983
+      },
+      "withCheck": {
+        "action": "message",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.124,
+        "route": "action",
+        "confidence": 0.9807
+      },
+      "asked": {
+        "action": "message",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.124,
+        "route": "action",
+        "confidence": 0.9807
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-how-hiring-works",
+      "set": "hire",
+      "hire": 0.0244,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.32,
+        "route": "answer_long",
+        "confidence": 0.6858
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.342,
+        "route": "answer_long",
+        "confidence": 0.6643
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.342,
+        "route": "answer_long",
+        "confidence": 0.6643
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-no-show",
+      "set": "hire",
+      "hire": 0.0706,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.212,
+        "route": "answer",
+        "confidence": 0.9556
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.26,
+        "route": "answer",
+        "confidence": 0.913
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.26,
+        "route": "answer",
+        "confidence": 0.913
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-certificate",
+      "set": "hire",
+      "hire": 0.013,
+      "today": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.044,
+        "route": "action",
+        "confidence": 0.9749
+      },
+      "withCheck": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.046,
+        "route": "action",
+        "confidence": 0.9669
+      },
+      "asked": {
+        "action": "find_document",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.046,
+        "route": "action",
+        "confidence": 0.9669
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-en-harmful",
+      "set": "hire",
+      "hire": 0.6544,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.359,
+        "route": "refuse",
+        "confidence": 0.9861
+      },
+      "withCheck": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.334,
+        "route": "refuse",
+        "confidence": 0.984
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.334,
+        "route": "refuse",
+        "confidence": 0.984
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-pt-salario",
+      "set": "hire",
+      "hire": 0.1021,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.363,
+        "route": "answer",
+        "confidence": 0.6386
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.3,
+        "route": "answer",
+        "confidence": 0.8727
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.3,
+        "route": "answer",
+        "confidence": 0.8727
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-pt-own-search",
+      "set": "hire",
+      "hire": 0.0287,
+      "today": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.28,
+        "route": "action",
+        "confidence": 0.6538
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.237,
+        "route": "action",
+        "confidence": 0.9204
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.237,
+        "route": "action",
+        "confidence": 0.9204
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-pt-emprego",
+      "set": "hire",
+      "hire": 0.0773,
+      "today": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.243,
+        "route": "action",
+        "confidence": 0.7979
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.201,
+        "route": "action",
+        "confidence": 0.8909
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.201,
+        "route": "action",
+        "confidence": 0.8909
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-pt-pay",
+      "set": "hire",
+      "hire": 0.281,
+      "today": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.153,
+        "route": "action",
+        "confidence": 0.8627
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.138,
+        "route": "action",
+        "confidence": 0.6849
+      },
+      "asked": {
+        "action": "send",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.138,
+        "route": "action",
+        "confidence": 0.6849
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-pt-como-contratar",
+      "set": "hire",
+      "hire": 0.0424,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.345,
+        "route": "answer_long",
+        "confidence": 0.8763
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.411,
+        "route": "answer_long",
+        "confidence": 0.7551
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.411,
+        "route": "answer_long",
+        "confidence": 0.7551
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-pt-oi",
+      "set": "hire",
+      "hire": 0.0115,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.049,
+        "route": "answer",
+        "confidence": 0.9938
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.041,
+        "route": "answer",
+        "confidence": 0.9945
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.041,
+        "route": "answer",
+        "confidence": 0.9945
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-es-certificado",
+      "set": "hire",
+      "hire": 0.0441,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.725,
+        "route": "answer_long",
+        "confidence": 0.9796
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.652,
+        "route": "answer_long",
+        "confidence": 0.9628
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.652,
+        "route": "answer_long",
+        "confidence": 0.9628
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-es-busco-trabajo",
+      "set": "hire",
+      "hire": 0.158,
+      "today": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.27,
+        "route": "action",
+        "confidence": 0.7998
+      },
+      "withCheck": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.292,
+        "route": "action",
+        "confidence": 0.8644
+      },
+      "asked": {
+        "action": "looking_for",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.292,
+        "route": "action",
+        "confidence": 0.8644
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-es-que-hace",
+      "set": "hire",
+      "hire": 0.0758,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.229,
+        "route": "answer",
+        "confidence": 0.877
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.233,
+        "route": "answer",
+        "confidence": 0.9466
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.233,
+        "route": "answer",
+        "confidence": 0.9466
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-es-pagar",
+      "set": "hire",
+      "hire": 0.0413,
+      "today": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.17,
+        "route": "action",
+        "confidence": 0.9738
+      },
+      "withCheck": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.149,
+        "route": "action",
+        "confidence": 0.9653
+      },
+      "asked": {
+        "action": "send",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.149,
+        "route": "action",
+        "confidence": 0.9653
+      },
+      "error": null
+    },
+    {
+      "id": "nohire-es-avisar",
+      "set": "hire",
+      "hire": 0.0694,
+      "today": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.132,
+        "route": "action",
+        "confidence": 0.9799
+      },
+      "withCheck": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.129,
+        "route": "action",
+        "confidence": 0.9802
+      },
+      "asked": {
+        "action": "message",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.129,
+        "route": "action",
+        "confidence": 0.9802
+      },
+      "error": null
+    }
+  ]
+}

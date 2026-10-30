@@ -190,6 +190,22 @@ const LANGUAGE_CODES: Record<string, string> = {
   'haitian creole': 'ht', 'crioulo haitiano': 'ht', 'criollo haitiano': 'ht',
 };
 
+/** The ISO 639-1 codes of every language a text names, as whole words or the two-word names ("inglés básico" names `en`). */
+export function languagesNamed(text: string): Set<string> {
+  const words = fold(text)
+    .replace(/[^a-z]+/g, ' ')
+    .trim()
+    .split(' ');
+  const codes = new Set<string>();
+  words.forEach((w, i) => {
+    const one = LANGUAGE_CODES[w];
+    const two = i + 1 < words.length ? LANGUAGE_CODES[`${w} ${words[i + 1]}`] : undefined;
+    if (one) codes.add(one);
+    if (two) codes.add(two);
+  });
+  return codes;
+}
+
 /** The ISO 639-1 code of a language name as written ("Inglés (C2)" → `en`), or null. */
 export function languageCode(raw: string): string | null {
   const f = fold(raw)

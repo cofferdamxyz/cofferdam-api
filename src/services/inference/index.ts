@@ -40,7 +40,8 @@ export type InferenceOp =
   | 'work-adjudicate'
   | 'work-pivot'
   | 'work-decide'
-  | 'work-parse';
+  | 'work-parse'
+  | 'work-job-profile';
 
 export type InferenceModelVar =
   | 'CHAT_ROUTER_MODEL'
@@ -56,7 +57,8 @@ export type InferenceModelVar =
   | 'WORK_ADJUDICATE_MODEL'
   | 'WORK_PIVOT_MODEL'
   | 'WORK_PARSE_MODEL'
-  | 'WORK_DECIDE_MODEL';
+  | 'WORK_DECIDE_MODEL'
+  | 'WORK_JOB_PROFILE_MODEL';
 
 export interface OpSpec {
   /** The model when neither KV nor the environment pins one. */
@@ -109,6 +111,13 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   'work-decide': { model: '@cf/cloudflare/clef', envVar: 'WORK_DECIDE_MODEL', timeoutMs: 8_000 },
   // The whole-CV parse (decision 0021, the founder's ruling of 2026-10-28; the pin proposed by the real-resume benchmark, to confirm).
   'work-parse': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_PARSE_MODEL', timeoutMs: 60_000 },
+  // A hirer's request read into a job profile in the work profile's shape (the founder's flow of 2026-10-30,
+  // `services/work/jobProfile.ts`): a reasoning model, since the reading translates regional titles with the
+  // request as context. DeepSeek V4.1 Flash read all twelve hard regional titles of the locale fixture right when
+  // told the worker's country, at low effort, where llama-3.3-70b read two (the probe of 2026-10-30). The effort
+  // follows the request's length (`jobProfile.ts` `effortFor`): low for a short request, where it read regional titles
+  // a little better, off for a pasted vacancy, where low matched no better at five times the time.
+  'work-job-profile': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_JOB_PROFILE_MODEL', timeoutMs: 45_000 },
 };
 
 /**

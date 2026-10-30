@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { CHAT_ACTIONS } from '../src/services/chat/router.js';
 import { runChat, type ChatEvent } from '../src/services/chat/run.js';
 import { createInference } from '../src/services/inference/index.js';
+import hirePrompts from './chat-eval/hire-prompts.json';
 import prompts from './chat-eval/prompts.json';
 import { createRestAi, RestAiError, type RecordedCall } from './chat-eval/restAi.js';
 import {
@@ -28,6 +29,8 @@ import {
 } from './chat-eval/score.js';
 
 const set = prompts as EvalPrompt[];
+/** The hiring check's own set (`test/chatRouter.eval.test.ts`): the screens only that check opens are measured there. */
+const hireSet = hirePrompts as EvalPrompt[];
 const ROUTER = '@cf/cloudflare/clef-flash';
 const GEMMA = '@cf/google/gemma-4-26b-a4b-it';
 const TOKEN = 'test-token-not-a-secret';
@@ -57,9 +60,12 @@ describe('the prompt set', () => {
 
   it('covers every action in all three languages, every route, and the mixed-language history case', () => {
     for (const a of CHAT_ACTIONS) {
+      // A screen only the hiring check opens is covered by the hiring set, since the chat set runs with the check off.
+      const covering = a.hiring ? hireSet : set;
       for (const lang of ['en', 'pt', 'es']) {
-        expect(set.some((p) => p.expect.action === a.id && p.language === lang), `${a.id} in ${lang}`).toBe(true);
+        expect(covering.some((p) => p.expect.action === a.id && p.language === lang), `${a.id} in ${lang}`).toBe(true);
       }
+      if (!a.hiring) expect(set.some((p) => p.expect.action === a.id), a.id).toBe(true);
     }
     for (const route of ['action', 'answer', 'answer_long', 'refuse', 'clarify']) {
       expect(set.filter((p) => p.expect.route === route).length, route).toBeGreaterThanOrEqual(4);
@@ -67,6 +73,18 @@ describe('the prompt set', () => {
     const mixed = set.filter((p) => p.history?.length && p.language !== 'en' && guessLanguage(p.history.map((m) => m.text).join(' ')) === 'en');
     expect(mixed.length).toBeGreaterThanOrEqual(10);
     expect(set.some((p) => p.text === 'Manda 20 pro joao' && p.history?.length)).toBe(true);
+  });
+
+  it('keeps a valid hiring set: requests and near misses in every language, and no screen of the hiring check in the chat set', () => {
+    expect(validatePrompts(hireSet)).toEqual([]);
+    const ids = new Set(set.map((p) => p.id));
+    for (const p of hireSet) expect(ids.has(p.id), p.id).toBe(false);
+    const hiring = new Set(CHAT_ACTIONS.filter((a) => a.hiring).map((a) => a.id));
+    for (const lang of ['en', 'pt', 'es']) {
+      expect(hireSet.filter((p) => p.language === lang && hiring.has(p.expect.action ?? '')).length, `requests in ${lang}`).toBeGreaterThanOrEqual(5);
+      expect(hireSet.filter((p) => p.language === lang && !hiring.has(p.expect.action ?? '')).length, `near misses in ${lang}`).toBeGreaterThanOrEqual(5);
+    }
+    for (const p of set) expect(hiring.has(p.expect.action ?? ''), p.id).toBe(false);
   });
 });
 
