@@ -51,6 +51,9 @@ dependencies {
   // uses, but predates the multi-token prediction fixes: on the CPU with MTP it runs away on long
   // resumes. -PlitertLm=0.19.0 -PtensorBridge=nightly runs 0.19.0 on both the TPU and the CPU.
   implementation("com.google.ai.edge.litertlm:litertlm-android:$litertLm")
+  // ML Kit's on-device text recognition, its Latin model bundled: Android's own OCR for /v1/pdf-text?method=mlkit
+  // (the phones' native-text test of 2026-10-30, workspace decision 0068).
+  implementation("com.google.mlkit:text-recognition:16.0.1")
   // The Tensor TPU dispatch bridge, which the litertlm AAR does not carry.
   if (tensorBridge != "nightly") implementation("com.google.ai.edge.litert:litert-npu-runtime-google-tensor:2.3.2")
 }

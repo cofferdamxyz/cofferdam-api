@@ -5,7 +5,10 @@ package xyz.cofferdam.litertbench
 
 import android.annotation.TargetApi
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
+import android.graphics.pdf.models.selection.SelectionBoundary
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -25,6 +28,10 @@ import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -45,8 +52,10 @@ private const val TAG = "LiteRtBench"
  * with the same truth and scorer as the others. Never part of the app. Synthetic CVs, or the
  * real-resume benchmark under workspace decision 0021's exception, after which the answers the
  * app keeps are deleted (`run-as xyz.cofferdam.litertbench rm -r files/answers`).
- * `POST /v1/pdf-text` takes a PDF's bytes and answers its text layer as Android's own PDF renderer
- * reads it (Android 15 and later), for the phones' test of 2026-10-30 (workspace decision 0021).
+ * `POST /v1/pdf-text?method=contents|selection|mlkit` takes a PDF's bytes and answers each page's
+ * text: Android's own PDF renderer's text layer (`contents`, the default, or a whole-page `selection`;
+ * Android 15 and later), or ML Kit's text recognition on the page rendered at 1,600 px on its long
+ * side (`mlkit`), for the phones' test of 2026-10-30 (workspace decisions 0021 and 0068).
  * Steps: workspace `docs/runbooks/android-build.md`, TPU reader check.
  */
 
@@ -142,14 +151,16 @@ object BenchServer {
         unload()
         respond(socket, 200, "{\"ok\":true}")
       }
-      method == "POST" && path == "/v1/pdf-text" -> {
+      method == "POST" && path.substringBefore('?') == "/v1/pdf-text" -> {
         if (Build.VERSION.SDK_INT < 35) {
           respond(socket, 501, JSONObject().put("error", JSONObject().put("message", "PdfRenderer reads text from Android 15 (API 35)")).toString())
           return
         }
+        val textMethod = path.substringAfter("method=", "contents").substringBefore('&')
+        val longSide = path.substringAfter("long=", "1600").substringBefore('&').toIntOrNull()?.coerceIn(800, 4000) ?: 1600
         val answer =
           try {
-            pdfText(context, body)
+            pdfText(context, body, textMethod, longSide)
           } catch (t: Throwable) {
             Log.e(TAG, "pdf-text failed", t)
             respond(socket, 500, JSONObject().put("error", JSONObject().put("message", t.toString())).toString())
@@ -183,27 +194,67 @@ object BenchServer {
    * cache for the renderer and is deleted after.
    */
   @TargetApi(35)
-  private fun pdfText(context: Context, pdf: ByteArray): JSONObject {
+  private fun pdfText(context: Context, pdf: ByteArray, textMethod: String, longSide: Int = 1600): JSONObject {
+    require(textMethod in setOf("contents", "selection", "mlkit")) { "method must be contents, selection or mlkit" }
     val file = java.io.File.createTempFile("cv-text", ".pdf", context.cacheDir)
     try {
       file.writeBytes(pdf)
       val t0 = SystemClock.elapsedRealtime()
       val pages = JSONArray()
       val pieces = JSONArray()
+      // Counts only: each page's characters and the boxes its text comes with, to tell whether the boxes are per glyph.
+      val shape = JSONArray()
       ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
         PdfRenderer(fd).use { renderer ->
           for (i in 0 until renderer.pageCount) {
             renderer.openPage(i).use { page ->
               val contents = page.textContents
-              pages.put(contents.joinToString("\n") { it.text })
+              when (textMethod) {
+                "selection" -> {
+                  val length = contents.sumOf { it.text.length }
+                  val selected = page.selectContent(SelectionBoundary(0), SelectionBoundary(length))?.selectedTextContents.orEmpty()
+                  pages.put(selected.joinToString("\n") { it.text })
+                }
+                "mlkit" -> pages.put(recognize(page, longSide))
+                else -> pages.put(contents.joinToString("\n") { it.text })
+              }
               pieces.put(contents.size)
+              val text = contents.joinToString("") { it.text }
+              shape.put(
+                JSONObject()
+                  .put("chars", text.length)
+                  .put("nonSpace", text.count { !it.isWhitespace() })
+                  .put("boxes", contents.sumOf { it.bounds.size }),
+              )
             }
           }
         }
       }
-      return JSONObject().put("pages", pages).put("pieces", pieces).put("ms", SystemClock.elapsedRealtime() - t0)
+      return JSONObject().put("pages", pages).put("pieces", pieces).put("shape", shape).put("ms", SystemClock.elapsedRealtime() - t0)
     } finally {
       file.delete()
+    }
+  }
+
+  /**
+   * ML Kit's lines on the page rendered over white at `longSide` px on its long side: 1,600 by default, as the Mac renders
+   * a page for Vision (`long=` in the request sets it, 800 to 4,000).
+   */
+  private fun recognize(page: PdfRenderer.Page, longSide: Int): String {
+    val scale = longSide.toFloat() / maxOf(page.width, page.height)
+    val bitmap = Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888)
+    try {
+      bitmap.eraseColor(Color.WHITE)
+      page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+      val client = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+      try {
+        val text = Tasks.await(client.process(InputImage.fromBitmap(bitmap, 0)))
+        return text.textBlocks.flatMap { it.lines }.joinToString("\n") { it.text }
+      } finally {
+        client.close()
+      }
+    } finally {
+      bitmap.recycle()
     }
   }
 

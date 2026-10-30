@@ -38,6 +38,7 @@ import {
   phoneReport,
   scorePhoneRuns,
   textAgreement,
+  wordAgreement,
 } from './work-eval/phoneBench.js';
 import { schemaRegex, withSchemaAsRegex } from './work-eval/schemaRegex.js';
 
@@ -607,6 +608,20 @@ describe('the phones reading real resumes from their PDFs (test/workResumePhone.
     expect(() => one({ paths: ['text'], textDir: 'relative/t' })).toThrow(/absolute/);
     expect(() => one({ textDir: '/tmp/t' })).toThrow(/text path alone/);
     expect(() => one({ paths: ['text'], textDir: '/tmp/t', textSource: 'ocr' })).toThrow(/give one/);
+  });
+
+  it("counts the Mac's words a phone's text keeps in order: a split or a joined word costs one", () => {
+    expect(wordAgreement('Line Cook at the Bistro', 'Line Cook at the Bistro')).toEqual({ macWords: 5, phoneWords: 5, sharedWords: 5 });
+    expect(wordAgreement('Line Co ok at theBistro', 'Line Cook at the Bistro')).toEqual({ macWords: 5, phoneWords: 5, sharedWords: 2 });
+  });
+
+  it('plans the text paths alone, with no reader, or a reader on one path', () => {
+    const extract = pdfPlan(['123'], [], 1, 'test', ['string', 'vision']);
+    expect(extract).toMatchObject({ readers: [], extract: ['string', 'vision'], cvs: [{ id: '123', pdf: '123.pdf' }] });
+    expect(extract.text!.userPrefix).toBe('The CV, as OCR lines:\n\n');
+    expect(() => pdfPlan(['123'], [], 1, 'test')).toThrow(/extract/);
+    const vision = { ...litert, pdfText: 'vision' as const };
+    expect(pdfPlan(['123'], [vision], 1, 'test').readers).toEqual([vision]);
   });
 });
 

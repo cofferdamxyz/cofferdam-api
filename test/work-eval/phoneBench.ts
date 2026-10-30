@@ -41,6 +41,8 @@ export interface PhoneReader {
    * page image when absent.
    */
   input?: 'text' | 'pdf';
+  /** With `input: "pdf"`, the phone parser's path to the text (cofferdam-app `modules/pdf-text`); `string` when absent. */
+  pdfText?: PhonePdfMethod;
   /**
    * A LiteRT-LM reader (the app's `modules/litert-lm`): the `.litertlm` file copied beside the plan, Metal (`gpu`) or the
    * CPU, multi-token prediction on or off. It reads text with the schema as a regex, as `scripts/work/litert-answers.py` does on the Mac.
@@ -61,9 +63,15 @@ export interface PhoneText {
   userPrefix?: string;
 }
 
-/** The text layer the phone's parser read from one CV's PDF, as the app writes it back (once per CV). */
+/** The iPhone's text paths (cofferdam-app `modules/pdf-text`): PDFKit's string, attributed string, whole-page selection, the string's spaces rebuilt from the glyphs' positions, and Vision's recognition on the rendered page. */
+export const PHONE_PDF_METHODS = ['string', 'attributed', 'selection', 'rebuilt', 'vision'] as const;
+export type PhonePdfMethod = (typeof PHONE_PDF_METHODS)[number];
+
+/** The text the phone's parser read from one CV's PDF, as the app writes it back (once per CV and path). */
 export interface PhonePdfText {
   cv: string;
+  /** The parser's path; `string` in results written before the paths existed. */
+  method: PhonePdfMethod;
   pages: number;
   chars: number;
   ms: number;
@@ -89,6 +97,8 @@ export interface PhonePlan {
   /** The page images, by file name beside `plan.json`, and a CV's PDF for a reader with `input: "pdf"`. */
   cvs: { id: string; file: string; pdf?: string }[];
   readers: PhoneReader[];
+  /** Text paths the app takes from every CV's PDF before any reader, with no model (the paths' comparison). */
+  extract?: PhonePdfMethod[];
   /** The text path, when a reader reads text; null otherwise. */
   text: PhoneText | null;
 }
@@ -220,15 +230,37 @@ export function textUserPrefix(): string {
  * 2026-10-30): each CV's PDF beside the plan (`<id>.pdf`) and a blank page in place of its image, every reader with
  * `input: "pdf"`, and the text path with its prefix and no users, since the phone's own parser gives the text.
  */
-export function pdfPlan(ids: readonly string[], readers: PhoneReader[], runs: number, source: string): PhonePlan {
-  if (!readers.length || readers.some((r) => r.input !== 'pdf' || !r.litert)) throw new Error('a PDF plan reads with LiteRT-LM readers whose input is "pdf"');
-  const base = phonePlan(ids.map((id) => ({ id, image: PDF_PLAN_PAGE, ocr: ['-'] })), readers.map((r) => ({ ...r, input: 'text' as const })), runs, source);
+export function pdfPlan(ids: readonly string[], readers: PhoneReader[], runs: number, source: string, extract: readonly PhonePdfMethod[] = []): PhonePlan {
+  if ((!readers.length && !extract.length) || readers.some((r) => r.input !== 'pdf' || !r.litert)) {
+    throw new Error('a PDF plan reads with LiteRT-LM readers whose input is "pdf", or only takes text paths (extract)');
+  }
+  // The base plan needs a reader to write the text path; a reader that reads the CVs' OCR lines stands in for it.
+  const stand = { label: 'stand-in', model: 'gemma-4-e2b', imageMaxTokens: null, schema: 'regex' as const, input: 'text' as const, litert: { file: 'g.litertlm', backend: 'gpu' as const, mtp: true } };
+  const base = phonePlan(ids.map((id) => ({ id, image: PDF_PLAN_PAGE, ocr: ['-'] })), [stand], runs, source);
   return {
     ...base,
     cvs: ids.map((id) => ({ id, file: PDF_PLAN_PAGE, pdf: `${id}.pdf` })),
     readers,
+    ...(extract.length ? { extract: [...extract] } : {}),
     text: { ...base.text!, users: [], userPrefix: textUserPrefix() },
   };
+}
+
+/**
+ * How a phone's text compares with the Mac's word by word, counts only: the words each holds (split on whitespace) and
+ * how many of the Mac's the phone's text holds in the same order (their longest common subsequence). A word split in
+ * two or two words joined both cost shared words, so the share tells a parser's spacing apart from the Mac's.
+ */
+export function wordAgreement(phone: string, mac: string): { macWords: number; phoneWords: number; sharedWords: number } {
+  const a = mac.split(/\s+/).filter(Boolean);
+  const b = phone.split(/\s+/).filter(Boolean);
+  let prev = new Uint16Array(b.length + 1);
+  for (const x of a) {
+    const cur = new Uint16Array(b.length + 1);
+    for (let j = 1; j <= b.length; j++) cur[j] = x === b[j - 1] ? prev[j - 1]! + 1 : Math.max(prev[j]!, cur[j - 1]!);
+    prev = cur;
+  }
+  return { macWords: a.length, phoneWords: b.length, sharedWords: prev[b.length]! };
 }
 
 /** A PDF's pages as one text, joined as `scripts/work/pdf-pages.swift` and the app join them: each page's text and a blank line. */
@@ -244,8 +276,15 @@ export const PDF_PLAN_PAGE = 'blank.png';
  * `reader` with each CV's phone text): the eval then scores them as any local reader's, reading the text from
  * `reader.textDir`. A failed read is an answer with its error; a CV the phone read no text from has no answer.
  */
-export function phoneAnswers(results: PhoneResults, phoneLabel: string, reader: LocalReader): { texts: { id: string; text: string }[]; answers: Record<string, unknown> } {
-  const texts = (results.texts ?? []).filter((t) => !t.error).map((t) => ({ id: t.cv, text: t.text }));
+export function phoneAnswers(
+  results: PhoneResults,
+  phoneLabel: string,
+  reader: LocalReader,
+  method: PhonePdfMethod = 'string',
+  given?: { id: string; text: string }[],
+): { texts: { id: string; text: string }[]; answers: Record<string, unknown> } {
+  // A reader that read text the plan carried (`given`, taken from the PDFs in an earlier run) has none in its results.
+  const texts = given ?? (results.texts ?? []).filter((t) => !t.error && t.method === method).map((t) => ({ id: t.cv, text: t.text }));
   const answers: Record<string, unknown> = {};
   for (const run of results.runs.filter((r) => r.reader === phoneLabel && r.run === 0)) {
     const text = texts.find((t) => t.id === run.cv)?.text;
@@ -382,7 +421,8 @@ export function parsePhoneResults(raw: unknown): PhoneResults {
           texts: raw.texts.map((t, i): PhonePdfText => {
             const o = obj(t);
             if (typeof o.cv !== 'string' || typeof o.text !== 'string') throw new Error(`texts[${i}] has no cv or text`);
-            return { cv: o.cv, pages: numOrNull(o.pages) ?? 0, chars: numOrNull(o.chars) ?? 0, ms: numOrNull(o.ms) ?? 0, text: o.text, error: strOrNull(o.error) };
+            const method = (PHONE_PDF_METHODS as readonly string[]).includes(String(o.method)) ? (o.method as PhonePdfMethod) : 'string';
+            return { cv: o.cv, method, pages: numOrNull(o.pages) ?? 0, chars: numOrNull(o.chars) ?? 0, ms: numOrNull(o.ms) ?? 0, text: o.text, error: strOrNull(o.error) };
           }),
         }
       : {}),
