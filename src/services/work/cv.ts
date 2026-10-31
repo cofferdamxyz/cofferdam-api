@@ -39,6 +39,12 @@ export interface CvClaim {
   token?: string;
 }
 
+/** A claimed certificate, with the validity date the CV gives (decision 0067: the CV's certificates gain a validity date). */
+export interface CvCertificate extends CvClaim {
+  /** `YYYY-MM` or `YYYY`; null when the CV gives none; absent where the block path never reads one. */
+  expires?: CvDate | null;
+}
+
 export interface CvExperience {
   title: CvTitle | null;
   /** A placeholder (`[ORG_1]`), re-identified on the phone only. */
@@ -59,7 +65,11 @@ export interface CvEducation {
   end: CvDate | null;
 }
 
-export type CvLanguageLevel = 'fluent' | 'basic';
+/** The founder's three levels of 2026-10-31, the same in the three launch languages; CEFR is a later expansion. */
+export type CvLanguageLevel = 'fluent' | 'intermediate' | 'basic';
+
+/** Which level a CV that names a language twice keeps: the higher. */
+const LEVEL_RANK: Readonly<Record<CvLanguageLevel, number>> = { basic: 0, intermediate: 1, fluent: 2 };
 
 export interface CvLanguage {
   raw: string;
@@ -78,7 +88,7 @@ export interface CvClaimed {
   experience: CvExperience[];
   education: CvEducation[];
   skills: CvClaim[];
-  certificates: CvClaim[];
+  certificates: CvCertificate[];
   languages: CvLanguage[];
 }
 
@@ -294,7 +304,7 @@ export function assembleCv(
   for (const l of claimed.languages) {
     const key = l.code ?? claimKey(l.raw);
     const had = languages.get(key);
-    if (!had || (had.level === 'basic' && l.level === 'fluent')) languages.set(key, l);
+    if (!had || LEVEL_RANK[l.level] > LEVEL_RANK[had.level]) languages.set(key, l);
   }
   claimed.languages = [...languages.values()];
   return { schema: CV_SCHEMA, claimed, verified: [], provenance };
