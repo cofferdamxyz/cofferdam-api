@@ -53,7 +53,7 @@
         ],
         "languages": [
           { "code": "pt", "level": "fluent" },
-          { "code": "en", "level": "basic" },
+          { "code": "en", "level": "intermediate" },
           { "code": "es", "level": "basic" }
         ]
       }
@@ -113,7 +113,7 @@
         "certificates": [],
         "languages": [
           { "code": "es", "level": "fluent" },
-          { "code": "en", "level": "basic" }
+          { "code": "en", "level": "intermediate" }
         ]
       }
     }

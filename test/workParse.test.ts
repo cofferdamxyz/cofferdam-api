@@ -138,7 +138,7 @@ describe('readParse', () => {
         experience: [{ title: 'Eletricista', employer: 'null', start: '15/03/2021', end: 'actualidad', current: false, skills: ['megômetro'] }],
         skills: ['• Painéis', 'painéis', ''],
         certificates: [{ name: 'NR-10', expires: 'soon' }, { name: null, expires: null }],
-        languages: [{ name: 'Inglés', level: 'intermediate' }, { name: 'Español', level: 'fluent' }],
+        languages: [{ name: 'Inglés', level: 'conversational' }, { name: 'Español', level: 'fluent' }, { name: 'Francés', level: 'intermediate' }],
       }),
       NOW,
     );
@@ -148,7 +148,10 @@ describe('readParse', () => {
     expect(e).toMatchObject({ employer: null, start: null, end: null, current: true });
     expect(p.claimed.skills).toEqual([{ raw: 'Painéis' }]);
     expect(p.claimed.certificates).toEqual([{ raw: 'NR-10', expires: null }]);
-    expect(p.claimed.languages).toEqual([{ raw: 'Español', code: 'es', level: 'fluent' }]);
+    expect(p.claimed.languages).toEqual([
+      { raw: 'Español', code: 'es', level: 'fluent' },
+      { raw: 'Francés', code: 'fr', level: 'intermediate' },
+    ]);
     expect(p.dropped.map((d) => d.path)).toEqual([
       'years_experience',
       'experience.0.start',

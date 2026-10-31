@@ -23,7 +23,7 @@
  * llama, the OpenAI JSON-schema wrapper with thinking off for the rest. An
  * image goes as an OpenAI content part with a data URI. The reader fails
  * closed on shape and drops, never repairs, a value it cannot read (a date
- * `parseCvDate` refuses, a level outside the two, a number out of range).
+ * `parseCvDate` refuses, a level outside the three, a number out of range).
  */
 
 import { thinkingOff } from '../chat/run.js';
@@ -96,7 +96,7 @@ export const PARSE_JSON_SCHEMA = obj({
   education: { type: 'array', maxItems: 10, items: obj({ qualification: str, institution: str, end: str }) },
   skills: strList(40),
   certificates: { type: 'array', maxItems: 30, items: obj({ name: str, expires: str }) },
-  languages: { type: 'array', maxItems: 10, items: obj({ name: str, level: { type: 'string', enum: ['fluent', 'basic'] } }) },
+  languages: { type: 'array', maxItems: 10, items: obj({ name: str, level: { type: 'string', enum: ['fluent', 'intermediate', 'basic'] } }) },
 });
 
 export const PARSE_SYSTEM = [
@@ -109,7 +109,7 @@ export const PARSE_SYSTEM = [
   '- education: one item per qualification: the qualification, the institution (its name only, without its city, state or program), and the year it ended.',
   '- skills: the skills the CV lists outside its jobs, one per item, without bullets.',
   '- certificates: one item per certificate or licence, name as written without its validity, and expires as written (a date), else null.',
-  '- languages: only the languages the CV names as ones the person speaks, one item per language: its name without the level, and level fluent for native, fluent or advanced, basic for basic or intermediate. The language the CV is written in is not one unless the CV names it.',
+  '- languages: only the languages the CV names as ones the person speaks, one item per language: its name without the level, and its level, one of three: fluent for native, fluent or advanced (nativo, fluente, avançado; nativo, fluido, avanzado; a mother tongue), intermediate for intermediate (intermediário; intermedio), basic for basic or beginner (básico, iniciante; básico, principiante); a CEFR level counts A1 and A2 as basic, B1 and B2 as intermediate, C1 and C2 as fluent. The language the CV is written in is not one unless the CV names it.',
   'Use null or an empty list for anything the CV does not state. Never invent a value.',
 ].join('\n');
 
@@ -320,7 +320,7 @@ export function readParse(result: unknown, now = Date.now()): ParsedCv {
   const languages: CvLanguage[] = entries('languages', o.languages).flatMap(({ e, i }) => {
     const name = text(`languages.${i}.name`, e.name);
     if (!name) return [];
-    if (e.level !== 'fluent' && e.level !== 'basic') {
+    if (e.level !== 'fluent' && e.level !== 'intermediate' && e.level !== 'basic') {
       dropped.push({ path: `languages.${i}.level`, reason: 'level' });
       return [];
     }

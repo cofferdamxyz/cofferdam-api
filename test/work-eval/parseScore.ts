@@ -21,6 +21,7 @@
  * expiry, and a paired language its level.
  */
 
+import type { CvLanguageLevel } from '../../src/services/work/cv.js';
 import type { ParsedCv } from '../../src/services/work/parse.js';
 import { listMatch, normText, textMatch } from './score.js';
 
@@ -31,7 +32,7 @@ export interface ParseTruth {
   education: { qualification: string | null; institution: string | null; end: string | null }[];
   skills: string[];
   certificates: { name: string; expires: string | null }[];
-  languages: { code: string; level: 'fluent' | 'basic' }[];
+  languages: { code: string; level: CvLanguageLevel }[];
 }
 
 export interface FieldScore {
