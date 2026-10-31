@@ -14,6 +14,10 @@ import {
   labelLangs,
   labelNorm,
   parseTau,
+  pivotRequest,
+  readPivot,
+  reasoningPivot,
+  requestFallback,
   snap,
   tauFor,
   tokenOf,
@@ -34,6 +38,8 @@ import { sqliteD1 } from './fixtures/work/d1.js';
 import { axis, embedAnswer, fakeInference, jsonModeResult, memoryIndex, near, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
 
 const NOW = Date.parse('2026-10-24T12:00:00Z');
+/** The pivot before the founder's ruling of 2026-10-31: JSON-mode naming without candidates, its English name through any English label. */
+const LLAMA = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 interface SeedToken {
   token: string;
@@ -317,7 +323,7 @@ describe('snap: retrieve, then choose', () => {
     expect(await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt' })).toMatchObject({ decision: 'pivot', token: 'pos:plumber' });
   });
 
-  it('lets the pivot snap to the one token that holds its English name as a label, where no slug names it, and mints nothing', async () => {
+  it('lets the pivot on llama snap to the one token that holds its English name as a label, where no slug names it, and mints nothing', async () => {
     // As in ESCO: "truck driver" is an alternative label of the cargo vehicle driver, and no token is pos:truck-driver.
     const driver: SeedToken = {
       token: 'pos:cargo-vehicle-driver',
@@ -336,6 +342,7 @@ describe('snap: retrieve, then choose', () => {
         { 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, cos) }), 'work-adjudicate': answer, 'work-pivot': jsonModeResult({ english: 'truck driver' }) },
         calls,
         [driver],
+        { 'work-pivot': LLAMA },
       );
       expect(await snap(deps, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt' }), why).toMatchObject({ decision: 'pivot', token: 'pos:cargo-vehicle-driver', labelEn: 'cargo vehicle driver' });
       expect(calls.map((c) => c.op), why).toEqual(answer ? ['work-embed', 'work-adjudicate', 'work-pivot'] : ['work-embed', 'work-pivot']);
@@ -351,14 +358,14 @@ describe('snap: retrieve, then choose', () => {
     expect(calls.map((c) => c.op)).toEqual(['work-embed']);
   });
 
-  it('leaves an English name several tokens hold to the slug, as before: the token of that slug, else a mint, and nothing on an undecided answer', async () => {
+  it('on llama, leaves an English name several tokens hold to the slug, as before: the token of that slug, else a mint, and nothing on an undecided answer', async () => {
     // As in ESCO: "porter" is an alternative label of the hotel porter and the hospital porter, and no token is pos:porter.
     const porters: SeedToken[] = [
       { token: 'pos:hotel-porter', kind: 'pos', labelEn: 'hotel porter', labels: [['en', 'hotel porter', axis(6)], ['en', 'porter', near(6, 14, 0.9), 'alternative']] },
       { token: 'pos:hospital-porter', kind: 'pos', labelEn: 'hospital porter', labels: [['en', 'hospital porter', axis(7)], ['en', 'porter', near(7, 14, 0.9), 'alternative']] },
     ];
     const calls: FakeCall[] = [];
-    const two = await registry({ 'work-embed': embedAnswer({ Bagageiro: near(6, 15, 0.3), porter: axis(16) }), 'work-pivot': jsonModeResult({ english: 'porter' }) }, calls, porters);
+    const two = await registry({ 'work-embed': embedAnswer({ Bagageiro: near(6, 15, 0.3), porter: axis(16) }), 'work-pivot': jsonModeResult({ english: 'porter' }) }, calls, porters, { 'work-pivot': LLAMA });
     expect((await two.store.tokensByLabel('porter', 'pos')).map((t) => t.token).sort()).toEqual(['pos:hospital-porter', 'pos:hotel-porter']);
     expect(await snap(two.deps, { kind: 'pos', raw: 'Bagageiro', lang: 'pt' })).toMatchObject({ decision: 'minted', token: 'pos:porter', labelEn: 'porter' });
     expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot', 'work-embed']);
@@ -368,6 +375,7 @@ describe('snap: retrieve, then choose', () => {
       { 'work-embed': embedAnswer({ Bagageiro: near(6, 15, 0.7) }), 'work-adjudicate': clef('none', 0.4), 'work-pivot': jsonModeResult({ english: 'porter' }) },
       [],
       porters,
+      { 'work-pivot': LLAMA },
     );
     expect(await snap(undecided.deps, { kind: 'pos', raw: 'Bagageiro', lang: 'pt' })).toMatchObject({ decision: 'unmatched', token: null });
     expect((await undecided.store.tokens(['pos:porter'])).size).toBe(0);
@@ -379,7 +387,7 @@ describe('snap: retrieve, then choose', () => {
       labelEn: 'domestic electrician',
       labels: [['en', 'domestic electrician', axis(8)], ['en', 'electrician', near(8, 14, 0.9), 'alternative']],
     };
-    const slugged = await registry({ 'work-embed': embedAnswer({ 'Eletricista predial': near(8, 15, 0.3) }), 'work-pivot': jsonModeResult({ english: 'electrician' }) }, [], [domestic]);
+    const slugged = await registry({ 'work-embed': embedAnswer({ 'Eletricista predial': near(8, 15, 0.3) }), 'work-pivot': jsonModeResult({ english: 'electrician' }) }, [], [domestic], { 'work-pivot': LLAMA });
     expect((await slugged.store.tokensByLabel('electrician', 'pos')).map((t) => t.token).sort()).toEqual(['pos:domestic-electrician', 'pos:electrician']);
     expect(await snap(slugged.deps, { kind: 'pos', raw: 'Eletricista predial', lang: 'pt' })).toMatchObject({ decision: 'pivot', token: 'pos:electrician' });
   });
@@ -685,10 +693,14 @@ describe('the locale the model steps read', () => {
     expect(asked.questions.match.criteria).toMatchObject({ c0: 'assayer (matched "Ensaiador", Portuguese)', c1: 'carpet fitter (matched "enmoquetador", Spanish)' });
     // The question is the one every string gets, whatever its language.
     expect(asked.questions.match.instructions).toBe((adjudicationQuestions('pos', []).match as { instructions: string }).instructions);
-    // The pivot reads the same text, so a Brazilian word is read as Brazilian Portuguese.
+    // The pivot reads the same text, so a Brazilian word is read as Brazilian Portuguese, then the nearest candidates
+    // in the band's words (the reading on DeepSeek, the founder's ruling of 2026-10-31).
     const pivoted = calls.find((c) => c.op === 'work-pivot')!.input as unknown as PivotAsked;
-    expect(pivoted.messages.find((m) => m.role === 'user')!.content).toBe(state);
-    expect(pivoted.messages[0]!.content).toContain('with the language it is written in and, when known, where the worker who wrote it is');
+    const user = pivoted.messages.find((m) => m.role === 'user')!.content;
+    expect(user.startsWith(`${state}\n\nThe registry's nearest occupations:\n`)).toBe(true);
+    expect(user).toContain('- c0: assayer (matched "Ensaiador", Portuguese)');
+    expect(user).toContain('- c1: carpet fitter (matched "enmoquetador", Spanish)');
+    expect(pivoted.messages[0]!.content).toContain('Given a job title, the language variant it is written in and the country of the worker');
     // Context, never a preference: nothing tells a model to favour a language or a region.
     expect(JSON.stringify([asked, pivoted])).not.toMatch(/prefer|favou?r|priorit/i);
 
@@ -697,7 +709,199 @@ describe('the locale the model steps read', () => {
     const without = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'plumber' }) }, plain, lookalikes);
     await snap(without.deps, { kind: 'pos', raw: 'Encanador', lang: 'pt' });
     expect((plain.find((c) => c.op === 'work-adjudicate')!.input as unknown as Asked).state).toBe('An occupation written in Portuguese by a worker or a hirer:\nEncanador');
-    expect((plain.find((c) => c.op === 'work-pivot')!.input as unknown as PivotAsked).messages[1]!.content).toBe('An occupation written in Portuguese by a worker or a hirer:\nEncanador');
+    expect((plain.find((c) => c.op === 'work-pivot')!.input as unknown as PivotAsked).messages[1]!.content.startsWith('An occupation written in Portuguese by a worker or a hirer:\nEncanador\n\n')).toBe(true);
+
+    // WORK_PIVOT_MODEL on llama gives back today's JSON-mode naming: the state alone, the locale clause, no candidates.
+    const llama: FakeCall[] = [];
+    const named = await registry(
+      { 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'plumber' }) },
+      llama,
+      lookalikes,
+      { 'work-pivot': '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+    );
+    expect(await snap(named.deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', market: 'br-sp' })).toMatchObject({ decision: 'pivot', token: 'pos:plumber' });
+    const old = llama.find((c) => c.op === 'work-pivot')!.input as unknown as PivotAsked & { reasoning_effort?: string };
+    expect(old.messages[1]!.content).toBe(state);
+    expect(old.messages[0]!.content).toContain('with the language it is written in and, when known, where the worker who wrote it is');
+    expect(old.reasoning_effort).toBeUndefined();
+  });
+
+  describe('the pivot on a reasoning model, the fallback of the founder’s ruling of 2026-10-31', () => {
+    const encanadorAt = (p: number) => toward([21, p], [23, p - 0.08]);
+    const reading = (answer: Record<string, unknown>) => jsonModeResult(answer);
+
+    it('asks DeepSeek with reasoning off at temperature 0, the nearest candidates by key, in the OpenAI wrapper', async () => {
+      const calls: FakeCall[] = [];
+      const { deps } = await registry({ 'work-embed': embedAnswer({ Encanador: encanador }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': reading({ english: 'plumber', duties: 'fixes pipes', specific: true, choice: 'none' }) }, calls, lookalikes);
+      const out = await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', market: 'br-sp' });
+      const req = calls.find((c) => c.op === 'work-pivot')!.input as unknown as {
+        reasoning_effort: string;
+        max_completion_tokens: number;
+        response_format: { type: string; json_schema: { name: string; strict: boolean; schema: { required: string[]; properties: { choice: { enum: string[] } } } } };
+        messages: { role: string; content: string }[];
+      };
+      expect(req).toMatchObject({ reasoning_effort: 'none', temperature: 0, max_completion_tokens: 1_500 });
+      expect(req.response_format).toMatchObject({ type: 'json_schema', json_schema: { name: 'pivot', strict: true } });
+      expect(out.candidates.length).toBeGreaterThan(1);
+      expect(req.response_format.json_schema.schema.properties.choice.enum).toEqual([...out.candidates.map((_, i) => `c${i}`), 'none']);
+      expect(req.response_format.json_schema.schema.required).toEqual(['english', 'duties', 'specific', 'choice']);
+      expect(req.messages[0]!.content).toContain('- choice: the key of the listed occupation that is this work as the worker means it');
+    });
+
+    it('takes the candidate it chose, as a choice of Clef’s, and keeps the worker’s string as its alias', async () => {
+      const { deps, store, decisions } = await registry(
+        { 'work-embed': embedAnswer({ Encanador: encanadorAt(0.74) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': reading({ english: 'carpet layer', duties: 'lays carpets', specific: true, choice: 'c1' }) },
+        [],
+        lookalikes,
+      );
+      const out = await snap(deps, { kind: 'pos', raw: 'Encanador', lang: 'pt', market: 'br-sp' });
+      expect(out).toMatchObject({ decision: 'pivot', token: out.candidates[1]!.token, pivot: { english: 'carpet layer', token: out.candidates[1]!.token, added: false } });
+      expect((await store.tokensByLabel(labelNorm('Encanador'), 'pos', ['pt'])).map((t) => t.token)).toEqual([out.candidates[1]!.token]);
+      expect(decisions()).toMatchObject([{ decision: 'pivot', token: out.candidates[1]!.token }]);
+    });
+
+    it('leaves words that fit several occupations unmatched, never minting their English name', async () => {
+      const { deps, store } = await registry(
+        { 'work-embed': embedAnswer({ Instrutor: encanadorAt(0.5) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': reading({ english: 'instructor', duties: 'teaches', specific: false, choice: 'none' }) },
+        [],
+        lookalikes,
+      );
+      expect(await snap(deps, { kind: 'pos', raw: 'Instrutor', lang: 'pt', market: 'br-sp' })).toMatchObject({ decision: 'unmatched', token: null });
+      expect((await store.tokens(['pos:instructor'])).size).toBe(0);
+    });
+
+    it('never lets an alternative label decide alone: it lists the English labels that share the title’s words, and takes the one chosen', async () => {
+      // As in ESCO: "truck driver" is an alternative label of the cargo vehicle driver, and no token is pos:truck-driver.
+      const driver: SeedToken = {
+        token: 'pos:cargo-vehicle-driver',
+        kind: 'pos',
+        labelEn: 'cargo vehicle driver',
+        labels: [['en', 'cargo vehicle driver', axis(5)], ['en', 'truck driver', near(5, 14, 0.97), 'alternative']],
+      };
+      /** DeepSeek: "truck driver" among the nearest, then the key of the cargo vehicle driver in the second list, or none. */
+      const deepseek = (second: 'driver' | 'none') => (input: Record<string, unknown>) => {
+        const user = (input.messages as { role: string; content: string }[])[1]!.content;
+        if (!user.includes('share words with')) return reading({ english: 'truck driver', duties: 'drives trucks', specific: true, choice: 'none' });
+        const key = /- (c\d+): cargo vehicle driver/.exec(user)?.[1];
+        return reading({ english: 'truck driver', duties: 'drives trucks', specific: true, choice: second === 'driver' && key ? key : 'none' });
+      };
+      const calls: FakeCall[] = [];
+      const { deps, store } = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, 0.3) }), 'work-pivot': deepseek('driver') }, calls, [driver]);
+      expect(await snap(deps, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt', market: 'br-pr' })).toMatchObject({ decision: 'pivot', token: 'pos:cargo-vehicle-driver' });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot', 'work-pivot']);
+      const second = (calls[2]!.input as unknown as { messages: { role: string; content: string }[] }).messages[1]!.content;
+      expect(second).toContain('The registry\'s occupations whose English labels share words with "truck driver":\n- c0: cargo vehicle driver (matched "truck driver", English)');
+      // Chosen nowhere, the title an alternative label holds stays unmatched: a mint would copy the label.
+      const none = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, 0.3) }), 'work-pivot': deepseek('none') }, [], [driver]);
+      expect(await snap(none.deps, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt', market: 'br-pr' })).toMatchObject({ decision: 'unmatched', token: null });
+      expect((await none.store.tokens(['pos:truck-driver'])).size).toBe(0);
+      // A preferred English label still decides alone, with no second call.
+      const own: FakeCall[] = [];
+      const plain = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, 0.3) }), 'work-pivot': reading({ english: 'cargo vehicle driver', duties: 'x', specific: true, choice: 'none' }) }, own, [driver]);
+      expect(await snap(plain.deps, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt' })).toMatchObject({ decision: 'pivot', token: 'pos:cargo-vehicle-driver' });
+      expect(own.map((c) => c.op)).toEqual(['work-embed', 'work-pivot']);
+      expect((await store.tokens(['pos:truck-driver'])).size).toBe(0);
+    });
+
+    it('asks no second list when the caller’s deadline leaves too little time, and leaves the string unmatched', async () => {
+      const driver: SeedToken = {
+        token: 'pos:cargo-vehicle-driver',
+        kind: 'pos',
+        labelEn: 'cargo vehicle driver',
+        labels: [['en', 'cargo vehicle driver', axis(5)], ['en', 'truck driver', near(5, 14, 0.97), 'alternative']],
+      };
+      const calls: FakeCall[] = [];
+      const { deps } = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, 0.3) }), 'work-pivot': reading({ english: 'truck driver', duties: 'x', specific: true, choice: 'none' }) }, calls, [driver]);
+      // The registry's clock stands still in these tests: a deadline 3 s ahead leaves no room for the second call.
+      expect(await snap({ ...deps, deadline: NOW + 3_000 }, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt' })).toMatchObject({ decision: 'unmatched', token: null });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot']);
+      // Under a second left, not even the first call is asked: it is metered as a call that ended without an answer.
+      const late: FakeCall[] = [];
+      const gone = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: near(5, 15, 0.3) }), 'work-pivot': reading({ english: 'truck driver', duties: 'x', specific: true, choice: 'none' }) }, late, [driver]);
+      const out = await snap({ ...gone.deps, deadline: NOW + 500 }, { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt' });
+      expect(out).toMatchObject({ decision: 'unmatched', token: null });
+      expect(late.map((c) => c.op)).toEqual(['work-embed']);
+      expect(out.calls.filter((c) => c.op === 'work-pivot')).toMatchObject([{ ok: false }]);
+    });
+
+    it('mints nothing when a second list was found but its call failed: a label it holds may still be the one', async () => {
+      // As in ESCO: the fuel station seller holds "gas station salesperson"; DeepSeek reads a Brazilian "Frentista" as a gas station attendant.
+      const seller: SeedToken = {
+        token: 'pos:fuel-station-specialised-seller',
+        kind: 'pos',
+        labelEn: 'fuel station specialised seller',
+        labels: [['en', 'fuel station specialised seller', axis(9)], ['en', 'gas station salesperson', near(9, 14, 0.9), 'alternative']],
+      };
+      const firstThenDown = (input: Record<string, unknown>) => {
+        const user = (input.messages as { role: string; content: string }[])[1]!.content;
+        if (user.includes('share words with')) throw new Error('down');
+        return reading({ english: 'gas station attendant', duties: 'fuels cars', specific: true, choice: 'none' });
+      };
+      const calls: FakeCall[] = [];
+      const { deps, store } = await registry({ 'work-embed': embedAnswer({ Frentista: near(1, 11, 0.3) }), 'work-pivot': firstThenDown }, calls, [seller]);
+      const out = await snap(deps, { kind: 'pos', raw: 'Frentista', lang: 'pt', market: 'br-mg' });
+      expect(out).toMatchObject({ decision: 'unmatched', token: null });
+      expect(calls.map((c) => c.op)).toEqual(['work-embed', 'work-pivot', 'work-pivot']);
+      expect(out.calls.filter((c) => c.op === 'work-pivot').map((c) => c.ok)).toEqual([true, false]);
+      expect((await store.tokens(['pos:gas-station-attendant'])).size).toBe(0);
+      expect(await store.tokensByLabel(labelNorm('Frentista'), 'pos', ['pt'])).toEqual([]);
+    });
+
+    it('mints a title no label holds when the second list has nothing, and tries a call Workers AI refused for its rate again', async () => {
+      let refused = 0;
+      const calls: FakeCall[] = [];
+      const busy = () => {
+        if (refused++ === 0) throw new Error('Workers AI @cf/deepseek-ai/deepseek-v4.1-flash-1017 answered 429: inference request per min rate reached');
+        return reading({ english: 'pastry chef', duties: 'makes pastries', specific: true, choice: 'none' });
+      };
+      const { deps, store } = await registry({ 'work-embed': embedAnswer({ Confeiteiro: near(1, 11, 0.3) }), 'work-pivot': busy }, calls);
+      expect(await snap(deps, { kind: 'pos', raw: 'Confeiteiro', lang: 'pt', market: 'br-sp' })).toMatchObject({ decision: 'minted', token: 'pos:pastry-chef' });
+      expect(refused).toBe(2);
+      expect(calls.filter((c) => c.op === 'work-pivot')).toHaveLength(2);
+      expect((await store.tokens(['pos:pastry-chef'])).get('pos:pastry-chef')).toMatchObject({ status: 'pending' });
+    }, 10_000);
+
+    it('reads with reasoning off at temperature 0, and at low or high with room to think', () => {
+      const model = '@cf/deepseek-ai/deepseek-v4.1-flash-1017';
+      const ask = (effort: 'none' | 'low' | 'high') => pivotRequest(model, 'pos', 'An occupation written in Portuguese by a worker or a hirer:\nEncanador', 'Encanador', [], 'title', effort);
+      expect(ask('none')).toMatchObject({ reasoning_effort: 'none', temperature: 0, max_completion_tokens: 1_500 });
+      expect(ask('low')).toMatchObject({ reasoning_effort: 'low', max_completion_tokens: 6_000 });
+      expect(ask('low')).not.toHaveProperty('temperature');
+      expect(ask('high')).toMatchObject({ reasoning_effort: 'high', max_completion_tokens: 16_000 });
+      expect(pivotRequest('@cf/openai/gpt-oss-120b', 'pos', 's', 'r', [], 'title', 'none')).toMatchObject({ reasoning_effort: 'low', max_tokens: 6_000 });
+    });
+
+    it('reads only a key it showed, and an answer out of shape as none', () => {
+      const entries = [{ token: 'pos:plumber', labelEn: 'plumber', matched: 'Canalizador', matchedLang: 'pt' }];
+      const model = '@cf/deepseek-ai/deepseek-v4.1-flash-1017';
+      expect(readPivot(model, jsonModeResult({ english: 'plumber', duties: 'x', specific: true, choice: 'c0' }), entries)).toEqual({ english: 'plumber', choice: entries[0] });
+      expect(readPivot(model, jsonModeResult({ english: 'plumber', duties: 'x', specific: true, choice: 'c3' }), entries)).toEqual({ english: 'plumber', choice: null });
+      expect(readPivot(model, jsonModeResult({ english: 'Teacher', duties: 'x', specific: false, choice: 'none' }), entries)).toEqual({ english: null, choice: null });
+      // Words that fit several occupations choose none either, so a generic word never becomes a candidate's alias.
+      expect(readPivot(model, jsonModeResult({ english: 'assistant', duties: 'x', specific: false, choice: 'c0' }), entries)).toEqual({ english: null, choice: null });
+      // A fenced answer reads as `parse.ts` reads one.
+      expect(readPivot(model, { choices: [{ message: { content: '```json\n{"english":"plumber","duties":"x","specific":true,"choice":"c0"}\n```' } }] }, entries)).toEqual({ english: 'plumber', choice: entries[0] });
+      expect(readPivot(model, { choices: [{ message: { content: 'not json' } }] }, entries)).toBeNull();
+      expect(reasoningPivot(model) && !reasoningPivot('@cf/meta/llama-3.3-70b-instruct-fp8-fast')).toBe(true);
+    });
+
+    it('reads a hirer’s whole request for the fallback, naming a token without minting or keeping an alias', async () => {
+      const calls: FakeCall[] = [];
+      const { deps, store } = await registry({ 'work-pivot': reading({ english: 'plumber', duties: 'fixes pipes', specific: true, choice: 'none' }) }, calls, lookalikes);
+      const shown = [{ token: 'pos:assayer', labelEn: 'assayer', matched: 'Ensaiador', matchedLang: 'pt' }];
+      const out = await requestFallback(deps, { request: 'Preciso de um encanador agora na minha casa', lang: 'pt', region: 'br-sp', candidates: shown });
+      expect(out).toMatchObject({ token: { token: 'pos:plumber' }, english: 'plumber' });
+      expect(out.calls.map((c) => c.op)).toEqual(['work-pivot']);
+      const req = calls[0]!.input as unknown as { messages: { role: string; content: string }[] };
+      expect(req.messages[1]!.content).toBe(
+        'A request for work written in Brazilian Portuguese by someone hiring in Brazil (br-sp):\nPreciso de um encanador agora na minha casa\n\nThe registry\'s nearest occupations:\n- c0: assayer (matched "Ensaiador", Portuguese)',
+      );
+      expect(req.messages[0]!.content).toContain('You read requests for work as the person who wrote them means them.');
+      // A hirer's words never become an alias, and nothing is minted.
+      expect(await store.tokensByLabel(labelNorm('Preciso de um encanador agora na minha casa'), 'pos', ['pt'])).toEqual([]);
+      const chose = await registry({ 'work-pivot': reading({ english: 'x', duties: 'x', specific: true, choice: 'c0' }) }, [], lookalikes);
+      expect((await requestFallback(chose.deps, { request: 'Preciso de um ensaiador', lang: 'pt', candidates: shown })).token?.token).toBe('pos:assayer');
+    });
   });
 
   it('shows a national layer’s label with its region, a label of no language with none, and the US layer’s import keeps its questions', async () => {
@@ -816,6 +1020,8 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
   const raw = 'Terceiro Oficial de Máquinas';
   const input = { kind: 'pos', raw, lang: 'pt', market: 'br-rj' } as const;
   const on = (deps: RegistryDeps): RegistryDeps => ({ ...deps, pivotBand: true });
+  /** The amendment was built and measured with the pivot on llama, whose English name reaches any English label; the reading on DeepSeek has tests of its own. */
+  const llamaRegistry = (responses: FakeResponses = {}, calls: FakeCall[] = [], extra: SeedToken[] = []) => registry(responses, calls, extra, { 'work-pivot': LLAMA });
   type Asked = { state: string; questions: { match: { criteria: Record<string, string> } } };
   const asked = (calls: FakeCall[]) => calls.find((c) => c.op === 'work-adjudicate')!.input as unknown as Asked;
   /** A pivot that answers only when cancelled, so a snap that waited for it would never end. */
@@ -826,7 +1032,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
 
   it('shows Clef the English name’s token after the nearest five, as the name’s match, and takes Clef’s pick of it', async () => {
     const calls: FakeCall[] = [];
-    const { deps, db, decisions } = await registry(
+    const { deps, db, decisions } = await llamaRegistry(
       { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c5', 0.86), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) },
       calls,
       ships,
@@ -864,7 +1070,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
 
   it('adds nothing when the nearest five hold the name’s token, and never shows a token twice', async () => {
     const calls: FakeCall[] = [];
-    const { deps } = await registry(
+    const { deps } = await llamaRegistry(
       { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.8), 'work-pivot': jsonModeResult({ english: 'marine mechanic' }) },
       calls,
       ships,
@@ -882,7 +1088,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
       { token: 'pos:hospital-porter', kind: 'pos', labelEn: 'hospital porter', labels: [['en', 'hospital porter', axis(48)], ['en', 'porter', axis(49), 'alternative']] },
     ];
     const calls: FakeCall[] = [];
-    const none = await registry(
+    const none = await llamaRegistry(
       { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.8), 'work-pivot': jsonModeResult({ english: 'porter' }) },
       calls,
       [...ships, ...porters],
@@ -894,7 +1100,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
 
     // ESCO also gives "electrician" to the domestic electrician; the slug names pos:electrician, which the nearest five hold.
     const domestic: SeedToken = { token: 'pos:domestic-electrician', kind: 'pos', labelEn: 'domestic electrician', labels: [['en', 'domestic electrician', axis(50)], ['en', 'electrician', axis(51), 'alternative']] };
-    const slugged = await registry(
+    const slugged = await llamaRegistry(
       { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c2', 0.7), 'work-pivot': jsonModeResult({ english: 'electrician' }) },
       [],
       [...ships, domestic],
@@ -910,7 +1116,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
       ['marine mechanic', 'pos:marine-mechanic'],
     ] as const) {
       const calls: FakeCall[] = [];
-      const { deps, db, store, decisions } = await registry(
+      const { deps, db, store, decisions } = await llamaRegistry(
         { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english }) },
         calls,
         ships,
@@ -925,13 +1131,13 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
       expect(decisions(), english).toEqual([{ decision: 'unmatched', token: null, specialization: 0, probability: 0.9, raw }]);
     }
     // Off, the same answers take the token at step 3, as before.
-    const off = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, [], ships);
+    const off = await llamaRegistry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, [], ships);
     expect(await snap(off.deps, input)).toMatchObject({ decision: 'pivot', token: 'pos:marine-engineer' });
   });
 
   it('mints on Clef’s none when the name names no token, and asks the pivot once', async () => {
     const calls: FakeCall[] = [];
-    const { deps, store } = await registry(
+    const { deps, store } = await llamaRegistry(
       { 'work-embed': embedAnswer({ [raw]: terceiro, 'third engineer officer': axis(52) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'third engineer officer' }) },
       calls,
       ships,
@@ -945,7 +1151,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
 
   it('leaves the name to step 3 on an answer under the floor, which reads the same call and never mints', async () => {
     const calls: FakeCall[] = [];
-    const { deps } = await registry(
+    const { deps } = await llamaRegistry(
       { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.3), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) },
       calls,
       ships,
@@ -954,7 +1160,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
     expect(out).toMatchObject({ decision: 'pivot', token: 'pos:marine-engineer', probability: null });
     expect(out.pivot).toEqual({ english: 'ship engineer', token: 'pos:marine-engineer', added: true });
     expect(calls.filter((c) => c.op === 'work-pivot')).toHaveLength(1);
-    const undecided = await registry(
+    const undecided = await llamaRegistry(
       { 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.3), 'work-pivot': jsonModeResult({ english: 'third engineer officer' }) },
       [],
       ships,
@@ -965,7 +1171,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
 
   it('below the band, takes the name as step 3 always has, from a call that ran while the string was embedded', async () => {
     const calls: FakeCall[] = [];
-    const { deps } = await registry({ 'work-embed': embedAnswer({ Caminhoneiro: toward([40, 0.3]) }), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, calls, ships);
+    const { deps } = await llamaRegistry({ 'work-embed': embedAnswer({ Caminhoneiro: toward([40, 0.3]) }), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, calls, ships);
     const out = await snap(on(deps), { kind: 'pos', raw: 'Caminhoneiro', lang: 'pt', market: 'br-pr' });
     expect(out).toMatchObject({ decision: 'pivot', token: 'pos:marine-engineer' });
     expect(out.pivot).toEqual({ english: 'ship engineer', token: 'pos:marine-engineer', added: false });
@@ -975,7 +1181,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
   it('cancels the pivot on a τ_auto take through the string’s own label, never waits for it, and meters it', async () => {
     const pivotCall: { signal?: AbortSignal } = {};
     const logs: Record<string, unknown>[] = [];
-    const { deps } = await registry({ 'work-embed': embedAnswer({ 'Eletricista Industrial': near(0, 10, 0.97) }), 'work-pivot': hanging(pivotCall) });
+    const { deps } = await llamaRegistry({ 'work-embed': embedAnswer({ 'Eletricista Industrial': near(0, 10, 0.97) }), 'work-pivot': hanging(pivotCall) });
     const out = await snap({ ...on(deps), log: (e) => logs.push(e) }, { kind: 'pos', raw: 'Eletricista Industrial', lang: 'pt', market: 'br-sp' });
     expect(out).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
     expect(out.pivot).toBeUndefined();
@@ -989,7 +1195,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
   });
 
   it('meters a pivot that answered before a τ_auto take as it answered, not as cancelled', async () => {
-    const { deps } = await registry({ 'work-embed': embedAnswer({ 'Eletricista Industrial': near(0, 10, 0.97) }), 'work-pivot': jsonModeResult({ english: 'industrial electrician' }) });
+    const { deps } = await llamaRegistry({ 'work-embed': embedAnswer({ 'Eletricista Industrial': near(0, 10, 0.97) }), 'work-pivot': jsonModeResult({ english: 'industrial electrician' }) });
     const out = await snap(on(deps), { kind: 'pos', raw: 'Eletricista Industrial', lang: 'pt', market: 'br-sp' });
     expect(out).toMatchObject({ decision: 'auto', token: 'pos:electrician' });
     const metered = out.calls.filter((c) => c.op === 'work-pivot');
@@ -1003,7 +1209,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
     for (const failure of [new Error('down'), jsonModeResult({ english: 'pos:marine-engineer!' })]) {
       const why = failure instanceof Error ? 'thrown' : 'invalid';
       const calls: FakeCall[] = [];
-      const picked = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.8), 'work-pivot': failure }, calls, ships);
+      const picked = await llamaRegistry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('c0', 0.8), 'work-pivot': failure }, calls, ships);
       const out = await snap(on(picked.deps), input);
       expect(out, why).toMatchObject({ decision: 'chosen', token: 'pos:marine-mechanic' });
       expect(out.pivot, why).toBeUndefined();
@@ -1012,7 +1218,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
       expect(out.calls.find((c) => c.op === 'work-pivot'), why).toMatchObject({ ok: why === 'invalid' });
       // Clef's none: as before when the pivot fails, no token; nothing asks the pivot again.
       const refusedCalls: FakeCall[] = [];
-      const refused = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': failure }, refusedCalls, ships);
+      const refused = await llamaRegistry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': failure }, refusedCalls, ships);
       expect(await snap(on(refused.deps), input), why).toMatchObject({ decision: 'unmatched', token: null });
       expect(refusedCalls.filter((c) => c.op === 'work-pivot'), why).toHaveLength(1);
     }
@@ -1021,7 +1227,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
   it('fails closed, and meters the pivot whatever ends the snap', async () => {
     // No embedding: no token, the pivot cancelled and metered.
     const pivotCall: { signal?: AbortSignal } = {};
-    const down = await registry({ 'work-embed': new Error('down'), 'work-pivot': hanging(pivotCall) }, [], ships);
+    const down = await llamaRegistry({ 'work-embed': new Error('down'), 'work-pivot': hanging(pivotCall) }, [], ships);
     const out = await snap(on(down.deps), input);
     expect(out).toMatchObject({ decision: 'unmatched', token: null });
     expect(out.calls.map((c) => [c.op, c.ok])).toEqual([
@@ -1030,10 +1236,10 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
     ]);
     expect(pivotCall.signal?.aborted).toBe(true);
     // Clef down: no token, whatever the pivot named.
-    const clefDown = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': new Error('down'), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, [], ships);
+    const clefDown = await llamaRegistry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-adjudicate': new Error('down'), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) }, [], ships);
     expect(await snap(on(clefDown.deps), input)).toMatchObject({ decision: 'unmatched', token: null });
     // The index down: the error carries the embedding and the cancelled pivot, so the route still meters both.
-    const indexDown = await registry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-pivot': hanging({}) }, [], ships);
+    const indexDown = await llamaRegistry({ 'work-embed': embedAnswer({ [raw]: terceiro }), 'work-pivot': hanging({}) }, [], ships);
     indexDown.index.query = async () => {
       throw new Error('vectorize down');
     };
@@ -1051,7 +1257,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
     ];
     for (const c of cases) {
       const calls: FakeCall[] = [];
-      const { deps } = await registry(
+      const { deps } = await llamaRegistry(
         { 'work-embed': embedAnswer({ [raw]: terceiro, 'BOSIET com CA-EBS': near(4, 13, 0.8) }), 'work-adjudicate': clef('none', 0.9), 'work-pivot': jsonModeResult({ english: 'ship engineer' }) },
         calls,
         ships,
@@ -1065,7 +1271,7 @@ describe('the English pivot in the band (workspace decision 0018, amendment prop
 
   it('asks the pivot beside the client’s query vector, with no embedding of the plane’s', async () => {
     const calls: FakeCall[] = [];
-    const { deps } = await registry({ 'work-adjudicate': clef('c5', 0.9), 'work-pivot': jsonModeResult({ english: 'marine engineer' }) }, calls, ships);
+    const { deps } = await llamaRegistry({ 'work-adjudicate': clef('c5', 0.9), 'work-pivot': jsonModeResult({ english: 'marine engineer' }) }, calls, ships);
     const out = await snap(on(deps), { ...input, vectors: { query: terceiro } });
     expect(out).toMatchObject({ decision: 'chosen', token: 'pos:marine-engineer' });
     expect(calls.map((c) => c.op)).toEqual(['work-pivot', 'work-adjudicate']);

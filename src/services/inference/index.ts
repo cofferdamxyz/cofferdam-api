@@ -101,15 +101,20 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   'work-intent': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_INTENT_MODEL', timeoutMs: 15_000 },
   // The token registry (S3, decision 0018): embeddings for retrieve-then-choose
   // (bge-m3 answered two short labels in 0.7 s from the Mac), Clef's choice
-  // in the τ band, and the English pivot of a new token (free text by nature,
-  // JSON mode, validated as a pivot). The index pins its embedding model:
+  // in the τ band, and the pivot, the fallback that reads a string Clef left
+  // (free text by nature, validated as a pivot). The index pins its embedding model:
   // a change of `work-embed` is a re-embed migration, never a quiet swap.
+  // The pivot is DeepSeek V4.1 Flash since the founder's rulings of 2026-10-31 ("a few cents is not worth if the
+  // profile is wrong", then the cheapest setting that reads as well): reasoning off, shown the nearest candidates and a
+  // second list by the English title's words, it read 33 of the 39 locale cases right in a median 3.8 s, 28 s at most;
+  // low and high reasoning read no better and timed out more (`work/registry.ts` `PIVOT_EFFORT`, `fallbackFind`).
+  // WORK_PIVOT_MODEL set to llama-3.3-70b gives back the JSON-mode naming without candidates.
   // Since the v2 switch (2026-10-30, workspace decision 0068): EmbeddingGemma 2's LiteRT-LM file, the indexes' generation,
   // which only the phone runs (`work/registry.ts` EMBEDDINGGEMMA_2_LITERT, `CLIENT_EMBED_MODELS`). The default matches
   // the var, so a dropped WORK_EMBED_MODEL never sends bge-m3's 1,024 dimensions at a 768-dimension index.
   'work-embed': { model: 'litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm', envVar: 'WORK_EMBED_MODEL', timeoutMs: 10_000 },
   'work-adjudicate': { model: '@cf/cloudflare/clef-flash', envVar: 'WORK_ADJUDICATE_MODEL', timeoutMs: 6_000 },
-  'work-pivot': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 15_000 },
+  'work-pivot': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 20_000 },
   // The finalist decision (S8, workspace decision 0069): Clef, not flash, as the founder ruled on 2026-10-28.
   'work-decide': { model: '@cf/cloudflare/clef', envVar: 'WORK_DECIDE_MODEL', timeoutMs: 8_000 },
   // The whole-CV parse (`POST /v1/work/parse`, decision 0021): DeepSeek V4.1 Flash alone, the founder's pin of 2026-10-28

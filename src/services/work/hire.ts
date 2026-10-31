@@ -25,7 +25,14 @@
  *  3. The registry's nearest occupations and skills to the task, and a
  *     second Clef call: a yes or no per token on whether the job needs it.
  *     Those that pass the floor are the job's needs; a call that answers none
- *     of them stops the plan (fail closed). When a skill passes but no
+ *     of them stops the plan (fail closed). When no occupation passes, the
+ *     pivot reads the whole request with its language and region and the
+ *     nearest occupations (`registry.ts` `requestFallback`, DeepSeek with
+ *     reasoning off, the founder's rulings of 2026-10-31) and names the one it
+ *     asks for, and one more Clef call asks whether the job needs it, unless
+ *     Clef rated that token already: a Brazilian
+ *     "encanador" is near no ESCO label, whose Portuguese is Portugal's
+ *     "canalizador". It never mints a token. When a skill passes but no
  *     occupation does, the occupation Clef rated highest is kept at
  *     `NEED_OCCUPATION_FLOOR` or more (decision 0069), and the needed
  *     occupations bring their ISCO-08 unit groups (`isco:7126`): together the
@@ -57,7 +64,7 @@ import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fie
 import { INTENT_MAX_CHARS, parseIntent, type IntentFields } from './intent.js';
 import { REGION, type Scope } from './listings.js';
 import { checkRing, MAX_REGIONS, recall, type RecallDeps, type RecallIntent, type RecallOutcome, type SearchRing } from './recall.js';
-import { candidatesFor, embedTexts, snap, type RegistryDeps } from './registry.js';
+import { candidatesFor, embedTexts, requestFallback, snap, type Candidate, type RegistryDeps } from './registry.js';
 
 /** The smallest contract (work-wallet.md, Fees): a $1 fee is 2 % of it. */
 export const MIN_BUDGET_USD = 50;
@@ -191,9 +198,11 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
     taskVector = embedding.vectors[0]!;
   }
   const near: NeedCandidate[] = [];
+  const nearOccupations: Candidate[] = [];
   for (const kind of ['pos', 'skill'] as const) {
-    const found = await candidatesFor(deps.registry, kind, taskVector);
-    for (const c of found.slice(0, NEED_CANDIDATES[kind])) near.push({ token: c.token, label: c.labelEn, kind });
+    const found = (await candidatesFor(deps.registry, kind, taskVector)).slice(0, NEED_CANDIDATES[kind]);
+    if (kind === 'pos') nearOccupations.push(...found);
+    for (const c of found) near.push({ token: c.token, label: c.labelEn, kind });
   }
   const answer = near.length ? await ask(needQuestions(near)) : {};
   if (answer == null) return { ok: false, error: 'classification_failed', calls };
@@ -206,6 +215,23 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
   const rated = read.filter((n): n is { token: string; label: string; p: number } => n.p != null);
   const isOccupation = (n: { token: string }) => n.token.startsWith('pos:');
   const passed = rated.filter((n) => n.p >= NEED_FLOOR).sort((a, b) => b.p - a.p);
+  // The fallback (the founder's ruling of 2026-10-31): with no occupation over the floor, the pivot reads the whole
+  // request with its language and region and the nearest occupations, and names the one it asks for. A Brazilian
+  // "encanador" is near no ESCO label (Portugal's word is "canalizador"), so the nearest are electricians and fitters.
+  // Clef is asked once more whether the job needs the token it names; it never mints, and never becomes an alias.
+  if (!passed.some(isOccupation)) {
+    const fallback = await requestFallback(deps.registry, { request: sentence, lang: req.lang, region: req.regions[0], candidates: nearOccupations });
+    calls.push(...fallback.calls);
+    const named = fallback.token;
+    // Clef is asked only about a token it has not rated: one it rated under the floor keeps that answer, never a second roll.
+    if (named?.kind === 'pos' && !rated.some((n) => n.token === named.token)) {
+      const again = await ask(needQuestions([{ token: named.token, label: named.labelEn, kind: 'pos' }]));
+      const p = again == null ? null : readNoul(again, 'need_0');
+      if (again != null && p == null) unanswered();
+      if (p != null && p >= NEED_FLOOR) passed.push({ token: named.token, label: named.labelEn, p });
+      passed.sort((a, b) => b.p - a.p);
+    }
+  }
   // An occupation is kept (decision 0069): the best Clef rated, when a skill passed the floor and no occupation did. It widens
   // the gate only; with nothing over the floor the gate stays open, as it always was.
   const kept =

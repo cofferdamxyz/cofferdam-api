@@ -31,7 +31,7 @@
     { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-tx", "raw": "Instructor", "right": [], "none": true, "wrong": ["pos:air-force-officer"] },
     { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-tx", "raw": "Coach", "right": ["pos:sports-coach"], "none": true, "wrong": ["pos:life-coach"] },
     { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-fl", "raw": "Valet", "right": ["pos:parking-valet"], "none": true, "wrong": ["pos:room-attendant"] },
-    { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-ca", "raw": "Compositor", "right": ["pos:typesetter", "pos:digital-artist"], "none": true, "wrong": ["pos:composer"] },
+    { "group": "false friend", "kind": "pos", "lang": "en", "market": "us-ca", "raw": "Compositor", "right": ["pos:typesetter", "pos:digital-artist", "pos:desktop-publisher"], "none": true, "wrong": ["pos:composer"] },
     { "group": "false friend", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Instrutor", "right": [], "none": true, "wrong": ["pos:air-force-officer"] },
     { "group": "generic name", "kind": "pos", "lang": "pt", "market": "br-sp", "raw": "Professora", "right": ["pos:primary-school-teacher", "pos:secondary-school-teacher", "pos:early-years-teacher"], "none": true, "wrong": ["pos:politics-lecturer"] },
     { "group": "generic name", "kind": "pos", "lang": "es", "market": "mx-cmx", "raw": "Maestra", "right": ["pos:primary-school-teacher", "pos:secondary-school-teacher", "pos:early-years-teacher"], "none": true, "wrong": ["pos:politics-lecturer"] },

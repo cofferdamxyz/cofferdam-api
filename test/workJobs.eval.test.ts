@@ -98,12 +98,12 @@ import { createInference, type Inference } from '../src/services/inference/index
 import { BLOCK_MAX_CHARS, checkBlock, scanText, type BlockLang, type DeidentifiedBlock } from '../src/services/work/blocks.js';
 import { adjudicationState } from '../src/services/work/clef.js';
 import { extractBlock } from '../src/services/work/executor.js';
-import { list, readFieldsAnswer, str, type WorkCall } from '../src/services/work/fields.js';
+import { list, str, type WorkCall } from '../src/services/work/fields.js';
 import { hirerQuery, type HireDeps } from '../src/services/work/hire.js';
 import { claimKey, D1ListingStore, listingText, publishListing, type ClaimVectors, type ListingDraft, type PublishDeps } from '../src/services/work/listings.js';
 import { callCostMicroUsd } from '../src/services/work/meter.js';
 import { tier2FloorFor } from '../src/services/work/recall.js';
-import { DEFAULT_TAU_BY_MODEL, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, labelLangs, labelNorm, PIVOT_FIELDS, tauFor, validPivot, type RegistryDeps, type SnapRecord, type TokenKind, type VectorIndex } from '../src/services/work/registry.js';
+import { DEFAULT_TAU_BY_MODEL, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, labelLangs, labelNorm, readPivot, tauFor, type RegistryDeps, type SnapRecord, type TokenKind, type VectorIndex } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
 import { memoryIndex } from './fixtures/work/fakes.js';
 import {
@@ -572,12 +572,17 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
           // (`withBandRetries`); one that fails three times fails in the registry too. Answers are paired with the snap that
           // asked by when the call started, retries left out.
           const startedAt = Date.now();
+          // The string a call is about: the band state alone, without the candidates the pivot's reading lists after it.
+          const stateOf = (request: Record<string, unknown>): unknown => {
+            const user = (request.messages as { role: string; content: string }[] | undefined)?.find((m) => m.role === 'user')?.content;
+            return typeof user === 'string' ? user.split('\n\n')[0] : request;
+          };
           const result = await withBandRetries(
             op,
             call,
             () => seam.run(op, sent, call),
             (error, final) => {
-              if (final) failures.push({ phase, startedAt, op, key: bandKey(sent), error });
+              if (final) failures.push({ phase, startedAt, op, key: bandKey(stateOf(sent)), error });
               else {
                 retried[phase]++;
                 retryErrors.set(error, (retryErrors.get(error) ?? 0) + 1);
@@ -593,9 +598,8 @@ describe.skipIf(!RUN)('the Work pipeline on real vacancies (opt-in, from the Mac
             clefLog.push({ phase, startedAt, head: stateLines[0] ?? '', raw: stateLines[stateLines.length - 1] ?? '', key: bandKey(sent.state), entries: { ...criteria }, choice: typeof a?.choice === 'string' ? a.choice : null, probabilities });
           }
           if (op === 'work-pivot') {
-            const read = readFieldsAnswer(pivotModel, PIVOT_FIELDS, result);
-            const english = read.ok ? read.fields.english?.value : null;
-            pivots.push({ phase, startedAt, key: bandKey(sent), english: typeof english === 'string' ? validPivot(english) : null });
+            // On DeepSeek's reading as on llama's JSON mode (the fallback of 2026-10-31): the name, already a valid pivot.
+            pivots.push({ phase, startedAt, key: bandKey(stateOf(sent)), english: readPivot(pivotModel, result)?.english ?? null });
           }
           return result;
         },

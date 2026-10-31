@@ -571,13 +571,19 @@ async function v2Replica(texts: readonly string[]) {
   return { replica, index, fresh, vectorsOf };
 }
 
-/** The live inference seam under the v2 embedder: the snaps read the phone's vectors, so only Clef and the pivot are hosted calls. */
-function v2Inference(): Inference {
+/**
+ * The live inference seam under the v2 embedder: the snaps read the phone's vectors, so only Clef and the pivot are
+ * hosted calls. `pivot` pins `work-pivot` to another model than production's (DeepSeek since 2026-10-31).
+ */
+function v2Inference(pivot?: string): Inference {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !apiToken) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
-  return createInference({ WORK_EMBED_MODEL: V2_MODEL }, { ai: createRestAi({ accountId, token: apiToken }) })!;
+  return createInference({ WORK_EMBED_MODEL: V2_MODEL, ...(pivot ? { WORK_PIVOT_MODEL: pivot } : {}) }, { ai: createRestAi({ accountId, token: apiToken }) })!;
 }
+
+/** The pivot the locale arms were defined on: their before arm rewrites its JSON-mode prompt (cofferdam-api 16ab6a8). */
+const LOCALE_ARMS_PIVOT = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 /**
  * The locale run's arms, one registry and one embedding: the hosted requests
@@ -623,7 +629,9 @@ function beforeLocale(op: string, input: Record<string, unknown>, kind: TokenKin
 
 describe.skipIf(!REPLICA)('regional words and false friends in three locale arms on the v2 replica (live Clef and pivot, the phone’s LiteRT-LM embedder)', () => {
   it('snaps each market-tagged string before the locale, with its language only and with its market, and writes the report', async () => {
-    const seam = v2Inference();
+    // The arms measure the locale Clef and the pivot are told, on the llama pivot the before arm rewrites; production's
+    // DeepSeek fallback of 2026-10-31 is measured on its own (workspace decision 0018's change log of that date).
+    const seam = v2Inference(LOCALE_ARMS_PIVOT);
     let arm: Arm = 'market';
     let current: { kind: TokenKind; lang: string } = { kind: 'pos', lang: 'en' };
     const misses: string[] = [];

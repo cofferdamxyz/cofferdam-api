@@ -26,14 +26,18 @@
  *     unmatched; one that answers below its floor is undecided, and the
  *     string may still reach an existing token through the pivot, but never
  *     mints.
- *  3. Before a mint, the JSON-mode model (`work-pivot`) gives the string's
- *     international-English name, the token's pivot. The name goes through
- *     the exact-label shortcut first, over English labels only: a label of
- *     exactly one token (ESCO's alternative labels and a national layer's
- *     titles among them) snaps to that token, and a name several tokens
- *     hold, or none, snaps only to the token whose slug it is. Only then is
- *     a new token minted, `pending`: it snaps from then on, and waits for
- *     review and an `isco:` code.
+ *  3. When nothing matched, the fallback (`work-pivot`; the founder's rulings
+ *     of 2026-10-31: DeepSeek V4.1 Flash, reasoning off) reads the string with
+ *     its locale and the nearest candidates, and picks one, or gives its
+ *     international-English name, or says the words fit several occupations
+ *     (no token). The name snaps through a preferred English label of exactly
+ *     one token, or to the token whose slug it is; never an alternative label
+ *     alone. Otherwise a second call is shown the English labels that share
+ *     the name's words, and may pick one (`fallbackFind`). Only a name no
+ *     English label holds mints a new token, `pending`: it snaps from then
+ *     on, and waits for review and an `isco:` code. On a model that does not
+ *     reason (`WORK_PIVOT_MODEL` on llama), the name is JSON-mode naming with
+ *     no candidates, and any English label of one token takes it, as before.
  *
  * The English pivot in the band (`RegistryDeps.pivotBand`, `WORK_PIVOT_BAND`;
  * workspace decision 0018, amendment proposed 2026-10-30, off until the
@@ -51,7 +55,8 @@
  * floor refuses the name's token as well, so the string stays unmatched: a
  * mint of the name would copy a label the registry already holds. An answer
  * under the floor, or no band, leaves the name to step 3, which reads the
- * same call; a snap asks `work-pivot` once at most.
+ * same call, so the band and step 3's first reading are one call (step 3's
+ * second list, on a reasoning model, may ask once more).
  *
  * The model steps read a string with its locale (`locale.ts`), as context:
  * Clef's band state names its language, and for a worker's occupation or
@@ -88,12 +93,12 @@
  * id is stored with them.
  */
 
-import type { Inference } from '../inference/index.js';
+import { InferenceTimeout, type Inference } from '../inference/index.js';
 import { fold, scanText, type BlockLang } from './blocks.js';
 import { adjudicationQuestions, adjudicationState, clefInput, readChoice, readNoul, type BandEntry } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, fieldsRequest, readFieldsAnswer, usageOrEstimate, withCalls, type FieldSet, type WorkCall } from './fields.js';
-import type { StringLocale } from './locale.js';
+import { labelLocale, languageName, regionName, type StringLocale } from './locale.js';
 
 export const TOKEN_KINDS = ['pos', 'skill', 'cert'] as const;
 export type TokenKind = (typeof TOKEN_KINDS)[number];
@@ -192,7 +197,14 @@ export interface RegistryStore {
    * languages holds it, the tokens that hold it there only as an observed
    * alias are left out.
    */
-  tokensByLabel(norm: string, kind: TokenKind, langs?: readonly string[]): Promise<RegistryToken[]>;
+  tokensByLabel(norm: string, kind: TokenKind, langs?: readonly string[], labelKinds?: readonly LabelKind[]): Promise<RegistryToken[]>;
+  /**
+   * The tokens of the kind whose curated English labels (never an observed alias) hold any of these words as whole
+   * words, the most words first, then the shorter label, with that label: at most `limit`, merges followed. The
+   * fallback's second list, for an English title no label holds whole ("gas station attendant" finds ESCO's "gas
+   * station salesperson").
+   */
+  tokensByLabelWords(words: readonly string[], kind: TokenKind, limit: number): Promise<{ token: RegistryToken; label: string; hits: number }[]>;
   /** The tokens named, merges followed, keyed by the name asked for. */
   tokens(names: string[]): Promise<Map<string, RegistryToken>>;
   /** Insert a token with its labels; false, and nothing written, when the token exists. */
@@ -261,15 +273,17 @@ export class D1RegistryStore implements RegistryStore {
     return out;
   }
 
-  async tokensByLabel(norm: string, kind: TokenKind, langs?: readonly string[]): Promise<RegistryToken[]> {
-    if (langs && !langs.length) return [];
+  async tokensByLabel(norm: string, kind: TokenKind, langs?: readonly string[], labelKinds?: readonly LabelKind[]): Promise<RegistryToken[]> {
+    if ((langs && !langs.length) || (labelKinds && !labelKinds.length)) return [];
     // `observed` is 1 for a token that holds the label, in the languages read, only as an alias a snap observed.
     const { results } = await this.db
       .prepare(
         `SELECT t.token, MIN(l.kind = 'observed') AS observed FROM registry_labels l JOIN registry_tokens t ON t.token = l.token
-         WHERE l.label_norm = ? AND t.kind = ?${langs ? ` AND l.lang IN (${langs.map(() => '?').join(', ')})` : ''} GROUP BY t.token`,
+         WHERE l.label_norm = ? AND t.kind = ?${langs ? ` AND l.lang IN (${langs.map(() => '?').join(', ')})` : ''}${
+           labelKinds ? ` AND l.kind IN (${labelKinds.map(() => '?').join(', ')})` : ''
+         } GROUP BY t.token`,
       )
-      .bind(norm, kind, ...(langs ?? []))
+      .bind(norm, kind, ...(langs ?? []), ...(labelKinds ?? []))
       .all<{ token: string; observed: number }>();
     // A curated label (ESCO's, a national layer's) outranks an observed alias (decision 0066 (4)).
     const curated = results.filter((r) => !r.observed);
@@ -277,6 +291,32 @@ export class D1RegistryStore implements RegistryStore {
     const seen = new Map<string, RegistryToken>();
     for (const t of resolved.values()) seen.set(t.token, t);
     return [...seen.values()];
+  }
+
+  async tokensByLabelWords(words: readonly string[], kind: TokenKind, limit: number): Promise<{ token: RegistryToken; label: string; hits: number }[]> {
+    const unique = [...new Set(words)].filter((w) => /^[\p{L}\p{N}]+$/u.test(w)).slice(0, 6);
+    if (!unique.length || limit < 1) return [];
+    // Whole words of the folded label: the label padded with spaces holds " word ".
+    const like = unique.map(() => `(' ' || l.label_norm || ' ' LIKE ?)`);
+    const { results } = await this.db
+      .prepare(
+        `SELECT l.token, l.label, ${like.join(' + ')} AS hits FROM registry_labels l JOIN registry_tokens t ON t.token = l.token
+         WHERE l.lang = 'en' AND l.kind <> 'observed' AND t.kind = ? AND t.status <> 'merged' AND (${like.join(' OR ')})
+         ORDER BY hits DESC, length(l.label) ASC, l.label ASC, l.token ASC LIMIT ?`,
+      )
+      .bind(...unique.map((w) => `% ${w} %`), kind, ...unique.map((w) => `% ${w} %`), limit * 20)
+      .all<{ token: string; label: string; hits: number }>();
+    // The best label of each token, in the order found, then the tokens live, merges followed.
+    const best = new Map<string, { label: string; hits: number }>();
+    for (const r of results) if (!best.has(r.token)) best.set(r.token, { label: r.label, hits: r.hits });
+    const live = await this.tokens([...best.keys()]);
+    const out = new Map<string, { token: RegistryToken; label: string; hits: number }>();
+    for (const [name, b] of best) {
+      const t = live.get(name);
+      if (t && !out.has(t.token)) out.set(t.token, { token: t, ...b });
+      if (out.size >= limit) break;
+    }
+    return [...out.values()];
   }
 
   private labelStatement(l: RegistryLabel, at: number) {
@@ -681,6 +721,10 @@ export interface RegistryDeps {
    * its English name names joins Clef's candidates (the module comment). Off unless true.
    */
   pivotBand?: boolean;
+  /** How hard a reasoning pivot thinks (`PIVOT_EFFORT` unless an evaluation sets another). */
+  pivotEffort?: PivotEffort;
+  /** When the caller needs the fallback's answer by (epoch ms); sooner than `PIVOT_BUDGET_MS` from its start, it wins. */
+  deadline?: number;
   now?: () => number;
   /** A new decision id (default: a random UUID). */
   newId?: () => string;
@@ -710,6 +754,205 @@ export function validPivot(english: string): string | null {
   return PIVOT_OK.test(v) && words <= 6 ? v : null;
 }
 
+// ── The pivot on a reasoning model ─────────────────────────────────────────
+
+/**
+ * The founder's rulings of 2026-10-31: the fallback reads a regional string on
+ * DeepSeek V4.1 Flash, with the context to pick the label, since a wrong
+ * profile costs more than a few cents; then, "maybe we don't need DeepSeek at
+ * highest level for this", the cheapest setting that reads as well. On a model
+ * that reasons (`reasoningPivot`), the pivot reads the string as the worker
+ * who wrote it means it, with its language variant and market, says whether
+ * the words name one occupation (or skill), and, shown the registry's nearest
+ * candidates, picks the one that is this work, or none (`fallbackFind` has the
+ * rest). Measured on the 39 locale cases on the v2 replica, the whole fallback
+ * two strings at a time: 33 right with reasoning off (a median 3.8 s, 28 s at
+ * most, $0.00012 a string), 29 at low and 30 at high, which time out and meet
+ * the rate limit more often (a median 5 s, up to 48 s).
+ */
+export type PivotEffort = 'none' | 'low' | 'high';
+export const PIVOT_EFFORT: PivotEffort = 'none';
+/** The answer's room at each effort, the thinking included (`jobProfile.ts` measured the same model). */
+const PIVOT_MAX_OUT: Record<PivotEffort, number> = { none: 1_500, low: 6_000, high: 16_000 };
+/** How many English labels sharing the title's words the fallback's second list shows. */
+export const WORD_CANDIDATES = 8;
+/** Waits before another try when Workers AI refuses a pivot call for its rate (429, capacity). */
+const PIVOT_RETRY_MS = [2_000, 5_000];
+/**
+ * The whole fallback's time, its calls and their tries together, unless the caller's `RegistryDeps.deadline` is
+ * sooner: a listing publish stops starting snaps at 30 s so that it answers the phone within 60 s (`listings.ts`), and
+ * a snap started then, after a Clef call of up to 6 s, still ends by about 54 s.
+ */
+export const PIVOT_BUDGET_MS = 18_000;
+/** One pivot call's longest wait, as the op pins it (`inference/index.ts` `work-pivot`), however much time is left. */
+const PIVOT_CALL_MS = 20_000;
+/** The least time left for the fallback's second call to be asked at all. */
+const SECOND_CALL_MIN_MS = 5_000;
+const rateLimited = (err: unknown) => /\b429\b|rate limit|per min|capacity|\b3040\b/i.test(err instanceof Error ? err.message : String(err));
+
+/** Whether the pivot's model reasons before it answers, and so takes the reading request. */
+export const reasoningPivot = (model: string): boolean => model.startsWith('@cf/deepseek-ai/') || /gpt-oss/.test(model);
+
+/** What the pivot reads: a worker's title or skill (the snap's string), or a hirer's whole request (`requestFallback`). */
+export type PivotSubject = 'title' | 'request';
+
+const READING_SYSTEM: Record<'pos' | 'skill', string> = {
+  pos: [
+    'You read job titles as the worker who wrote them means them. Given a job title, the language variant it is written in and the country of the worker, answer only with JSON.',
+    'Regional and colloquial words keep the meaning they have in that country, which can differ from the same word elsewhere ("Pedreiro" in Brazil is a bricklayer).',
+    '',
+    'Fields:',
+    '- english: the job title an English-speaking employer would write for this work, singular and in lower case, without rank, grade, employer or place.',
+    '- duties: one short English sentence on what this worker does.',
+    '- specific: true when the title alone names one occupation; false when it fits several different occupations (a bare "assistant").',
+  ].join('\n'),
+  skill: [
+    'You read skills as the worker who wrote them means them. Given a skill, the language variant it is written in and the country of the worker, answer only with JSON.',
+    'Regional and colloquial words keep the meaning they have in that country, which can differ from the same word elsewhere.',
+    '',
+    'Fields:',
+    '- english: the plain international English name of the skill, in lower case ("soldagem TIG" is "tig welding").',
+    '- duties: one short English sentence on what someone with this skill does.',
+    '- specific: true when the words name one skill; false when they fit several different skills.',
+  ].join('\n'),
+};
+const REQUEST_SYSTEM = [
+  'You read requests for work as the person who wrote them means them. Given a request, the language variant it is written in and the country, answer only with JSON about the one occupation the request asks for.',
+  'Regional and colloquial words keep the meaning they have in that country, which can differ from the same word elsewhere ("Pedreiro" in Brazil is a bricklayer).',
+  '',
+  'Fields:',
+  '- english: the job title an English-speaking employer would write for this work, singular and in lower case, without rank, grade, employer or place.',
+  '- duties: one short English sentence on what this worker does.',
+  '- specific: true when the request names one occupation; false when it fits several different occupations or names none.',
+].join('\n');
+const CHOICE_FIELD: Record<PivotSubject, Record<'pos' | 'skill', string>> = {
+  title: {
+    pos: '- choice: the key of the listed occupation that is this work as the worker means it, or "none" when none of them is; a listed occupation that only shares a word with the title is not it.',
+    skill: '- choice: the key of the listed skill that is this skill as the worker means it, or "none" when none of them is; a listed skill that only shares a word with it is not it.',
+  },
+  request: {
+    pos: '- choice: the key of the listed occupation the request asks for, or "none" when none of them is.',
+    skill: '- choice: the key of the listed skill the request asks for, or "none" when none of them is.',
+  },
+};
+
+/** A candidate as the pivot is shown it, in the band's words: "plumber (matched "Canalizador", Portuguese)". */
+const entryLine = (e: BandEntry, i: number) => {
+  const where = labelLocale(e.matchedLang, e.matchedRegion);
+  return `- c${i}: ${e.labelEn} (matched "${e.matched}"${where ? `, ${where}` : ''})`;
+};
+
+/** A hirer's request with its locale, as the pivot reads it (the job profile's words, `jobProfile.ts` `postedIn`). */
+export function requestPivotState(text: string, lang: string, region?: string | null): string {
+  return `A request for work written in ${languageName(lang, region)}${region ? ` by someone hiring in ${regionName(region)}` : ''}:\n${text}`;
+}
+
+/**
+ * The pivot's request on the pinned model: on a reasoning model, the reading
+ * (the OpenAI JSON-schema wrapper, as `jobProfile.ts` asks DeepSeek, at
+ * `PIVOT_EFFORT`), the nearest candidates listed by key when there are any;
+ * on any other model, today's JSON-mode naming, which reads no candidate.
+ */
+export function pivotRequest(
+  model: string,
+  kind: 'pos' | 'skill',
+  state: string,
+  raw: string,
+  entries: readonly BandEntry[] = [],
+  subject: PivotSubject = 'title',
+  effort: PivotEffort = PIVOT_EFFORT,
+  heading?: string,
+): Record<string, unknown> {
+  if (!reasoningPivot(model)) return fieldsRequest(model, PIVOT_FIELDS, { name: 'pivot', system: PIVOT_SYSTEM[kind], user: state, state: raw });
+  const keys = entries.map((_, i) => `c${i}`);
+  const system = subject === 'request' ? REQUEST_SYSTEM : READING_SYSTEM[kind];
+  const listed = heading ?? `The registry's nearest ${kind === 'pos' ? 'occupations' : 'skills'}`;
+  const schema = {
+    type: 'object',
+    properties: {
+      english: { type: 'string' },
+      duties: { type: 'string' },
+      specific: { type: 'boolean' },
+      ...(keys.length ? { choice: { type: 'string', enum: [...keys, 'none'] } } : {}),
+    },
+    required: ['english', 'duties', 'specific', ...(keys.length ? ['choice'] : [])],
+    additionalProperties: false,
+  };
+  return {
+    messages: [
+      { role: 'system', content: keys.length ? `${system}\n${CHOICE_FIELD[subject][kind]}` : system },
+      { role: 'user', content: keys.length ? `${state}\n\n${listed}:\n${entries.map(entryLine).join('\n')}` : state },
+    ],
+    response_format: { type: 'json_schema', json_schema: { name: 'pivot', schema, strict: true } },
+    // Reasoning off reads at temperature 0, as `jobProfile.ts` asks the same model; gpt-oss cannot turn it off.
+    ...(model.startsWith('@cf/deepseek-ai/')
+      ? { reasoning_effort: effort, max_completion_tokens: PIVOT_MAX_OUT[effort], ...(effort === 'none' ? { temperature: 0 } : {}) }
+      : { reasoning_effort: effort === 'none' ? 'low' : effort, max_tokens: PIVOT_MAX_OUT[effort === 'none' ? 'low' : effort] }),
+  };
+}
+
+/**
+ * One pivot call before `deadline`, its timeout the time left, tried again when Workers AI refuses it for its rate
+ * while a try still fits; never after the caller cancelled it.
+ */
+async function runPivot(deps: RegistryDeps, req: Record<string, unknown>, deadline: number, signal?: AbortSignal): Promise<unknown> {
+  const now = deps.now ?? Date.now;
+  for (let attempt = 0; ; attempt++) {
+    const left = deadline - now();
+    if (left < 1_000) throw new InferenceTimeout('work-pivot', Math.max(0, left));
+    try {
+      return await deps.inference.run('work-pivot', req, { timeoutMs: Math.min(left, PIVOT_CALL_MS), ...(signal ? { signal } : {}) });
+    } catch (err) {
+      const wait = PIVOT_RETRY_MS[attempt];
+      if (signal?.aborted || wait === undefined || !rateLimited(err) || now() + wait + 1_000 > deadline) throw err;
+      deps.log?.({ event: 'work_pivot_retried', reason: 'rate_limited', attempt: attempt + 1 });
+      await new Promise((r) => setTimeout(r, wait));
+      if (signal?.aborted) throw err;
+    }
+  }
+}
+
+/** What the pivot read: its English name (none when it named nothing valid, or said the words fit several), and the candidate it chose. */
+export interface PivotReading {
+  english: string | null;
+  choice: BandEntry | null;
+}
+
+/**
+ * An answer's JSON object in any of Workers AI's shapes, as `parse.ts` `resultObject` reads one (the message content
+ * first, a code fence stripped, never an array), kept here so the registry imports nothing of the chat.
+ */
+function answerObject(result: unknown): Record<string, unknown> | null {
+  const r = (result ?? {}) as { choices?: { message?: { content?: unknown } }[]; response?: unknown };
+  let v: unknown = r.choices?.[0]?.message?.content ?? r.response;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
+    } catch {
+      return null;
+    }
+  }
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/**
+ * The pivot's answer, or null out of shape. A choice names a candidate it was shown, by key; words the pivot says fit
+ * several occupations name none and choose none, so a generic word never becomes a candidate's alias.
+ */
+export function readPivot(model: string, result: unknown, entries: readonly BandEntry[] = []): PivotReading | null {
+  if (!reasoningPivot(model)) {
+    const read = readFieldsAnswer(model, PIVOT_FIELDS, result);
+    return read.ok ? { english: typeof read.fields.english?.value === 'string' ? validPivot(read.fields.english.value) : null, choice: null } : null;
+  }
+  const a = answerObject(result);
+  if (!a) return null;
+  if (a.specific === false) return { english: null, choice: null };
+  const key = typeof a.choice === 'string' ? /^c(\d+)$/.exec(a.choice) : null;
+  const choice = key ? (entries[Number(key[1])] ?? null) : null;
+  const english = typeof a.english === 'string' ? validPivot(a.english) : null;
+  return { english, choice };
+}
+
 /**
  * A snap's English pivot (`work-pivot`): one call at most, started before the band (in parallel with the embedding)
  * or when step 3 needs the name, and read once. A call started and never read (a τ_auto take, a failed embedding, a
@@ -717,45 +960,52 @@ export function validPivot(english: string): string | null {
  * its estimated input, as any call that ends without an answer is.
  */
 class PivotAsk {
-  private done: Promise<{ english: string | null; call: WorkCall }> | null = null;
+  private done: Promise<{ reading: PivotReading; call: WorkCall }> | null = null;
   /** The call once it ended, read or not. */
-  private ended: { english: string | null; call: WorkCall } | null = null;
-  private read: Promise<string | null> | null = null;
+  private ended: { reading: PivotReading; call: WorkCall } | null = null;
+  private read: Promise<PivotReading> | null = null;
   private cancel: (() => WorkCall) | null = null;
+  /** When the fallback must have answered: `PIVOT_BUDGET_MS` from the first call's start, or the caller's sooner deadline. */
+  deadline = Infinity;
 
   constructor(
     private readonly deps: RegistryDeps,
     private readonly calls: WorkCall[],
   ) {}
 
-  /** Starts the call, unless it has started. */
-  async start(kind: 'pos' | 'skill', raw: string, locale: StringLocale): Promise<void> {
+  /**
+   * Starts the call, unless it has started. Its message is Clef's band state, the string with its locale, or a
+   * hirer's whole request with its own; on a reasoning model, with the nearest candidates to choose from when there
+   * are any (none for the band's early call, which runs before the search).
+   */
+  async start(kind: 'pos' | 'skill', state: string, raw: string, entries: readonly BandEntry[] = [], subject: PivotSubject = 'title'): Promise<void> {
     if (this.done) return;
     const deps = this.deps;
     const now = deps.now ?? Date.now;
     const model = await deps.inference.model('work-pivot');
     if (this.done) return;
     const t0 = now();
-    // The pivot is free text by nature, so it never reads a field back as a span:
-    // the request is JSON mode, and its one answer is validated as a pivot. Its
-    // message is Clef's band state: the string with its locale.
-    const req = fieldsRequest(model, PIVOT_FIELDS, { name: 'pivot', system: PIVOT_SYSTEM[kind], user: adjudicationState(kind, raw, locale), state: raw });
+    this.deadline = Math.min(t0 + PIVOT_BUDGET_MS, deps.deadline ?? Infinity);
+    // The pivot is free text by nature, so it never reads a field back as a span: its answer is validated as a pivot,
+    // and a choice is read only as a key of the candidates it was shown.
+    const req = pivotRequest(model, kind, state, raw, entries, subject, deps.pivotEffort);
     const ctl = new AbortController();
     const unanswered = (): WorkCall => ({ op: 'work-pivot', model, ok: false, ms: now() - t0, usage: estimatedUsage(req) });
+    const nothing: PivotReading = { english: null, choice: null };
     this.cancel = () => {
       ctl.abort();
       return unanswered();
     };
     this.done = (async () => {
       try {
-        const result = await deps.inference.run('work-pivot', req, { signal: ctl.signal });
-        const read = readFieldsAnswer(model, PIVOT_FIELDS, result);
-        const call: WorkCall = { op: 'work-pivot', model, ok: read.ok, ms: now() - t0, usage: usageOrEstimate(result, req) };
-        return { english: read.ok && typeof read.fields.english?.value === 'string' ? validPivot(read.fields.english.value) : null, call };
+        const result = await runPivot(deps, req, this.deadline, ctl.signal);
+        const read = readPivot(model, result, entries);
+        const call: WorkCall = { op: 'work-pivot', model, ok: read !== null, ms: now() - t0, usage: usageOrEstimate(result, req) };
+        return { reading: read ?? nothing, call };
       } catch (err) {
         // A call the snap cancelled is no failure of the model's.
         if (!ctl.signal.aborted) deps.log?.({ event: 'work_pivot_failed', model, reason: failureCode(err) });
-        return { english: null, call: unanswered() };
+        return { reading: nothing, call: unanswered() };
       }
     })();
     void this.done.then((r) => {
@@ -763,21 +1013,26 @@ class PivotAsk {
     });
   }
 
-  /** The English name, once the started call ends: null when none started, or when it failed or named nothing valid. Its call joins the snap's calls once. */
-  english(): Promise<string | null> {
-    if (!this.done) return Promise.resolve(null);
-    this.read ??= this.done.then(({ english, call }) => {
+  /** What the started call read, once it ends: nothing when none started, or when it failed. Its call joins the snap's calls once. */
+  reading(): Promise<PivotReading> {
+    if (!this.done) return Promise.resolve({ english: null, choice: null });
+    this.read ??= this.done.then(({ reading, call }) => {
       this.calls.push(call);
-      return english;
+      return reading;
     });
     return this.read;
+  }
+
+  /** The English name alone, as the band reads it: null when none started, or when it failed or named nothing valid. */
+  async english(): Promise<string | null> {
+    return (await this.reading()).english;
   }
 
   /** Meters a started call no step read: as it ended, or, still running, cancelled. */
   settle(): void {
     if (!this.cancel || this.read) return;
     this.calls.push(this.ended ? this.ended.call : this.cancel());
-    this.read = Promise.resolve(null);
+    this.read = Promise.resolve({ english: null, choice: null });
   }
 }
 
@@ -789,11 +1044,136 @@ class PivotAsk {
  * "instructor" to its air force officer). A label several tokens hold ("electrician", which ESCO also gives three
  * other occupations) leaves the choice to the slug.
  */
-async function pivotToken(store: RegistryStore, kind: TokenKind, english: string): Promise<RegistryToken | null> {
-  const named = await store.tokensByLabel(labelNorm(english), kind, ['en']);
+async function pivotToken(store: RegistryStore, kind: TokenKind, english: string, labelKinds?: readonly LabelKind[]): Promise<RegistryToken | null> {
+  const named = await store.tokensByLabel(labelNorm(english), kind, ['en'], labelKinds);
   if (named.length === 1) return named[0]!;
   const slug = tokenOf(kind, english);
   return (await store.tokens([slug])).get(slug) ?? null;
+}
+
+/** Words an English title shares with too many labels to tell them apart. */
+const STOP_WORDS = new Set(['and', 'the', 'for', 'with', 'from']);
+
+/**
+ * What the fallback found for a string: the token and how (a candidate chosen, the title's own token, a candidate of
+ * the second list), and the English title; `unsure` when no token was found and a mint of the title is not safe: an
+ * English label of the registry holds it (a mint would copy it), or the second list was found but not asked (too
+ * little time) or not answered (a failed call), so a label it holds may still be the one. The string then stays
+ * unmatched, and snaps again at its next publish.
+ */
+export interface FallbackFind {
+  token: RegistryToken | null;
+  english: string | null;
+  via: 'choice' | 'title' | 'words' | null;
+  unsure?: true;
+}
+
+/** One more pivot call (`fallbackFind`'s second list): its reading, or null when it failed; its call metered either way. */
+async function askPivot(
+  deps: RegistryDeps,
+  calls: WorkCall[],
+  kind: 'pos' | 'skill',
+  state: string,
+  raw: string,
+  entries: readonly BandEntry[],
+  subject: PivotSubject,
+  heading: string,
+  deadline: number,
+): Promise<PivotReading | null> {
+  const now = deps.now ?? Date.now;
+  const model = await deps.inference.model('work-pivot');
+  const req = pivotRequest(model, kind, state, raw, entries, subject, deps.pivotEffort, heading);
+  const t0 = now();
+  try {
+    const result = await runPivot(deps, req, deadline);
+    const read = readPivot(model, result, entries);
+    calls.push({ op: 'work-pivot', model, ok: read !== null, ms: now() - t0, usage: usageOrEstimate(result, req) });
+    return read;
+  } catch (err) {
+    calls.push({ op: 'work-pivot', model, ok: false, ms: now() - t0, usage: estimatedUsage(req) });
+    deps.log?.({ event: 'work_pivot_failed', model, reason: failureCode(err) });
+    return null;
+  }
+}
+
+/**
+ * The fallback after the pivot's first reading (the founder's rulings of 2026-10-31): a candidate it chose; else, on
+ * a reasoning model, the English title's own token, through a preferred English label of one token or the token of
+ * its slug, never an alternative label alone ("teacher" is one of the politics lecturer's, OD-28); else the English
+ * labels that share the title's words, shown in a second call that may choose one ("gas station attendant" finds
+ * ESCO's "gas station salesperson", since the plane embeds no text under v2), asked only while `deadline` leaves it
+ * time. On any other model the title goes through any English label, as before. Nothing here mints or keeps an
+ * alias: the caller does.
+ */
+async function fallbackFind(
+  deps: RegistryDeps,
+  calls: WorkCall[],
+  kind: 'pos' | 'skill',
+  state: string,
+  raw: string,
+  _shown: readonly BandEntry[],
+  reading: PivotReading,
+  subject: PivotSubject,
+  deadline: number,
+): Promise<FallbackFind> {
+  const live = async (token: string) => (await deps.store.tokens([token])).get(token) ?? null;
+  const { english, choice } = reading;
+  if (choice) return { token: await live(choice.token), english, via: 'choice' };
+  if (!english) return { token: null, english: null, via: null };
+  if (!reasoningPivot(await deps.inference.model('work-pivot'))) return { token: await pivotToken(deps.store, kind, english), english, via: 'title' };
+  const own = await pivotToken(deps.store, kind, english, ['preferred']);
+  if (own) return { token: own, english, via: 'title' };
+  // A title another label holds (an alternative label, a hidden one) is no new token's to take: a mint would copy it.
+  const held = (await deps.store.tokensByLabel(labelNorm(english), kind, ['en'])).length > 0;
+  const words = labelNorm(english)
+    .split(' ')
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+  // A token the first list showed comes back when a label of it shares the title's words: that label is news.
+  const found = await deps.store.tokensByLabelWords(words, kind, WORD_CANDIDATES);
+  if (!found.length) return { token: null, english, via: null, ...(held ? { unsure: true } : {}) };
+  // A second list found but not asked in time is no answer: a label it holds may be the one, so nothing mints.
+  if (deadline - (deps.now ?? Date.now)() < SECOND_CALL_MIN_MS) return { token: null, english, via: null, unsure: true };
+  const entries: BandEntry[] = found.map((f) => ({ token: f.token.token, labelEn: f.token.labelEn, matched: f.label, matchedLang: 'en' }));
+  const heading = `The registry's ${kind === 'pos' ? 'occupations' : 'skills'} whose English labels share words with "${english}"`;
+  const second = await askPivot(deps, calls, kind, state, raw, entries, subject, heading, deadline);
+  if (second?.choice) return { token: await live(second.choice.token), english, via: 'words' };
+  // A failed second call is no answer either; a clean none leaves a title no label holds free to mint.
+  return { token: null, english, via: null, ...(held || second === null ? { unsure: true } : {}) };
+}
+
+/**
+ * The fallback alone, for a worker's string and its nearest candidates as step 3 reads them, without minting,
+ * keeping an alias or recording a decision: for evaluations.
+ */
+export async function pivotFallback(
+  deps: RegistryDeps,
+  input: { kind: 'pos' | 'skill'; raw: string; locale: StringLocale; candidates: readonly BandEntry[] },
+): Promise<FallbackFind & { calls: WorkCall[] }> {
+  return withCalls(async (calls) => {
+    const pivot = new PivotAsk(deps, calls);
+    const state = adjudicationState(input.kind, input.raw, input.locale);
+    await pivot.start(input.kind, state, input.raw, input.candidates);
+    return { ...(await fallbackFind(deps, calls, input.kind, state, input.raw, input.candidates, await pivot.reading(), 'title', pivot.deadline)), calls };
+  });
+}
+
+/**
+ * The fallback for a hirer's request whose needs passed no occupation (`hire.ts` step 3; the founder's ruling of
+ * 2026-10-31): the pivot reads the whole request with its language and region, shown the nearest occupations, and
+ * names the one it asks for, found as step 3 finds a worker's (`fallbackFind`). It never mints, and a hirer's words
+ * never become an alias. A store or index failure throws a `WorkCallsError` carrying the pivot's calls.
+ */
+export async function requestFallback(
+  deps: RegistryDeps,
+  input: { request: string; lang: string; region?: string | null; candidates: readonly BandEntry[] },
+): Promise<{ token: RegistryToken | null; english: string | null; calls: WorkCall[] }> {
+  return withCalls(async (calls) => {
+    const pivot = new PivotAsk(deps, calls);
+    const state = requestPivotState(input.request, input.lang, input.region);
+    await pivot.start('pos', state, input.request, input.candidates, 'request');
+    const found = await fallbackFind(deps, calls, 'pos', state, input.request, input.candidates, await pivot.reading(), 'request', pivot.deadline);
+    return { token: found.token, english: found.english, calls };
+  });
 }
 
 /**
@@ -916,7 +1296,7 @@ async function snapSteps(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]
   if (!input.vectors?.query && CLIENT_EMBED_MODELS.has(embedModel)) return result({ decision: 'unmatched', ...none });
   // The English pivot in the band: a worker's Portuguese or Spanish occupation or skill asks for its English name now,
   // so the call runs while the string is embedded and the index searched (a certificate and a hirer's words never ask).
-  if (deps.pivotBand && (input.lang === 'pt' || input.lang === 'es') && kind !== 'cert' && input.mint !== false) await pivot.start(kind, raw, locale);
+  if (deps.pivotBand && (input.lang === 'pt' || input.lang === 'es') && kind !== 'cert' && input.mint !== false) await pivot.start(kind, adjudicationState(kind, raw, locale), raw);
   let vector: number[];
   if (input.vectors?.query) vector = input.vectors.query;
   else {
@@ -993,19 +1373,30 @@ async function snapSteps(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]
   // pivot (decision 0070: only a Vault document will mint a certificate); a worker's occupations and skills mint.
   const score = top?.score ?? null;
   if (kind === 'cert' || input.mint === false) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
-  // The band's call when the pivot was in the band (a snap asks once), else one now.
-  await pivot.start(kind, raw, locale);
-  const english = await pivot.english();
-  if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
-  const englishNorm = labelNorm(english);
-  const existing = named !== undefined ? named : await pivotToken(deps.store, kind, english);
-  seen = { english, token: existing?.token ?? null, added: seen?.added ?? false };
-  const token = tokenOf(input.kind, english);
-  if (existing) {
-    await observe(existing.token);
-    return record({ decision: 'pivot', token: existing.token, labelEn: existing.labelEn, specialization: false, score, probability: null, candidates }, clefModel);
+  // The band's call when the pivot was in the band (a snap asks once), else one now: on a reasoning model, the string
+  // read with its locale and the nearest candidates (the founder's ruling of 2026-10-31).
+  const state = adjudicationState(kind, raw, locale);
+  await pivot.start(kind, state, raw, candidates);
+  const reading = await pivot.reading();
+  // With the pivot in the band, Clef was shown the token its name names, and step 3 takes that token as the amendment
+  // has it; otherwise the fallback finds one: a candidate chosen, the title's own token, or one of its second list.
+  const found: FallbackFind =
+    named !== undefined
+      ? { token: reading.english ? named : null, english: reading.english, via: named && reading.english ? 'title' : null }
+      : await fallbackFind(deps, calls, kind, state, raw, candidates, reading, 'title', pivot.deadline);
+  const english = found.english;
+  if (found.token) {
+    seen = { english: english ?? found.token.labelEn, token: found.token.token, added: seen?.added ?? false };
+    await observe(found.token.token);
+    return record({ decision: 'pivot', token: found.token.token, labelEn: found.token.labelEn, specialization: false, score, probability: null, candidates }, clefModel);
   }
-  if (undecided != null) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
+  if (!english) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
+  seen = { english, token: null, added: seen?.added ?? false };
+  const englishNorm = labelNorm(english);
+  const token = tokenOf(input.kind, english);
+  // Nothing mints when Clef was undecided, nor when the fallback is unsure: a title an English label holds, or a second
+  // list it could not ask or read.
+  if (undecided != null || found.unsure) return record({ decision: 'unmatched', ...none, score, probability: undecided, candidates }, clefModel);
   const labels: RegistryLabel[] = [
     { labelId: await labelIdOf(token, 'en', englishNorm), token, lang: 'en', label: english, labelNorm: englishNorm, kind: 'preferred', embedded: false },
   ];

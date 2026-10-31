@@ -380,6 +380,62 @@ describe('one hirer query', () => {
     }
   });
 
+  it('falls back to the pivot when no occupation passes, and asks Clef once more about the token it names (the founder’s ruling of 2026-10-31)', async () => {
+    // As on the v2 replica: the request's trade is near no label (Portugal's word is "canalizador"), so the nearest four
+    // occupations are other trades, and the plumber is not among them.
+    const ENCANADOR = 'Preciso de um bombeiro hidráulico agora na minha casa';
+    const elsewhere = async (w: Awaited<ReturnType<typeof world>>) => {
+      for (const label of ['carpet fitter', 'assayer', 'glazier', 'upholsterer']) {
+        const token = `pos:${label.replace(/ /g, '-')}`;
+        const norm = labelNorm(label);
+        const labelId = await labelIdOf(token, 'en', norm);
+        await w.hire.registry.store.insertToken(
+          { token, kind: 'pos', source: 'seed', labelEn: label, escoUri: null, iscoCode: null, status: 'active', mergedInto: null },
+          [{ labelId, token, lang: 'en', label, labelNorm: norm, kind: 'preferred', embedded: true }],
+          0,
+        );
+        await w.registryIndex.upsert([{ id: labelId, values: keywordVector(label), metadata: { token, kind: 'pos', lang: 'en', label, source: 'seed' } }]);
+      }
+      return w;
+    };
+    const pivotSays = (answer: Record<string, unknown>) => jsonModeResult({ duties: 'fixes pipes', specific: true, choice: 'none', ...answer });
+    /** Clef: safe and on site, no to every nearest candidate, and `again` for the one token the fallback names. */
+    const clefThen = (again: number) => (input: Record<string, unknown>) => {
+      const questions = input.questions as Record<string, { instructions: string }>;
+      const ids = Object.keys(questions);
+      if (ids.length === 1 && ids[0] === 'need_0' && /plumber/.test(questions.need_0!.instructions)) return { answers: { need_0: { type: 'noul', noul: again } }, usage: { input_tokens: 90 } };
+      return clefSays(/nothing here/)(input);
+    };
+    const intent = intentAnswer({ task: 'um bombeiro hidráulico', when: null, budget: null });
+    const calls: FakeCall[] = [];
+    const w = await elsewhere(await world({ 'work-intent': intent, 'work-classify': clefThen(0.95), 'work-pivot': pivotSays({ english: 'plumber' }) }, calls));
+    const planned = await planHire(w.hire, { sentence: ENCANADOR, lang: 'pt', regions: ['br-sp'] });
+    expect(planned.ok && planned.plan.needs).toEqual([{ token: 'pos:plumber', label: 'plumber', p: 0.95 }]);
+    expect(planned.ok && planned.plan.intent.anyOf).toContain('pos:plumber');
+    expect(calls.map((c) => c.op)).toEqual(['work-classify', 'work-intent', 'work-embed', 'work-classify', 'work-pivot', 'work-classify']);
+    // The pivot reads the whole request with its locale and the nearest occupations; a hirer's words become no alias.
+    const asked = calls.find((c) => c.op === 'work-pivot')!.input as { messages: { role: string; content: string }[] };
+    expect(asked.messages[1]!.content.startsWith(`A request for work written in Brazilian Portuguese by someone hiring in Brazil (br-sp):\n${ENCANADOR}\n\nThe registry's nearest occupations:\n- c0: `)).toBe(true);
+    expect(await w.hire.registry.store.tokensByLabel(labelNorm('bombeiro hidraulico'), 'pos', ['pt'])).toEqual([]);
+
+    // Clef says no to the named token: the needs stay empty and the job Curated, as before.
+    const no = await elsewhere(await world({ 'work-intent': intent, 'work-classify': clefThen(0.1), 'work-pivot': pivotSays({ english: 'plumber' }) }));
+    const curated = await planHire(no.hire, { sentence: ENCANADOR, lang: 'pt', regions: ['br-sp'] });
+    expect(curated.ok && curated.plan).toMatchObject({ needs: [], intent: { anyOf: [], mode: 'curated' } });
+    // A token Clef already rated under the floor keeps that answer: the fallback's pick asks Clef no second time.
+    const rerolled: FakeCall[] = [];
+    const again = await elsewhere(await world({ 'work-intent': intent, 'work-classify': clefThen(0.95), 'work-pivot': pivotSays({ english: 'whatever', choice: 'c0' }) }, rerolled));
+    expect(await planHire(again.hire, { sentence: ENCANADOR, lang: 'pt', regions: ['br-sp'] })).toMatchObject({ ok: true, plan: { needs: [] } });
+    expect(rerolled.map((c) => c.op)).toEqual(['work-classify', 'work-intent', 'work-embed', 'work-classify', 'work-pivot']);
+    // A request that fits several occupations, or a pivot that failed, names nothing: one call, no second Clef question.
+    for (const pivot of [pivotSays({ english: 'helper', specific: false }), new Error('down')]) {
+      const quiet: FakeCall[] = [];
+      const q = await elsewhere(await world({ 'work-intent': intent, 'work-classify': clefThen(0.95), 'work-pivot': pivot }, quiet));
+      expect(await planHire(q.hire, { sentence: ENCANADOR, lang: 'pt', regions: ['br-sp'] })).toMatchObject({ ok: true, plan: { needs: [] } });
+      expect(quiet.map((c) => c.op)).toEqual(['work-classify', 'work-intent', 'work-embed', 'work-classify', 'work-pivot']);
+    }
+  });
+
   it('carries every hosted call on a store or index failure, so the route can still meter them', async () => {
     const ops = (e: unknown) => (e instanceof WorkCallsError ? e.calls.map((c) => c.op) : e);
     const down = (what: string) => async () => {
