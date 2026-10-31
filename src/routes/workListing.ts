@@ -6,7 +6,7 @@
  * workspace `docs/product/work-wallet.md`, Listing lifecycle; decisions 0019
  * and 0060).
  *
- *   PUT    /v1/work/listing  { account, profileId, region, scope, tier, lang, titles, skills, certificates, languages }
+ *   PUT    /v1/work/listing  { account, profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells?, vector, claims? }
  *                            → { ok, listingId, profileId, namespace, tier, tokens }
  *   DELETE /v1/work/listing  { account, profileId }  → { ok, listingId, profileId }
  *

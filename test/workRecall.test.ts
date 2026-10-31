@@ -120,6 +120,11 @@ describe('namespaces and drafts', () => {
     expect(namespacesFor({ ...onsite, scope: 'remote' }, ['us', 'mx'])).toEqual(['us:remote', 'mx:remote']);
     expect(namespacesFor({ ...onsite, regions: [] })).toBeNull();
     expect(namespacesFor({ ...onsite, regions: ['Texas'] })).toBeNull();
+    // With a ring (decision 0067, rule 8) the cells do the locality: every launch country's on-site namespace, the hirer's own first.
+    const near = { res: 6 as const, rings: [['86a8b1a07ffffff']] };
+    expect(namespacesFor({ ...onsite, regions: ['mx'], near })).toEqual(['mx:onsite', 'us:onsite', 'br:onsite']);
+    expect(namespacesFor({ ...onsite, regions: ['mx'], near }, ['us', 'mx'])).toEqual(['mx:onsite', 'us:onsite']);
+    expect(namespacesFor({ ...onsite, scope: 'remote', near }, ['us', 'mx'])).toEqual(['us:remote', 'mx:remote']);
     expect(namespacesFor({ ...onsite, regions: Array.from({ length: 9 }, (_, i) => `us-a${i}`) })).toBeNull();
     expect(parseRemoteCountries('US, br,xx-1')).toEqual(['us', 'br']);
     expect(parseRemoteCountries(undefined)).toEqual(['us', 'br', 'mx']);

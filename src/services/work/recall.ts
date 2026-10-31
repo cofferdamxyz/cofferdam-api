@@ -7,8 +7,9 @@
  *
  *  1. The intent names its namespaces: on-site work queries the regions
  *     the hirer names (the app sends its country), and with a ring (`near`,
- *     workspace decision 0067, rule 8) only the listings whose `cell6` or
- *     `cell5` is in it; remote work queries every launch country's remote
+ *     workspace decision 0067, rule 8) every launch country's as well, but
+ *     only the listings whose `cell6` or `cell5` is in it, since the cells
+ *     do the locality; remote work queries every launch country's remote
  *     namespace and ignores the ring.
  *  2. One query per namespace, in parallel, each at Vectorize's 50 with
  *     metadata (on site with a ring, filtered by its cells), merged by score
@@ -119,7 +120,10 @@ export function checkRing(n: unknown): n is SearchRing {
   }
   return cells > 0 && cells <= MAX_RING_CELLS;
 }
-/** Remote work is queried in these countries' remote namespaces (the launch markets) unless `WORK_REMOTE_COUNTRIES` says otherwise. */
+/**
+ * The launch markets, unless `WORK_REMOTE_COUNTRIES` says otherwise: remote work is queried in their remote namespaces,
+ * and on-site work with a ring in their on-site namespaces too.
+ */
 export const DEFAULT_REMOTE_COUNTRIES = ['us', 'br', 'mx'];
 
 export type HireMode = 'instant' | 'curated';
@@ -224,12 +228,17 @@ export function parseRemoteCountries(raw: string | undefined): string[] {
   return list.length ? [...new Set(list)] : DEFAULT_REMOTE_COUNTRIES;
 }
 
-/** The namespaces an intent queries (decision 0019). */
+/**
+ * The namespaces an intent queries (decision 0019). With a ring, the cells do the locality, and a country is only what
+ * each phone's region names (the app's region, workspace decision 0046), which two people in one place may set apart:
+ * so an on-site search with a ring also reads every launch country's on-site namespace, after the hirer's own.
+ */
 export function namespacesFor(intent: RecallIntent, remoteCountries: string[] = DEFAULT_REMOTE_COUNTRIES, prefix = ''): string[] | null {
   if (intent.scope === 'remote') return remoteCountries.map((c) => namespaceOf(c, 'remote', prefix));
   const regions = [...new Set(intent.regions)];
   if (!regions.length || regions.length > MAX_REGIONS || regions.some((r) => !REGION.test(r))) return null;
-  return regions.map((r) => namespaceOf(r, 'onsite', prefix));
+  const read = intent.near ? [...new Set([...regions, ...remoteCountries])] : regions;
+  return read.map((r) => namespaceOf(r, 'onsite', prefix));
 }
 
 interface Gated {

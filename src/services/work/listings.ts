@@ -11,11 +11,13 @@
  * (the phone's under the v2 pin) into `jobs-listings-v2` in the namespace of its region and scope,
  * and keeps the exact token list in D1. Turning it off deletes both.
  *
- * Location is a coarse region only (`us-tx`, `br-sp`, `mx`): no position,
- * cell or radius reaches the plane, and the vector's metadata carries the
- * region, the scope, the tier, the Bloom filter and the model, nothing else.
- * The namespace is `<region>:onsite` for on-site work and `<country>:remote`
- * for remote work. A listing is keyed by the account's Work pseudonym and a
+ * Location is a coarse region (`us`, `br-sp`, `mx`; the app sends its
+ * country) and, on site, the H3 cells of the worker's circle's centre at
+ * resolutions 6 and 5 (workspace decision 0067, rule 8): no position or
+ * radius reaches the plane, and the vector's metadata carries the region,
+ * the scope, the tier, the Bloom filter, the model and, on site, the cells,
+ * nothing else. The namespace is `<region>:onsite` for on-site work and
+ * `<country>:remote` for remote work. A listing is keyed by the account's Work pseudonym and a
  * profile id, so one account can hold several, up to `MAX_WORK_PROFILES`
  * (Work Profiles, decision 0060); the pseudonym is the route's, an HMAC of
  * the account (`pseudonym.ts`).
