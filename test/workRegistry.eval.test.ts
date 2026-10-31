@@ -30,34 +30,36 @@
  * production did until the v2 switch of 2026-10-30; production's v2 vectors
  * come from the phone, which only the replica's runs below stand in for.
  *
- * With V3_DIR, ESCO_SQL and US_SQL a third run snaps the same strings on the
- * v3 generation: the registry replica (`test/work-eval/replica.ts`: ESCO and
- * the US layer, EmbeddingGemma 2's v3 vectors at 768, no certificate token)
- * and each string embedded as the phone embeds it (llama-embedding, the same
- * GGUF), in three arms: the hosted requests as they were before the locale,
- * the language alone, and with the listing's market. It writes
- * `test/work-eval/registry-locale-v3-<date>.md`.
+ * With VECTORS_DIR, WORK_LITERT_FILE, ESCO_SQL and US_SQL a third run snaps
+ * the same strings on the v2 generation, the one the plane runs: the registry
+ * replica (`test/work-eval/replica.ts`: ESCO and the US layer, the v2 label
+ * vectors at 768, no certificate token) and each string embedded as the phone
+ * embeds it (EmbeddingGemma 2's LiteRT-LM file on the Mac, `macEmbed`), in
+ * three arms: the hosted requests as they were before the locale, the
+ * language alone, and with the listing's market. It writes
+ * `test/work-eval/registry-locale-v2-<date>.md`. With the same four, a fourth
+ * run measures the English pivot in the band (workspace decision 0018,
+ * amendment proposed 2026-10-30) on that replica in two arms, production's
+ * requests with the listing's market and the same with the pivot in the
+ * band, and replays the amendment's two open rules for an answer under
+ * Clef's floor without a model call. It writes
+ * `test/work-eval/registry-pivot-band-v2-<date>.md`. Both stop on files that
+ * are not the LiteRT-LM file's generation: the GGUF's v3, which these runs
+ * measured on 2026-10-30 (the reports named `-v3-` and `-v2-engine-`), was
+ * never published.
  *
  *   cd cofferdam-api && WORK_EVAL=1 direnv exec .. yarn vitest run test/workRegistry.eval.test.ts -t synthetic
  *   cd cofferdam-api && WORK_EVAL=1 ESCO_DIR=~/Development/esco/import ESCO_VECTORS=~/Development/us-layer-data/cofferdam-import direnv exec .. yarn vitest run test/workRegistry.eval.test.ts -t ESCO
- *   cd cofferdam-api && WORK_EVAL=1 V3_DIR=~/Development/esco/import/registry-embeddinggemma-2 ESCO_SQL=~/Development/esco/import/cofferdam-import \
- *     US_SQL=~/Development/us-layer-data/cofferdam-import direnv exec .. yarn vitest run test/workRegistry.eval.test.ts -t v3
+ *   cd cofferdam-api && WORK_EVAL=1 VECTORS_DIR=~/Development/esco/import/registry-embeddinggemma-2-litert \
+ *     WORK_LITERT_FILE=~/models/embeddinggemma-2-litert/embeddinggemma-2-text-270m.litertlm \
+ *     ESCO_SQL=~/Development/esco/import/cofferdam-import US_SQL=~/Development/us-layer-data/cofferdam-import \
+ *     direnv exec .. yarn vitest run test/workRegistry.eval.test.ts -t "locale arms|pivot in the band"
  *
- * With the same three, a fourth run measures the English pivot in the band
- * (workspace decision 0018, amendment proposed 2026-10-30) on the v2 engine:
- * that replica with EmbeddingGemma 2's GGUF vectors (the v2 generation's
- * LiteRT-LM vectors match them at a median cosine of 0.990), in two arms,
- * production's requests with the listing's market, and the same with the
- * pivot in the band. It writes
- * `test/work-eval/registry-pivot-band-v2-engine-<date>.md`.
- *
- *   cd cofferdam-api && WORK_EVAL=1 V3_DIR=~/Development/esco/import/registry-embeddinggemma-2 ESCO_SQL=~/Development/esco/import/cofferdam-import \
- *     US_SQL=~/Development/us-layer-data/cofferdam-import direnv exec .. yarn vitest run test/workRegistry.eval.test.ts -t "pivot in the band"
- *
- * WORK_TAU_AUTO and WORK_TAU_LOW try other bands, WORK_EMBED_MODEL another
- * embedding model, and WORK_PIVOT_BAND=1 puts the English pivot in the band in
- * the first two runs; each one adds itself to the reports' file names, and so
- * does WORK_EVAL_SUFFIX.
+ * WORK_TAU_AUTO and WORK_TAU_LOW try other bands in every run. In the first
+ * two, WORK_EMBED_MODEL tries another embedding model (the replica's runs embed
+ * with the LiteRT-LM file) and WORK_PIVOT_BAND=1 puts the English pivot in the
+ * band (the pivot run has an arm for it). Each adds itself to the report's
+ * name where it applies, and so does WORK_EVAL_SUFFIX.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -69,8 +71,9 @@ import { createInference, type Inference } from '../src/services/inference/index
 import type { BlockLang } from '../src/services/work/blocks.js';
 import { callCostMicroUsd } from '../src/services/work/meter.js';
 import {
+  ADJUDICATION_FLOOR,
   D1RegistryStore,
-  EMBEDDINGGEMMA_2_GGUF,
+  EMBEDDINGGEMMA_2_LITERT,
   embedTexts,
   labelIdOf,
   labelNorm,
@@ -133,11 +136,12 @@ interface Row {
   costMicroUsd: number;
 }
 
-/** One Clef call in the band: the token it picked, at what probability, and the probability of none. */
+/** One Clef call in the band: the token it picked, at what probability, the probability of none, and its likeliest answer (a token or none). */
 interface BandAnswer {
   pick: string | null;
   p: number;
   none: number;
+  likeliest: string | null;
 }
 
 interface Recorded {
@@ -213,8 +217,12 @@ function bandAnswer(recorded: readonly Recorded[], out: SnapResult): BandAnswer 
   const choice = typeof match?.choice === 'string' ? match.choice : null;
   // The nearest candidates are c0, c1, …; the English pivot's token, when the band showed it after them, the next key.
   const entry = (i: number) => (i < out.candidates.length ? out.candidates[i]!.token : i === out.candidates.length && out.pivot?.added ? out.pivot.token : null);
-  const pick = choice === 'none' ? 'none' : choice && /^c\d$/.test(choice) ? entry(Number(choice.slice(1))) : null;
-  return { pick, p: p(choice), none: p('none') };
+  const tokenOf = (key: string | null) => (key === 'none' ? 'none' : key && /^c\d$/.test(key) ? entry(Number(key.slice(1))) : null);
+  // The likeliest answer is the highest probability; a tie goes to Clef's own choice, else to the first key.
+  const keys = Object.keys(probabilities);
+  const max = Math.max(...keys.map(p));
+  const top = choice !== null && keys.includes(choice) && p(choice) === max ? choice : (keys.find((k) => p(k) === max) ?? null);
+  return { pick: tokenOf(choice), p: p(choice), none: p('none'), likeliest: tokenOf(top) };
 }
 
 /** The English pivot as a snap read it: the name, then the token it names, and whether the band showed that token to Clef after the nearest candidates. */
@@ -278,6 +286,12 @@ function floorSweep(answers: { band: BandAnswer; right: (token: string) => boole
 }
 
 const bandText = (b: BandAnswer | null) => (b ? `${b.pick ?? '—'} ${b.p.toFixed(2)}, none ${b.none.toFixed(2)}` : '—');
+/** The nearest five candidates of a snap on the replica: token, matched label, its language and a national label's region, cosine. */
+const nearest = (out: SnapResult) =>
+  out.candidates
+    .slice(0, 5)
+    .map((x) => `${x.token} "${x.matched}" ${x.matchedLang ?? '?'}${x.matchedRegion ? `-${x.matchedRegion}` : ''} ${x.score.toFixed(3)}`)
+    .join('; ') || '—';
 const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 1000) / 10}%` : '—');
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
 
@@ -289,10 +303,12 @@ function liveInference(): Inference {
   return createInference({ WORK_EMBED_MODEL: restEmbedModel('WORK_EVAL') }, { ai: createRestAi({ accountId, token }) })!;
 }
 
+/** A τ other than the model's own, in a report's name. */
+const tauSuffix = (tau: { auto: number; low: number }) => (process.env.WORK_TAU_AUTO || process.env.WORK_TAU_LOW ? `-tau-${tau.auto}-${tau.low}` : '');
+
 function reportSuffix(tau: { auto: number; low: number }): string {
   const embed = process.env.WORK_EMBED_MODEL ? `-${process.env.WORK_EMBED_MODEL.split('/').pop()}` : '';
-  const band = process.env.WORK_TAU_AUTO || process.env.WORK_TAU_LOW ? `-tau-${tau.auto}-${tau.low}` : '';
-  return `${embed}${band}${PIVOT_BAND ? '-pivot-band' : ''}${process.env.WORK_EVAL_SUFFIX ?? ''}`;
+  return `${embed}${tauSuffix(tau)}${PIVOT_BAND ? '-pivot-band' : ''}${process.env.WORK_EVAL_SUFFIX ?? ''}`;
 }
 
 describe.skipIf(!LIVE)('canonicalization evaluation (live, Workers AI)', () => {
@@ -519,17 +535,55 @@ describe.skipIf(!LIVE || !ESCO_DIR)('regional words and false friends on ESCO (l
   }, 3_600_000);
 });
 
-// ── The v3 generation: the phone's EmbeddingGemma 2 and the registry replica ───────
+// ── The v2 generation: the registry replica and the phone's embedder, as the plane runs them ──────────────────────
 
-const V3_DIR = process.env.V3_DIR ? homePath(process.env.V3_DIR) : '';
+const VECTORS_DIR = process.env.VECTORS_DIR ? homePath(process.env.VECTORS_DIR) : '';
+const LITERT_FILE = process.env.WORK_LITERT_FILE ? homePath(process.env.WORK_LITERT_FILE) : '';
 const ESCO_SQL = process.env.ESCO_SQL ? homePath(process.env.ESCO_SQL) : '';
 const US_SQL = process.env.US_SQL ? homePath(process.env.US_SQL) : '';
+/** The replica's runs: the v2 label files, the phone's LiteRT-LM file and the two imports' SQL. */
+const REPLICA = LIVE && Boolean(VECTORS_DIR && LITERT_FILE && ESCO_SQL && US_SQL);
+/** The v2 generation's embedder, the phone's since 2026-10-30, whose own τ the plane runs on. */
+const V2_MODEL = EMBEDDINGGEMMA_2_LITERT;
 
 /**
- * The v3 run's arms, one registry and one embedding: the hosted requests as
- * they were before the registry read a string's locale (`beforeLocale`), the
- * language alone (no market), and production's (the language, the variant
- * and the market).
+ * The registry as the plane holds it since the v2 switch (ESCO and the US layer with their v2 vectors, no
+ * certificate token), a reset back to it, and each string's vectors as the phone makes them, a query and a
+ * document. The index refuses files of another generation than the LiteRT-LM file's.
+ */
+async function v2Replica(texts: readonly string[]) {
+  const t0 = Date.now();
+  const replica = await loadReplica(ESCO_SQL, US_SQL);
+  const index = ReplicaIndex.load(VECTORS_DIR, V2_MODEL);
+  const loadedAt = Date.now();
+  process.stdout.write(`replica: ${replica.tokens} tokens, ${replica.labels} labels, ${index.size} ${index.generation} vectors, ${((loadedAt - t0) / 1000).toFixed(0)} s\n`);
+  /** Back to the registry as loaded: what a snap added (aliases, mints and their vectors, decisions) goes. */
+  const fresh = async () => {
+    const added = replica.db.sqlite.prepare('SELECT label_id FROM registry_labels WHERE created_at >= ?').all(loadedAt) as { label_id: string }[];
+    if (added.length) await index.deleteByIds(added.map((r) => r.label_id));
+    for (const table of ['registry_decisions', 'registry_labels', 'registry_tokens']) replica.db.sqlite.prepare(`DELETE FROM ${table} WHERE created_at >= ?`).run(loadedAt);
+    return { store: replica.store, index };
+  };
+  const queries = embedAll(texts, 'query', V2_MODEL, LITERT_FILE);
+  const documents = embedAll(texts, 'document', V2_MODEL, LITERT_FILE);
+  const key = (t: string) => t.replace(/\s+/g, ' ').trim();
+  const vectorsOf = (raw: string) => ({ query: queries.get(key(raw))!, document: documents.get(key(raw))! });
+  return { replica, index, fresh, vectorsOf };
+}
+
+/** The live inference seam under the v2 embedder: the snaps read the phone's vectors, so only Clef and the pivot are hosted calls. */
+function v2Inference(): Inference {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  if (!accountId || !apiToken) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
+  return createInference({ WORK_EMBED_MODEL: V2_MODEL }, { ai: createRestAi({ accountId, token: apiToken }) })!;
+}
+
+/**
+ * The locale run's arms, one registry and one embedding: the hosted requests
+ * as they were before the registry read a string's locale (`beforeLocale`),
+ * the language alone (no market), and production's (the language, the
+ * variant and the market).
  */
 const ARMS = ['before', 'language', 'market'] as const;
 type Arm = (typeof ARMS)[number];
@@ -543,76 +597,54 @@ const PIVOT_LOCALE_CLAUSE = ', with the language it is written in and, when know
  * worker or a hirer wrote it, in pt:", its article as it was), a candidate's
  * matched label carried no language, and the pivot read the bare string
  * under a prompt that named neither. The string is the state's last line, as
- * the registry normalized it.
+ * the registry normalized it. A request this rewrite no longer fits (the
+ * criteria or the pivot's prompt worded otherwise) goes into `misses`, so the
+ * run stops instead of measuring production's requests twice.
  */
-function beforeLocale(op: string, input: Record<string, unknown>, kind: TokenKind, lang: string): Record<string, unknown> {
+function beforeLocale(op: string, input: Record<string, unknown>, kind: TokenKind, lang: string, misses?: string[]): Record<string, unknown> {
   if (op === 'work-adjudicate' && typeof input.state === 'string') {
     const raw = input.state.split('\n').pop() ?? '';
     const questions = input.questions as Record<string, { criteria?: Record<string, string> }>;
     const match = questions.match;
     const criteria = match?.criteria && Object.fromEntries(Object.entries(match.criteria).map(([k, v]) => [k, v.replace(/ \(matched "(.*)", [^"()]+\)$/, ' (matched "$1")')]));
+    for (const v of Object.values(criteria ?? {})) if (v.includes('(matched ') && !/ \(matched ".*"\)$/.test(v)) misses?.push(`Clef's criterion "${v}"`);
     const noun = { pos: 'occupation', skill: 'skill', cert: 'certificate or licence' }[kind];
     return { ...input, state: `A ${noun} as a worker or a hirer wrote it, in ${lang}:\n${raw}`, questions: match ? { ...questions, match: { ...match, ...(criteria ? { criteria } : {}) } } : questions };
   }
   if (op === 'work-pivot' && Array.isArray(input.messages)) {
-    const messages = (input.messages as { role: string; content: string }[]).map((m) =>
-      m.role === 'system' ? { ...m, content: m.content.replace(PIVOT_LOCALE_CLAUSE, '') } : m.role === 'user' ? { ...m, content: m.content.split('\n').pop() ?? '' } : m,
-    );
+    const messages = (input.messages as { role: string; content: string }[]).map((m) => {
+      if (m.role === 'system' && !m.content.includes(PIVOT_LOCALE_CLAUSE)) misses?.push('the pivot\'s system prompt without the locale clause');
+      return m.role === 'system' ? { ...m, content: m.content.replace(PIVOT_LOCALE_CLAUSE, '') } : m.role === 'user' ? { ...m, content: m.content.split('\n').pop() ?? '' } : m;
+    });
     return { ...input, messages };
   }
   return input;
 }
 
-describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('regional words and false friends on the v3 replica (live Clef and pivot, the phone’s EmbeddingGemma 2)', () => {
+describe.skipIf(!REPLICA)('regional words and false friends in three locale arms on the v2 replica (live Clef and pivot, the phone’s LiteRT-LM embedder)', () => {
   it('snaps each market-tagged string before the locale, with its language only and with its market, and writes the report', async () => {
-    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
-    if (!accountId || !apiToken) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
-    const seam = createInference({ WORK_EMBED_MODEL: EMBEDDINGGEMMA_2_GGUF }, { ai: createRestAi({ accountId, token: apiToken }) })!;
+    const seam = v2Inference();
     let arm: Arm = 'market';
     let current: { kind: TokenKind; lang: string } = { kind: 'pos', lang: 'en' };
+    const misses: string[] = [];
     const recorder = recording({
       model: (op) => seam.model(op),
-      run: (op, input, call) => seam.run(op, arm === 'before' ? beforeLocale(op, input, current.kind, current.lang) : input, call),
+      run: (op, input, call) => seam.run(op, arm === 'before' ? beforeLocale(op, input, current.kind, current.lang, misses) : input, call),
     });
     const inference = recorder.inference;
-    const tau = tauFor(EMBEDDINGGEMMA_2_GGUF, parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW));
-
-    // The registry as the v3 generation holds it: ESCO, the US layer, their v3 vectors (no certificate token).
-    const t0 = Date.now();
-    const replica = await loadReplica(ESCO_SQL, US_SQL);
-    const index = ReplicaIndex.load(V3_DIR);
-    const loadedAt = Date.now();
-    process.stdout.write(`replica: ${replica.tokens} tokens, ${replica.labels} labels, ${index.size} vectors, ${((loadedAt - t0) / 1000).toFixed(0)} s\n`);
-    /** Back to the registry as loaded: what a snap added (aliases, mints and their vectors, decisions) goes. */
-    const fresh = async () => {
-      const added = replica.db.sqlite.prepare('SELECT label_id FROM registry_labels WHERE created_at >= ?').all(loadedAt) as { label_id: string }[];
-      if (added.length) await index.deleteByIds(added.map((r) => r.label_id));
-      for (const table of ['registry_decisions', 'registry_labels', 'registry_tokens']) replica.db.sqlite.prepare(`DELETE FROM ${table} WHERE created_at >= ?`).run(loadedAt);
-      return { store: replica.store, index };
-    };
-
-    // The phone's vectors for each string, as llama-embedding makes them with the same GGUF.
+    const tau = tauFor(V2_MODEL, parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW));
     const cases = localeCases.cases as LocaleCase[];
-    const key = (t: string) => t.replace(/\s+/g, ' ').trim();
-    const queries = embedAll(cases.map((c) => c.raw), 'query');
-    const documents = embedAll(cases.map((c) => c.raw), 'document');
+    const { replica, index, fresh, vectorsOf } = await v2Replica(cases.map((c) => c.raw));
 
-    type V3Row = { c: LocaleCase; arm: Arm; out: SnapResult; verdict: 'right' | 'false friend' | 'other'; band: BandAnswer | null; pivot: string | null; state: string | null; costMicroUsd: number };
-    const rows: V3Row[] = [];
+    type LocaleRow = { c: LocaleCase; arm: Arm; out: SnapResult; verdict: 'right' | 'false friend' | 'other'; band: BandAnswer | null; pivot: string | null; state: string | null; costMicroUsd: number };
+    const rows: LocaleRow[] = [];
     const failed: string[] = [];
     let retried = 0;
     for (const a of ARMS) {
       arm = a;
       for (const c of cases) {
         current = { kind: c.kind, lang: c.lang };
-        const input: SnapInput = {
-          kind: c.kind,
-          raw: c.raw,
-          lang: c.lang,
-          ...(a === 'market' ? { market: c.market } : {}),
-          vectors: { query: queries.get(key(c.raw))!, document: documents.get(key(c.raw))! },
-        };
+        const input: SnapInput = { kind: c.kind, raw: c.raw, lang: c.lang, ...(a === 'market' ? { market: c.market } : {}), vectors: vectorsOf(c.raw) };
         const { out, recorded, errors, attempts } = await snapRecorded(recorder, fresh, { inference, tau }, input);
         if (attempts > 1) retried++;
         if (errors.length) failed.push(`${a} ${c.raw}: ${errors.join('; ')}`);
@@ -626,25 +658,22 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('regional words and fa
         rows.push({ c, arm: a, out, verdict, band: bandAnswer(recorded, out), pivot: pivotName(recorded), state: told, costMicroUsd: out.calls.reduce((s, x) => s + callCostMicroUsd(x), 0) });
         console.log(`${verdict === 'right' ? 'ok  ' : 'MISS'} ${a} ${c.lang}/${c.market} ${c.raw} → ${out.decision} ${out.token ?? ''}`);
       }
+      // The before arm stands for 16ab6a8's requests only while the rewrite fits production's: stop before the next arm.
+      if (a === 'before' && misses.length) throw new Error(`the before arm's rewrite no longer fits production's requests: ${[...new Set(misses)].join('; ')}`);
     }
 
     const date = new Date().toISOString().slice(0, 10);
     const groups = [...new Set(cases.map((c) => c.group))];
     const of = (a: Arm) => rows.filter((r) => r.arm === a);
-    const cell = (r: V3Row | undefined) => {
+    const cell = (r: LocaleRow | undefined) => {
       if (!r) return '—';
       const what = `${r.verdict === 'right' ? '' : '**'}${r.out.decision} ${r.out.token ?? '—'}${r.verdict === 'right' ? '' : '**'}`;
       return [what, r.band ? `Clef ${bandText(r.band)}` : null, r.pivot ? `pivot "${r.pivot}"` : null].filter(Boolean).join('; ');
     };
-    const shown = (out: SnapResult) =>
-      out.candidates
-        .slice(0, 5)
-        .map((x) => `${x.token} "${x.matched}" ${x.matchedLang ?? '?'}${x.matchedRegion ? `-${x.matchedRegion}` : ''} ${x.score.toFixed(3)}`)
-        .join('; ') || '—';
     const md = [
-      `# Regional words and false friends on the v3 replica, ${date}`,
+      `# Regional words and false friends on the v2 replica, ${date}`,
       '',
-      `${cases.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped against the v3 generation's registry (\`test/work-eval/replica.ts\`: the ESCO import's and the US layer's SQL, ${replica.tokens} tokens and ${replica.labels} labels, no certificate token; ${index.size} vectors of EmbeddingGemma 2 at 768, a national label's region kept), each string embedded as the phone embeds it (\`${EMBEDDINGGEMMA_2_GGUF}\` through llama-embedding, a query and a document), with \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Three arms on the same registry and vectors: **before**, the hosted requests as they were before the locale (cofferdam-api 16ab6a8: Clef told the language's code, no language beside a matched label, the pivot given the bare string); **language**, production's requests with no market; **market**, production's with the listing's market. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word.`,
+      `${cases.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped against the v2 generation's registry, the one the plane runs (\`test/work-eval/replica.ts\`: the ESCO import's and the US layer's SQL, ${replica.tokens} tokens and ${replica.labels} labels, no certificate token; ${index.size} ${index.generation} vectors of EmbeddingGemma 2's LiteRT-LM file at 768, a national label's region kept), each string embedded as the phone embeds it (\`${V2_MODEL}\` through LiteRT-LM on the Mac, a query and a document), with \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Three arms on the same registry and vectors: **before**, the hosted requests as they were before the locale (cofferdam-api 16ab6a8: Clef told the language's code, no language beside a matched label, the pivot given the bare string); **language**, production's requests with no market; **market**, production's with the listing's market. The English pivot in the band is off, as on the plane today. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word, or the one a generic English name holds as a label (workspace OD-28).`,
       '',
       '| Group | Before | Language | Market (production) |',
       '|---|---|---|---|',
@@ -663,7 +692,7 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('regional words and fa
       '',
       ...ARMS.flatMap((a) => {
         const banded = of(a)
-          .filter((r): r is V3Row & { band: BandAnswer } => r.band != null)
+          .filter((r): r is LocaleRow & { band: BandAnswer } => r.band != null)
           .map((r) => ({ band: r.band, right: (t: string) => r.c.right.includes(t) }));
         return [`**${a}**, ${banded.length} answers:`, '', '| Floor | Picked an expected token | Picked another | None | Below the floor |', '|---|---|---|---|---|', ...floorSweep(banded), ''];
       }),
@@ -678,7 +707,7 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('regional words and fa
       '',
       '| String | Candidates |',
       '|---|---|',
-      ...of('market').map((r) => `| ${r.c.raw} (${r.c.lang}) | ${shown(r.out)} |`),
+      ...of('market').map((r) => `| ${r.c.raw} (${r.c.lang}) | ${nearest(r.out)} |`),
       '',
       'What Clef was told in production\'s arm (the state and the `match` criteria), for the first string of each group that reached it:',
       '',
@@ -687,40 +716,56 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('regional words and fa
         return told ? ['```', told, '```', ''] : [];
       }),
     ].join('\n');
-    writeFileSync(join(__dirname, 'work-eval', `registry-locale-v3-${date}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
+    writeFileSync(join(__dirname, 'work-eval', `registry-locale-v2-${date}${tauSuffix(tau)}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
     expect(rows).toHaveLength(cases.length * ARMS.length);
   }, 3_600_000);
 });
 
-// ── The English pivot in the band on the v2 engine: the replica and the phone's EmbeddingGemma 2 ──────────────────
+// ── The English pivot in the band on the v2 replica ─────────────────────────────────────────────────────────────
 
 /** The pivot run's arms: production's requests with the listing's market, and the same with the English pivot in the band. */
 const PIVOT_ARMS = ['market', 'pivot'] as const;
 type PivotArm = (typeof PIVOT_ARMS)[number];
 
-describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('the English pivot in the band on the v2 engine (live Clef and pivot, the replica and the phone’s EmbeddingGemma 2)', () => {
-  it('snaps each market-tagged string as production does, then with the pivot in the band, and writes the report', async () => {
-    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
-    if (!accountId || !apiToken) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
-    const recorder = recording(createInference({ WORK_EMBED_MODEL: EMBEDDINGGEMMA_2_GGUF }, { ai: createRestAi({ accountId, token: apiToken }) })!);
-    const inference = recorder.inference;
-    const tau = tauFor(EMBEDDINGGEMMA_2_GGUF, parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW));
+/** Clef was shown the English name's token: after the nearest candidates, or among them. */
+const shownToClef = (out: SnapResult) => Boolean(out.pivot?.token && (out.pivot.added || out.candidates.some((c) => c.token === out.pivot!.token)));
 
-    // The registry as the v2 engine holds it (ESCO and the US layer, EmbeddingGemma 2's GGUF vectors, no certificate token), as the run above loads it.
-    const replica = await loadReplica(ESCO_SQL, US_SQL);
-    const index = ReplicaIndex.load(V3_DIR);
-    const loadedAt = Date.now();
-    const fresh = async () => {
-      const added = replica.db.sqlite.prepare('SELECT label_id FROM registry_labels WHERE created_at >= ?').all(loadedAt) as { label_id: string }[];
-      if (added.length) await index.deleteByIds(added.map((r) => r.label_id));
-      for (const table of ['registry_decisions', 'registry_labels', 'registry_tokens']) replica.db.sqlite.prepare(`DELETE FROM ${table} WHERE created_at >= ?`).run(loadedAt);
-      return { store: replica.store, index };
-    };
+/** Step 3 took the English name's token after Clef answered in the band under its floor (not a none at or above it, which an English string's step 3 also follows). */
+const tookUnderFloor = (r: { out: SnapResult; band: BandAnswer | null }) => r.out.decision === 'pivot' && r.band != null && r.band.p < ADJUDICATION_FLOOR;
+
+/**
+ * The amendment's two open rules for an answer under Clef's floor (workspace decision 0018, proposed 2026-10-30),
+ * replayed on a run's rows without a model call. They change only a snap whose step 3 took the English name's token
+ * after Clef answered in the band under its floor (decision `pivot` with a band answer): `none` refuses that token
+ * also when Clef's likeliest answer is none, `likeliest` takes it only when it is Clef's likeliest answer. `shown`
+ * replays them only where Clef was shown that token (a Portuguese or Spanish string with the pivot in the band, or a
+ * token among the nearest): the amendment's figure. `all` also replays them where Clef never saw it, which comes down
+ * to refusing an English string's step 3 outright, a change the amendment leaves out. A refused token leaves the string
+ * unmatched, which is right only where no token fits.
+ */
+function underFloorRule(rows: readonly { c: LocaleCase; out: SnapResult; verdict: string; band: BandAnswer | null }[], rule: 'none' | 'likeliest', scope: 'shown' | 'all') {
+  const reached = rows.filter((r) => tookUnderFloor(r) && (scope === 'all' || shownToClef(r.out)));
+  let right = 0;
+  const gained: string[] = [];
+  const lost: string[] = [];
+  for (const r of rows) {
+    const refused = reached.includes(r) && (rule === 'none' ? r.band!.likeliest === 'none' : r.band!.likeliest !== r.out.token);
+    const ok = refused ? Boolean(r.c.none) : r.verdict === 'right';
+    if (ok) right++;
+    // The fixture holds some words in two languages ("Instructor" in en and es): name each with its language.
+    if (ok && r.verdict !== 'right') gained.push(`${r.c.raw} (${r.c.lang})`);
+    if (!ok && r.verdict === 'right') lost.push(`${r.c.raw} (${r.c.lang})`);
+  }
+  return { reached: reached.length, right, gained, lost };
+}
+
+describe.skipIf(!REPLICA)('the English pivot in the band on the v2 replica (live Clef and pivot, the phone’s LiteRT-LM embedder)', () => {
+  it('snaps each market-tagged string as production does, then with the pivot in the band, and writes the report', async () => {
+    const recorder = recording(v2Inference());
+    const inference = recorder.inference;
+    const tau = tauFor(V2_MODEL, parseTau(process.env.WORK_TAU_AUTO, process.env.WORK_TAU_LOW));
     const cases = localeCases.cases as LocaleCase[];
-    const key = (t: string) => t.replace(/\s+/g, ' ').trim();
-    const queries = embedAll(cases.map((c) => c.raw), 'query');
-    const documents = embedAll(cases.map((c) => c.raw), 'document');
+    const { replica, index, fresh, vectorsOf } = await v2Replica(cases.map((c) => c.raw));
 
     type PivotRow = { c: LocaleCase; arm: PivotArm; out: SnapResult; verdict: 'right' | 'false friend' | 'other'; band: BandAnswer | null; pivot: string; state: string | null; ms: number; costMicroUsd: number };
     const rows: PivotRow[] = [];
@@ -728,7 +773,7 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('the English pivot in 
     let retried = 0;
     for (const arm of PIVOT_ARMS) {
       for (const c of cases) {
-        const input: SnapInput = { kind: c.kind, raw: c.raw, lang: c.lang, market: c.market, vectors: { query: queries.get(key(c.raw))!, document: documents.get(key(c.raw))! } };
+        const input: SnapInput = { kind: c.kind, raw: c.raw, lang: c.lang, market: c.market, vectors: vectorsOf(c.raw) };
         const { out, recorded, errors, attempts, ms } = await snapRecorded(recorder, fresh, { inference, tau, pivotBand: arm === 'pivot' }, input);
         if (attempts > 1) retried++;
         if (errors.length) failed.push(`${arm} ${c.raw}: ${errors.join('; ')}`);
@@ -750,19 +795,22 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('the English pivot in 
       const what = `${r.verdict === 'right' ? '' : '**'}${r.out.decision} ${r.out.token ?? '—'}${r.verdict === 'right' ? '' : '**'}`;
       return [what, r.band ? `Clef ${bandText(r.band)}` : null, r.pivot !== '—' ? `pivot "${r.pivot}"` : null].filter(Boolean).join('; ');
     };
-    const shown = (out: SnapResult) =>
-      out.candidates
-        .slice(0, 5)
-        .map((x) => `${x.token} "${x.matched}" ${x.matchedLang ?? '?'}${x.matchedRegion ? `-${x.matchedRegion}` : ''} ${x.score.toFixed(3)}`)
-        .join('; ') || '—';
     const perArm = (a: PivotArm) => {
       const r = of(a);
       return `**${a === 'market' ? 'Market (production)' : 'With the pivot in the band'}:** cost per snap ${(r.reduce((s, x) => s + x.costMicroUsd, 0) / r.length / 1e6).toFixed(6)} USD, median ${median(r.map((x) => x.ms))} ms a snap (the phone's vectors were embedded before, and the replica searches its vectors in process, so this is no production latency); calls: ${callStats(r.map((x) => x.out))}.`;
     };
+    const names = (xs: readonly string[]) => (xs.length ? xs.join(', ') : 'none');
+    const replay = (rule: 'none' | 'likeliest', scope: 'shown' | 'all') => {
+      const r = underFloorRule(of('pivot'), rule, scope);
+      return `${r.right} of ${cases.length} right (gained ${names(r.gained)}; lost ${names(r.lost)})`;
+    };
+    const reachedAll = underFloorRule(of('pivot'), 'none', 'all').reached;
+    const reachedShown = underFloorRule(of('pivot'), 'none', 'shown').reached;
+    const unseen = of('pivot').filter((r) => tookUnderFloor(r) && !shownToClef(r.out)).map((r) => `${r.c.raw} (${r.c.lang})`);
     const md = [
-      `# The English pivot in the band on the v2 engine, ${date}`,
+      `# The English pivot in the band on the v2 replica, ${date}`,
       '',
-      `${cases.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped on the v2 engine: the registry replica (\`test/work-eval/replica.ts\`: the ESCO import's and the US layer's SQL, ${replica.tokens} tokens and ${replica.labels} labels, no certificate token; ${index.size} vectors of EmbeddingGemma 2 at 768, a national label's region kept), each string embedded with the same GGUF (\`${EMBEDDINGGEMMA_2_GGUF}\` through llama-embedding, a query and a document; the v2 generation's LiteRT-LM vectors match these at a median cosine of 0.990), with \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Two arms on the same registry and vectors: **market**, production's requests with the listing's market, the pivot asked only below the band or after Clef's none, as today; **pivot**, the same with the English pivot in the band (workspace decision 0018, amendment proposed 2026-10-30): a worker's Portuguese or Spanish string asks the pivot beside the snap's search, and Clef is shown the token its English name names. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word, or the one a generic English name holds as a label (workspace OD-28).`,
+      `${cases.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped on the v2 generation, the one the plane runs: the registry replica (\`test/work-eval/replica.ts\`: the ESCO import's and the US layer's SQL, ${replica.tokens} tokens and ${replica.labels} labels, no certificate token; ${index.size} ${index.generation} vectors of EmbeddingGemma 2's LiteRT-LM file at 768, a national label's region kept), each string embedded as the phone embeds it (\`${V2_MODEL}\` through LiteRT-LM on the Mac, a query and a document), with \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Two arms on the same registry and vectors: **market**, production's requests with the listing's market, the pivot asked only below the band or after Clef's none, as today; **pivot**, the same with the English pivot in the band (workspace decision 0018, amendment proposed 2026-10-30): a worker's Portuguese or Spanish string asks the pivot beside the snap's search, and Clef is shown the token its English name names. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word, or the one a generic English name holds as a label (workspace OD-28).`,
       '',
       '| Group | Market (production) | With the pivot in the band |',
       '|---|---|---|',
@@ -780,6 +828,8 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('the English pivot in 
       perArm('pivot'),
       '',
       pivotBandLine(of('pivot')),
+      '',
+      `The amendment's two open rules for an answer under Clef's floor, replayed on the pivot arm without a model call. Step 3 took the English name's token after Clef answered under its floor in ${reachedAll} snaps, ${reachedShown} of them with that token shown to Clef${unseen.length ? `; Clef never saw it for ${names(unseen)}` : ''}. Where Clef saw it, the amendment's case: refusing that token also when Clef's likeliest answer is none, ${replay('none', 'shown')}; taking it only when it is Clef's likeliest answer, ${replay('likeliest', 'shown')}. Applied also where Clef never saw it, which comes down to refusing an English string's step 3 outright, a change the amendment leaves out: ${replay('none', 'all')} and ${replay('likeliest', 'all')}.`,
       '',
       `${retried} snaps ran again after a hosted call threw; ${failed.length ? `${failed.length} still failed: ${failed.join('; ')}` : 'none still failed'}.`,
       '',
@@ -802,7 +852,7 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('the English pivot in 
       '',
       '| String | Candidates |',
       '|---|---|',
-      ...of('market').map((r) => `| ${r.c.raw} (${r.c.lang}) | ${shown(r.out)} |`),
+      ...of('market').map((r) => `| ${r.c.raw} (${r.c.lang}) | ${nearest(r.out)} |`),
       '',
       'What Clef was told with the pivot in the band (the state and the `match` criteria), for each string whose band showed the English name\'s token after the nearest five:',
       '',
@@ -810,7 +860,7 @@ describe.skipIf(!LIVE || !V3_DIR || !ESCO_SQL || !US_SQL)('the English pivot in 
         .filter((r) => r.out.pivot?.added && r.state)
         .flatMap((r) => ['```', r.state!, '```', '']),
     ].join('\n');
-    writeFileSync(join(__dirname, 'work-eval', `registry-pivot-band-v2-engine-${date}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
+    writeFileSync(join(__dirname, 'work-eval', `registry-pivot-band-v2-${date}${tauSuffix(tau)}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
     expect(rows).toHaveLength(cases.length * PIVOT_ARMS.length);
   }, 3_600_000);
 });
