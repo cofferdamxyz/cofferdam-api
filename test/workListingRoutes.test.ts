@@ -108,8 +108,8 @@ describe('PUT /v1/work/listing', () => {
     const body = (await res.json()) as Record<string, unknown> & { tokens: string[] };
     const pseudonym = await workPseudonym(KEY, fxAccount);
     const listingId = await listingIdOf(pseudonym, 'main');
-    expect(Object.keys(body).sort()).toEqual(['listingId', 'namespace', 'ok', 'profileId', 'tier', 'tokens']);
-    expect(body).toMatchObject({ ok: true, listingId, profileId: 'main', namespace: 'us-tx:onsite', tier: 1 });
+    expect(Object.keys(body).sort()).toEqual(['listingId', 'namespace', 'ok', 'profileId', 'tier', 'tokens', 'unsnapped']);
+    expect(body).toMatchObject({ ok: true, listingId, profileId: 'main', namespace: 'us-tx:onsite', tier: 1, unsnapped: 0 });
     expect(body.tokens).toEqual(expect.arrayContaining(['cert:plumber-license:us-tx', 'lang:en', 'lang:es', 'pos:plumber', 'skill:leak-repair']));
     const row = a.db.sqlite.prepare('SELECT * FROM listings').all() as Record<string, unknown>[];
     expect(row).toHaveLength(1);

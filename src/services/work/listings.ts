@@ -338,7 +338,7 @@ export interface PublishDeps {
 }
 
 export type PublishOutcome =
-  | { ok: true; listingId: string; namespace: string; tokens: string[]; calls: WorkCall[] }
+  | { ok: true; listingId: string; namespace: string; tokens: string[]; /** Claims the budget left unsnapped (`SNAP_START_BUDGET_MS`). */ unsnapped: number; calls: WorkCall[] }
   | { ok: false; error: 'draft_refused'; reason: DraftRefusal; calls: WorkCall[] }
   | { ok: false; error: 'profile_limit'; limit: number; calls: WorkCall[] }
   | { ok: false; error: 'embedding_failed'; calls: WorkCall[] };
@@ -352,16 +352,27 @@ export type PublishOutcome =
 export const SNAP_CONCURRENCY = 4;
 
 /**
- * Snaps the claims `SNAP_CONCURRENCY` at a time, the results in the claims' order. Each finished snap's calls go to
- * `calls`; after a failure no new snap starts, and the first failure is thrown once the ones running have settled, with
- * the calls of any other failure kept.
+ * How long a publish starts new snaps. A snap started at the last moment may still wait on the reasoning model (up to
+ * about 24 s), and the whole publish must answer within iOS's 60 s, so no snap starts after 30 s. A claim left
+ * unsnapped stays in the listing's text, so the phone's vector still carries it, misses only the gate's tokens, and
+ * snaps at the next publish; the answer counts them (`unsnapped`). Titles snap first, then skills, then certificates.
  */
-async function snapClaims(deps: PublishDeps, inputs: readonly SnapInput[], calls: WorkCall[]): Promise<SnapResult[]> {
-  const out: SnapResult[] = new Array<SnapResult>(inputs.length);
+export const SNAP_START_BUDGET_MS = 30_000;
+
+/**
+ * Snaps the claims `SNAP_CONCURRENCY` at a time, the results in the claims' order, starting none after
+ * `SNAP_START_BUDGET_MS` (those left come back null and are counted). Each finished snap's calls go to `calls`; after a
+ * failure no new snap starts, and the first failure is thrown once the ones running have settled, with the calls of any
+ * other failure kept.
+ */
+async function snapClaims(deps: PublishDeps, inputs: readonly SnapInput[], calls: WorkCall[]): Promise<{ results: (SnapResult | null)[]; unsnapped: number }> {
+  const now = deps.now ?? Date.now;
+  const started = now();
+  const out: (SnapResult | null)[] = new Array<SnapResult | null>(inputs.length).fill(null);
   const errors: unknown[] = [];
   let next = 0;
   const runner = async () => {
-    while (next < inputs.length && errors.length === 0) {
+    while (next < inputs.length && errors.length === 0 && now() - started < SNAP_START_BUDGET_MS) {
       const i = next++;
       try {
         const s = await snap(deps.registry, inputs[i]!);
@@ -377,7 +388,7 @@ async function snapClaims(deps: PublishDeps, inputs: readonly SnapInput[], calls
     for (const err of errors.slice(1)) if (err instanceof WorkCallsError) calls.push(...err.calls);
     throw errors[0];
   }
-  return out;
+  return { results: out, unsnapped: inputs.length - next };
 }
 
 /**
@@ -405,8 +416,9 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
     ['cert', draft.certificates],
   ];
   const inputs = claims.flatMap(([kind, raws]) => raws.map((raw) => claimSnapInput(kind, raw, draft, client.claims?.get(claimKey(kind, raw)))));
-  for (const s of await snapClaims(deps, inputs, calls)) {
-    if (s.token) {
+  const { results, unsnapped } = await snapClaims(deps, inputs, calls);
+  for (const s of results) {
+    if (s?.token) {
       tokens.add(s.token);
       if (s.labelEn) english.push(s.labelEn);
     }
@@ -476,7 +488,7 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
       },
     },
   ]);
-  return { ok: true, listingId, namespace, tokens: list, calls };
+  return { ok: true, listingId, namespace, tokens: list, unsnapped, calls };
 }
 
 /** Looking for work off: the vector and the record go. */

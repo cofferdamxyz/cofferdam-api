@@ -7,7 +7,7 @@
  * and 0060).
  *
  *   PUT    /v1/work/listing  { account, profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells?, vector, claims? }
- *                            → { ok, listingId, profileId, namespace, tier, tokens }
+ *                            → { ok, listingId, profileId, namespace, tier, tokens, unsnapped }
  *   DELETE /v1/work/listing  { account, profileId }  → { ok, listingId, profileId }
  *
  *   Authorization: DPoP csa1:… + DPoP: <proof>   (a fast or slow session, decision 0055)
@@ -199,8 +199,8 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
           return c.json({ ok: false, error: 'embedding_failed' }, 502);
       }
     }
-    workLog({ event: 'work_listing', on: true, scope: draft.scope, tier, tokens: outcome.tokens.length, calls: outcome.calls.length, ms: deps.now() - t0 });
-    return c.json({ ok: true, listingId: outcome.listingId, profileId: draft.profileId, namespace: outcome.namespace, tier, tokens: outcome.tokens });
+    workLog({ event: 'work_listing', on: true, scope: draft.scope, tier, tokens: outcome.tokens.length, unsnapped: outcome.unsnapped, calls: outcome.calls.length, ms: deps.now() - t0 });
+    return c.json({ ok: true, listingId: outcome.listingId, profileId: draft.profileId, namespace: outcome.namespace, tier, tokens: outcome.tokens, unsnapped: outcome.unsnapped });
   });
 
   routes.delete('/listing', async (c) => {

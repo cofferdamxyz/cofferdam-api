@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WorkCallsError } from '../src/services/work/fields.js';
-import { publishListing, SNAP_CONCURRENCY, type ListingDraft, type ListingStore, type PublishDeps } from '../src/services/work/listings.js';
+import { publishListing, SNAP_CONCURRENCY, SNAP_START_BUDGET_MS, type ListingDraft, type ListingStore, type PublishDeps } from '../src/services/work/listings.js';
 import type * as Registry from '../src/services/work/registry.js';
 import type { RegistryDeps, SnapInput, SnapResult } from '../src/services/work/registry.js';
 import { fakeInference, memoryIndex } from './fixtures/work/fakes.js';
@@ -14,6 +14,8 @@ const snapCalls: SnapInput[] = [];
 let running = 0;
 let peak = 0;
 let failOn: string | null = null;
+/** Runs as each snap ends: the budget test moves its clock here. */
+let afterSnap: (() => void) | null = null;
 vi.mock('../src/services/work/registry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof Registry>();
   return {
@@ -24,6 +26,7 @@ vi.mock('../src/services/work/registry.js', async (importOriginal) => {
       peak = Math.max(peak, running);
       await new Promise((resolve) => setTimeout(resolve, 2 + ((input.raw.length * 7) % 9)));
       running--;
+      afterSnap?.();
       const call = { op: 'work-adjudicate', model: 'clef', usage: { inputTokens: 1, outputTokens: 1 } } as unknown as SnapResult['candidates'][number];
       if (input.raw === failOn) throw new WorkCallsError(new Error('store down'), [call as never]);
       const slug = input.raw.toLowerCase().replace(/[^a-z]+/g, '-');
@@ -69,6 +72,7 @@ afterEach(() => {
   running = 0;
   peak = 0;
   failOn = null;
+  afterSnap = null;
 });
 
 describe("a listing's claims snap a few at a time", () => {
@@ -78,8 +82,22 @@ describe("a listing's claims snap a few at a time", () => {
     expect(peak).toBeLessThanOrEqual(SNAP_CONCURRENCY);
     expect(snapCalls.map((c) => c.raw)).toEqual(['Eletricista', ...SKILLS]);
     expect(out.ok && out.tokens).toEqual(expect.arrayContaining(['pos:eletricista', 'skill:solda-tig', 'skill:instrumenta-o']));
-    // Every snap's call is metered, one each.
+    // Every snap's call is metered, one each, and none was left.
     expect(out.calls).toHaveLength(1 + SKILLS.length);
+    expect(out.ok && out.unsnapped).toBe(0);
+  });
+
+  it('starts no snap after the budget, publishes with what it read, titles first, and counts the claims left', async () => {
+    let clock = 0;
+    afterSnap = () => {
+      clock = SNAP_START_BUDGET_MS + 1_000;
+    };
+    const out = await publishListing({ ...deps(), now: () => clock }, draft(SKILLS), { listing: Array.from({ length: 768 }, (_, i) => (i === 0 ? 1 : 0)) });
+    // The first wave started before the budget ran out; nothing started after.
+    expect(snapCalls).toHaveLength(SNAP_CONCURRENCY);
+    expect(snapCalls[0]!.raw).toBe('Eletricista');
+    expect(out.ok && out.unsnapped).toBe(1 + SKILLS.length - SNAP_CONCURRENCY);
+    expect(out.ok && out.tokens).toContain('pos:eletricista');
   });
 
   it('starts no new snap after a failure, and throws it with the calls made', async () => {
