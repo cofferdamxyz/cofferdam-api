@@ -1,0 +1,16 @@
+{
+  "about": "listingText(withoutLastClaims(draft, dropped), english) for each case: cofferdam-api src/services/work/listings.ts and cofferdam-app src/lib/work/listing/listingText.ts give these texts byte for byte (workspace decision 0068). Keep the two copies identical: cofferdam-api test/fixtures/work/listing-text.json and cofferdam-app src/lib/work/listing/listing-text.fixture.json.",
+  "cases": [
+    { "titles": ["Eletricista"], "skills": [], "certificates": [], "english": [], "dropped": 0, "text": "Eletricista" },
+    { "titles": ["Soldador", "Caldeireiro"], "skills": ["Solda TIG", "Leitura de desenho"], "certificates": ["NR-10"], "english": [], "dropped": 0, "text": "Soldador; Caldeireiro. Solda TIG; Leitura de desenho. NR-10" },
+    { "titles": ["Soldador", "Caldeireiro"], "skills": ["Solda TIG", "Leitura de desenho"], "certificates": ["NR-10"], "english": [], "dropped": 1, "text": "Soldador; Caldeireiro. Solda TIG; Leitura de desenho" },
+    { "titles": ["Soldador", "Caldeireiro"], "skills": ["Solda TIG", "Leitura de desenho"], "certificates": ["NR-10"], "english": [], "dropped": 2, "text": "Soldador; Caldeireiro. Solda TIG" },
+    { "titles": ["Soldador", "Caldeireiro"], "skills": ["Solda TIG", "Leitura de desenho"], "certificates": ["NR-10"], "english": [], "dropped": 3, "text": "Soldador; Caldeireiro" },
+    { "titles": ["Soldador", "Caldeireiro"], "skills": ["Solda TIG", "Leitura de desenho"], "certificates": ["NR-10"], "english": [], "dropped": 9, "text": "Soldador; Caldeireiro" },
+    { "titles": [], "skills": ["Atención a clientes"], "certificates": ["Licencia federal B"], "english": [], "dropped": 0, "text": "Atención a clientes. Licencia federal B" },
+    { "titles": ["Técnico em segurança"], "skills": [], "certificates": ["NR-35", "NR-33"], "english": [], "dropped": 1, "text": "Técnico em segurança. NR-35" },
+    { "titles": ["Eletricista"], "skills": ["Solda"], "certificates": [], "english": ["electrician", "welding", "electrician", ""], "dropped": 0, "text": "Eletricista. Solda (electrician; welding)" },
+    { "titles": ["Op. de empilhadeira; noturno"], "skills": ["Excel 🧮", "Inglês fluente"], "certificates": [], "english": [], "dropped": 1, "text": "Op. de empilhadeira; noturno. Excel 🧮" },
+    { "titles": ["Truck driver"], "skills": ["Forklift", "Hazmat"], "certificates": ["CDL Class A"], "english": [], "dropped": -2, "text": "Truck driver. Forklift; Hazmat. CDL Class A" }
+  ]
+}
