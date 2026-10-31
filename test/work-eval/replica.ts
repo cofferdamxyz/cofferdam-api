@@ -22,7 +22,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { D1RegistryStore, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, type IndexMatch, type IndexVector, type VectorIndex } from '../../src/services/work/registry.js';
+import { D1RegistryStore, EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, type IndexMatch, type IndexVector, type VectorIndex, type IndexFilter } from '../../src/services/work/registry.js';
 import { sqliteD1 } from '../fixtures/work/d1.js';
 import { macEmbed } from '../fixtures/work/registryTools.js';
 
@@ -158,7 +158,7 @@ export class ReplicaIndex implements VectorIndex {
     return n;
   }
 
-  async query(vector: number[], opts: { topK: number; namespace?: string; filter?: Record<string, string | number | boolean> }): Promise<IndexMatch[]> {
+  async query(vector: number[], opts: { topK: number; namespace?: string; filter?: IndexFilter }): Promise<IndexMatch[]> {
     const t0 = Date.now();
     const kind = typeof opts.filter?.kind === 'string' ? opts.filter.kind : null;
     const q = Float32Array.from(vector);

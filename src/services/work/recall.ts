@@ -5,12 +5,14 @@
  * Recall and the gate (S6 and S7; workspace `docs/product/engine.md`, Recall
  * and the Bloom gate, E1 to E3, E10; decision 0019).
  *
- *  1. The intent names its namespaces: on-site work queries the hirer's
- *     coarse region and the neighbours the phone names when the radius
- *     crosses a border; remote work queries every launch country's remote
- *     namespace.
+ *  1. The intent names its namespaces: on-site work queries the regions
+ *     the hirer names (the app sends its country), and with a ring (`near`,
+ *     workspace decision 0067, rule 8) only the listings whose `cell6` or
+ *     `cell5` is in it; remote work queries every launch country's remote
+ *     namespace and ignores the ring.
  *  2. One query per namespace, in parallel, each at Vectorize's 50 with
- *     metadata, merged by score in the Worker: K is up to 50 × namespaces.
+ *     metadata (on site with a ring, filtered by its cells), merged by score
+ *     in the Worker: K is up to 50 × namespaces.
  *  3. The Bloom gate on the merged set, before any D1 read: a candidate must
  *     hold every required token (`allOf`: certificates, languages) and, when
  *     the intent names some, at least one of the occupation, unit-group or
@@ -21,7 +23,8 @@
  *     every required token, since only Clef's fit can make it tier 1 there.
  *     The floor follows the pinned embedding model (`tier2FloorFor`).
  *     Before the cut to `FINALIST_CAP`, tier 1 orders an occupation hit before
- *     a unit-group hit before a skill hit alone, then by cosine (decision
+ *     a unit-group hit before a skill hit alone, then by the ring's
+ *     distance when there is one, then by cosine (decision
  *     0069; on real vacancies an occupation hit was right 85% of the time, a
  *     skill hit alone 19%); a hit on an occupation kept under Clef's floor
  *     ranks as a skill hit.
@@ -39,16 +42,17 @@
  *     (OTHER_FLOOR) drops a finalist, token hit or not; a fit (FIT_FLOOR)
  *     promotes a miss that holds every required token to tier 1; otherwise
  *     the gate's tier stands, as it does when a call fails or answers
- *     nothing. Within a tier the finalists rank by one weighted sum: P(fit),
+ *     nothing. Within a tier the finalists rank by the ring's distance when
+ *     there is one, then by one weighted sum: P(fit),
  *     half of P(related), a fifth of the share of the job's needed skills
  *     they hold and cosine (tuned on prompts across ISCO groups and on real
  *     resumes, 2026-10-28: snapped profiles are thin, so Clef calls a right
  *     worker related more often than a fit, and cosine places the named
  *     occupation first more often than Clef's probabilities do).
- *  6. One listing per pseudonym (Work Profiles): the best by tier and rank
- *     after the pass, so a profile Clef drops gives way to the same worker's
- *     next one; without the pass, the first in the gate's order (tier, kind
- *     of hit, cosine).
+ *  6. One listing per pseudonym (Work Profiles): the best by tier, distance
+ *     and rank after the pass, so a profile Clef drops gives way to the same
+ *     worker's next one; without the pass, the first in the gate's order
+ *     (tier, kind of hit, distance, cosine).
  *
  * No generative call runs here (E4): one embedding of the query, index
  * reads, bit probes, one D1 read of the listings, one registry read of their
@@ -60,8 +64,8 @@ import { bloomHas, bloomProbe } from './bloom.js';
 import { clefInput, FIT_FLOOR, FIT_KEYS, fitQuestions, fitState, OTHER_FLOOR, readChoice, type FitKey, type FitProfile } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
-import { namespaceOf, REGION, type ListingRecord, type ListingStore, type Scope } from './listings.js';
-import { EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, embedTexts, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
+import { H3_CELL, namespaceOf, REGION, type ListingRecord, type ListingStore, type Scope } from './listings.js';
+import { EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, embedTexts, type IndexFilter, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
 
 /** Results Vectorize returns per query when metadata comes back (decision 0019; re-check at build time). */
 export const RECALL_TOP_K = 50;
@@ -84,8 +88,37 @@ export const TIER2_FLOOR_BY_MODEL: Readonly<Record<string, number>> = {
 export function tier2FloorFor(model: string): number {
   return TIER2_FLOOR_BY_MODEL[model] ?? TIER2_FLOOR;
 }
-/** On-site regions an intent may name: its own and the neighbours its radius reaches. */
+/** On-site regions an intent may name: the hirer's own first (the app sends its country), then any others. */
 export const MAX_REGIONS = 8;
+
+/**
+ * The most H3 cells an on-site search's ring names (decision 0067, rule 8): a `cell $in` filter stays under Vectorize's
+ * 2 KB at 100 cells of 15 characters, which holds a ring of radius 5 (91 cells), so at most six rings.
+ */
+export const MAX_RING_CELLS = 100;
+export const MAX_RINGS = 6;
+
+/** An on-site search's ring, as the phone sends it: its resolution, then its cells by grid distance from the hirer's own. */
+export interface SearchRing {
+  res: 5 | 6;
+  rings: string[][];
+}
+
+/** Whether a ring is one recall can filter by: a resolution, at most `MAX_RINGS` rings and `MAX_RING_CELLS` cells, each a cell of that resolution. */
+export function checkRing(n: unknown): n is SearchRing {
+  if (!n || typeof n !== 'object') return false;
+  const { res, rings } = n as Record<string, unknown>;
+  if ((res !== 5 && res !== 6) || !Array.isArray(rings) || !rings.length || rings.length > MAX_RINGS) return false;
+  let cells = 0;
+  for (const ring of rings) {
+    if (!Array.isArray(ring)) return false;
+    for (const c of ring) {
+      if (typeof c !== 'string' || !H3_CELL[res].test(c)) return false;
+      cells++;
+    }
+  }
+  return cells > 0 && cells <= MAX_RING_CELLS;
+}
 /** Remote work is queried in these countries' remote namespaces (the launch markets) unless `WORK_REMOTE_COUNTRIES` says otherwise. */
 export const DEFAULT_REMOTE_COUNTRIES = ['us', 'br', 'mx'];
 
@@ -109,7 +142,7 @@ export const COSINE_WEIGHT = 1;
 
 export interface RecallIntent {
   scope: Scope;
-  /** On-site: the hirer's coarse region first, then its neighbours. Remote: unused. */
+  /** On-site: the hirer's coarse region first, then any others it names. Remote: unused. */
   regions: string[];
   /** What the query embeds: the task as the hirer wrote it, and the English names of the needs over Clef's floor. */
   queryText: string;
@@ -125,6 +158,11 @@ export interface RecallIntent {
   /** At least one must be held, when any: the occupations, their ISCO-08 unit groups and the skills the task needs, and a kept occupation. */
   anyOf: string[];
   mode: HireMode;
+  /**
+   * On-site, when the phone sent it: the cells the hirer's radius covers (decision 0067, rule 8). Each namespace is searched
+   * with `cell $in` them, and within a tier finalists rank by their ring, nearest first.
+   */
+  near?: SearchRing;
 }
 
 export interface Finalist {
@@ -134,6 +172,8 @@ export interface Finalist {
   gateTier: 1 | 2;
   /** The worker's personhood tier, from the listing. */
   personhood: number;
+  /** On a search with a ring: the listing's ring, 0 the hirer's own cell. */
+  distance?: number;
   /** The intent's tokens the listing holds, by its exact list. */
   matched: string[];
   namespace: string;
@@ -197,6 +237,8 @@ interface Gated {
   gateTier: 1 | 2;
   /** Within tier 1, the kind of hit: 3 an occupation, 2 its unit group alone, 1 a skill alone; 0 for a miss. */
   hit: number;
+  /** The listing's ring on a search with one, else 0. */
+  distance: number;
 }
 
 /** S6 and S7 for one intent: see the module comment. An index or store failure throws a `WorkCallsError` carrying the embedding call. */
@@ -216,10 +258,22 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
     vector = embedding.vectors[0]!;
   }
 
-  // S6: one query per namespace, in parallel, merged by score.
+  // S6: one query per namespace, in parallel, merged by score; on site with a ring, only the listings in its cells.
+  const near = intent.scope === 'onsite' ? intent.near : undefined;
+  const cellKey = near ? `cell${near.res}` : '';
+  const filter: IndexFilter | undefined = near ? { [cellKey]: { $in: near.rings.flat() } } : undefined;
   const answers = await Promise.all(
-    namespaces.map(async (namespace) => (await deps.index.query(vector, { topK: RECALL_TOP_K, namespace })).map((m) => ({ ...m, namespace }))),
+    namespaces.map(async (namespace) =>
+      (await deps.index.query(vector, { topK: RECALL_TOP_K, namespace, ...(filter ? { filter } : {}) })).map((m) => ({ ...m, namespace })),
+    ),
   );
+  const ringOf = new Map<string, number>();
+  near?.rings.forEach((ring, k) => ring.forEach((c) => ringOf.has(c) || ringOf.set(c, k)));
+  const distanceOf = (m: IndexMatch): number => {
+    if (!near) return 0;
+    const cell = m.metadata?.[cellKey];
+    return typeof cell === 'string' ? (ringOf.get(cell) ?? MAX_RINGS) : MAX_RINGS;
+  };
   const merged = answers.flat().sort((a, b) => b.score - a.score);
 
   // S7: the Bloom gate on the merged set, before any D1 read; the tier-2 floor on the pinned embedding model's scale.
@@ -236,14 +290,14 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
     const has = (p: ReturnType<typeof bloomProbe>) => bloomHas(bloom, p);
     const meetsAll = allOf.every(has);
     if (meetsAll && (!anyOf.length || anyOf.some(has))) {
-      gated.push({ match: m, gateTier: 1, hit: occupationProbes.some(has) ? 3 : groupProbes.some(has) ? 2 : 1 });
+      gated.push({ match: m, gateTier: 1, hit: occupationProbes.some(has) ? 3 : groupProbes.some(has) ? 2 : 1, distance: distanceOf(m) });
     } else if (m.score >= tier2Floor && (intent.mode === 'curated' || (deps.store && meetsAll))) {
       // A vector-strong miss: labelled when the hirer curates; in an Instant search only Clef's fit could make it tier 1, which
       // a miss without every required token can never reach (decision 0069).
-      gated.push({ match: m, gateTier: 2, hit: 0 });
+      gated.push({ match: m, gateTier: 2, hit: 0, distance: distanceOf(m) });
     }
   }
-  gated.sort((a, b) => a.gateTier - b.gateTier || b.hit - a.hit || b.match.score - a.match.score);
+  gated.sort((a, b) => a.gateTier - b.gateTier || b.hit - a.hit || a.distance - b.distance || b.match.score - a.match.score);
   const top = gated.slice(0, FINALIST_CAP);
 
   // One D1 read: the exact certificate confirm and the excluded pseudonym.
@@ -263,6 +317,7 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
       personhood: r.tier,
       matched: wanted.filter((t) => held.has(t)),
       namespace: g.match.namespace,
+      ...(near ? { distance: g.distance } : {}),
     });
   }
   // One listing per pseudonym, the first of a list already in order (Work Profiles).
@@ -284,7 +339,7 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
   const kept = decided
     .filter(keeps)
     .map((d) => d.finalist)
-    .sort((a, b) => a.gateTier - b.gateTier || rank(b, intent) - rank(a, intent));
+    .sort((a, b) => a.gateTier - b.gateTier || (a.distance ?? 0) - (b.distance ?? 0) || rank(b, intent) - rank(a, intent));
   const dropped = decided.filter((d) => !keeps(d)).map((d) => d.finalist);
   return {
     ok: true,

@@ -34,6 +34,32 @@ export type Scope = (typeof SCOPES)[number];
 /** ISO 3166-1 alpha-2, optionally with a subdivision: `us`, `us-tx`, `br-sp`, `mx-nle`. */
 export const REGION = /^[a-z]{2}(-[a-z0-9]{1,3})?$/;
 
+/**
+ * An on-site listing's proximity cells (decision 0067, rule 8): the H3 cells at the centre of the worker's circle, at
+ * resolution 6 (about 36 km²) and 5 (about 250 km²), which the phone computes from its approximate location. The plane
+ * checks their shape and that the second is the first's parent; a remote listing carries none.
+ */
+export interface ListingCells {
+  r6: string;
+  r5: string;
+}
+
+/** An H3 cell index as h3-js writes it, at resolution 5 or 6: the cell mode, the resolution, its digits, the unused ones 7. */
+export const H3_CELL: Readonly<Record<5 | 6, RegExp>> = { 5: /^85[0-9a-f]{5}[37bf]f{7}$/, 6: /^86[0-9a-f]{6}[7f]f{6}$/ };
+
+/** The resolution-5 parent of a resolution-6 H3 cell: the resolution set to 5 and the sixth digit unused (7). */
+export function h3ParentRes5(r6: string): string {
+  const h = BigInt(`0x${r6}`);
+  return ((h & ~(0xfn << 52n)) | (5n << 52n) | (0x7n << 27n)).toString(16);
+}
+
+/** Whether a listing's cells are a resolution-6 H3 cell and its resolution-5 parent. */
+export function checkCells(c: unknown): c is ListingCells {
+  if (!c || typeof c !== 'object') return false;
+  const { r6, r5 } = c as Record<string, unknown>;
+  return typeof r6 === 'string' && typeof r5 === 'string' && H3_CELL[6].test(r6) && H3_CELL[5].test(r5) && h3ParentRes5(r6) === r5;
+}
+
 export function countryOf(region: string): string {
   return region.slice(0, 2);
 }
@@ -62,6 +88,8 @@ export interface ListingDraft {
   certificates: string[];
   /** ISO 639-1 codes of the languages the worker speaks fluently. */
   languages: string[];
+  /** On-site only: the proximity cells of the worker's circle (decision 0067, rule 8). */
+  cells?: ListingCells;
 }
 
 export interface ListingRecord {
@@ -193,7 +221,7 @@ export async function listingIdOf(pseudonym: string, profileId: string): Promise
 
 export const DRAFT_LIMITS = { titles: 5, skills: 30, certificates: 20, languages: 8, chars: 120 } as const;
 
-export type DraftRefusal = 'bad_shape' | 'bad_region' | 'bad_scope' | 'bad_tier' | 'bad_lang' | 'too_many' | 'too_long' | 'refused_pattern' | 'no_claims';
+export type DraftRefusal = 'bad_shape' | 'bad_region' | 'bad_scope' | 'bad_cells' | 'bad_tier' | 'bad_lang' | 'too_many' | 'too_long' | 'refused_pattern' | 'no_claims';
 
 /** Check a draft before anything is snapped or embedded; every string passes the same tripwire as a block. */
 export function checkDraft(d: ListingDraft): DraftRefusal | null {
@@ -203,6 +231,8 @@ export function checkDraft(d: ListingDraft): DraftRefusal | null {
   }
   if (!REGION.test(d.region)) return 'bad_region';
   if (!(SCOPES as readonly string[]).includes(d.scope)) return 'bad_scope';
+  // A remote listing carries no cell; an on-site one may (an older phone's has none, and recall's ring then misses it).
+  if (d.cells !== undefined && (d.scope !== 'onsite' || !checkCells(d.cells))) return 'bad_cells';
   if (![0, 1, 2].includes(d.tier)) return 'bad_tier';
   if (!(BLOCK_LANGS as readonly unknown[]).includes(d.lang)) return 'bad_lang';
   if (
@@ -398,7 +428,16 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
       id: listingId,
       values,
       namespace,
-      metadata: { v: LISTING_METADATA_VERSION, region: draft.region, scope: draft.scope, tier: draft.tier, bloom: bloomOf(list), model: embedModel },
+      metadata: {
+        v: LISTING_METADATA_VERSION,
+        region: draft.region,
+        scope: draft.scope,
+        tier: draft.tier,
+        bloom: bloomOf(list),
+        model: embedModel,
+        // The proximity cells recall filters an on-site search's ring by (`cell6`, `cell5`, indexed on `jobs-listings-v2`).
+        ...(draft.scope === 'onsite' && draft.cells ? { cell6: draft.cells.r6, cell5: draft.cells.r5 } : {}),
+      },
     },
   ]);
   return { ok: true, listingId, namespace, tokens: list, calls };

@@ -344,8 +344,11 @@ export interface IndexVector {
   metadata: Record<string, string | number | boolean>;
 }
 
+/** A metadata filter: each field equal to a value, or (`$in`) to one of a set, as Vectorize takes it on an indexed field. */
+export type IndexFilter = Record<string, string | number | boolean | { $in: (string | number)[] }>;
+
 export interface VectorIndex {
-  query(vector: number[], opts: { topK: number; namespace?: string; filter?: Record<string, string | number | boolean> }): Promise<IndexMatch[]>;
+  query(vector: number[], opts: { topK: number; namespace?: string; filter?: IndexFilter }): Promise<IndexMatch[]>;
   upsert(vectors: IndexVector[]): Promise<void>;
   deleteByIds(ids: string[]): Promise<void>;
 }

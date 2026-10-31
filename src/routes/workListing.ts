@@ -107,7 +107,7 @@ interface ListingBody {
  * derived after the gate.
  */
 function readDraft(b: Record<string, unknown>): DraftBody | DraftRefusal {
-  const { profileId, region, scope, tier, lang, titles, skills, certificates, languages } = b;
+  const { profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells } = b;
   if (
     typeof profileId !== 'string' ||
     typeof region !== 'string' ||
@@ -118,7 +118,7 @@ function readDraft(b: Record<string, unknown>): DraftBody | DraftRefusal {
   ) {
     return 'bad_shape';
   }
-  const draft = { profileId, region, scope, tier, lang, titles, skills, certificates, languages } as DraftBody;
+  const draft = { profileId, region, scope, tier, lang, titles, skills, certificates, languages, ...(cells != null ? { cells } : {}) } as DraftBody;
   return checkDraft({ ...draft, pseudonym: 'P' }) ?? draft;
 }
 

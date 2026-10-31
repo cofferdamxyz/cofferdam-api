@@ -133,7 +133,10 @@ export function memoryIndex(): MemoryIndex {
       const matches: IndexMatch[] = [];
       for (const v of vectors.values()) {
         if ((v.namespace ?? '') !== (opts.namespace ?? '')) continue;
-        if (opts.filter && Object.entries(opts.filter).some(([k, want]) => v.metadata[k] !== want)) continue;
+        // Each field equal, or (`$in`) one of a set, as Vectorize filters an indexed field.
+        const passes = (have: unknown, want: unknown) =>
+          want !== null && typeof want === 'object' && '$in' in want ? (want as { $in: unknown[] }).$in.includes(have) : have === want;
+        if (opts.filter && Object.entries(opts.filter).some(([k, want]) => !passes(v.metadata[k], want))) continue;
         matches.push({ id: v.id, score: cosine(vector, v.values), metadata: { ...v.metadata } });
       }
       return matches.sort((a, b) => b.score - a.score).slice(0, opts.topK);
