@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { INTENT_MAX_CHARS } from '../src/services/work/intent.js';
 import { DRAFT_LIMITS } from '../src/services/work/listings.js';
+import { embedText } from './fixtures/work/registryTools.js';
 import {
   abbreviate,
   buildPlan,
@@ -99,6 +100,13 @@ describe('the embed check plan', () => {
     // The digest holds the texts, not their order.
     expect(planDigest([...texts].reverse())).toBe(planDigest(texts));
     expect(planDigest(texts.map((t, i) => (i ? t : { ...t, text: `${t.text} ` })))).not.toBe(planDigest(texts));
+  });
+
+  it('gives every awkward pair the plane holds as one text one embedding input (NFC and white space, as the phone)', () => {
+    const textOf = new Map(texts.map((t) => [t.id, t.text]));
+    const same = meta.filter((m) => m.cleanId && m.planeSame);
+    expect(same.some((m) => m.change === 'decomposed accents (NFD)')).toBe(true);
+    for (const m of same) expect(embedText(textOf.get(m.id)!)).toBe(embedText(textOf.get(m.cleanId!)!));
   });
 
   it('holds an awkward claim the draft check would refuse (past 120 characters as sent) as no longer one text', () => {

@@ -6,9 +6,10 @@
  * phone through LiteRT-LM, the app's embedder since 2026-10-30 (its text-only
  * file, `EMBEDDINGGEMMA_2_LITERT`; workspace decision 0068), when the plane's
  * index generation is that model's: v2 (`token-registry-v2`,
- * `jobs-listings-v2`). The phone sends each text with the role's prompt and
- * its white space as the Mac embedded the registry's labels, so a text has
- * the index's vector (decision 0068 records the phones against the Mac).
+ * `jobs-listings-v2`). The phone sends each text with the role's prompt, in
+ * NFC and its white space as the Mac embedded the registry's labels, so a text
+ * has the index's vector (decision 0068 records the phones against the Mac),
+ * and a listing's text within the embedder's input (`listingTextWithin`).
  * Every vector names its model and size (`{ model, dims, values }`) and is
  * taken only for the pinned generation's model (`readClientVector`), so
  * vectors of two models never share an index; a refusal names the plane's

@@ -128,7 +128,8 @@ for (const f of readdirSync(input).filter((f) => /\.ndjson$/.test(f)).sort()) {
   }
   if (limit && lines.length >= limit) break;
 }
-const clean = (label) => label.replace(/\s+/g, ' ').trim();
+// As the app's `embeddingInput` writes a text: NFC, one space a run of white space (every label is NFC already).
+const clean = (label) => label.normalize('NFC').replace(/\s+/g, ' ').trim();
 const texts = [...new Set(lines.map((l) => clean(l.metadata.label)))];
 const row = new Map(texts.map((t, i) => [t, i]));
 console.log(`${lines.length} vectors, ${texts.length} distinct texts, ${batch} a run${seedLeftOut ? `; ${seedLeftOut} of the deleted certificate seed left out` : ''}`);

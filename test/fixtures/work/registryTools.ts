@@ -130,6 +130,13 @@ export function ggufOf(model: string): string | null {
 }
 
 /**
+ * A text as the embedder gets it, after the role's prompt: NFC, each run of white space one space, none at the ends,
+ * as the app's `embeddingInput` writes it (cofferdam-app `src/lib/localAi/vectors.ts`) and as the registry's labels
+ * were embedded (`scripts/work/embed-registry.mjs`), so the Mac and the phone embed one text alike.
+ */
+export const embedText = (t: string): string => t.normalize('NFC').replace(/\s+/g, ' ').trim();
+
+/**
  * Texts embedded on the Mac with brew's `llama-embedding` (llama.cpp), as
  * `scripts/work/embed-registry.mjs` and the phone make them: the role's
  * prompt before each text, mean pooling, L2-normalised. It reads one text a
@@ -146,7 +153,7 @@ export function llamaEmbed(model: string, texts: readonly string[], role: EmbedR
   const dir = mkdtempSync(join(tmpdir(), 'llama-embed-'));
   try {
     const prompts = join(dir, 'prompts.txt');
-    writeFileSync(prompts, texts.map((t) => prompt + t.replace(/\s+/g, ' ').trim()).join('\n') + '\n');
+    writeFileSync(prompts, texts.map((t) => prompt + embedText(t)).join('\n') + '\n');
     const args = [...(file ? ['-m', file] : ['-hf', gguf!]), '--pooling', 'mean', '--embd-normalize', '2', '--embd-output-format', 'json', '-f', prompts, '-b', '8192', '-ub', '8192', '-c', '8192'];
     const run = spawnSync('llama-embedding', args, { encoding: 'utf8', maxBuffer: 1 << 30 });
     if (run.status !== 0) throw new Error(`llama-embedding exited ${run.status}: ${(run.stderr ?? '').split('\n').slice(-5).join(' ')}`);
@@ -225,7 +232,7 @@ export function litertEmbed(model: string, texts: readonly string[], role: Embed
   try {
     const inp = join(dir, 'texts.txt');
     const out = join(dir, 'vectors.f32');
-    writeFileSync(inp, texts.map((t) => prompt + t.replace(/\s+/g, ' ').trim()).join('\n') + '\n');
+    writeFileSync(inp, texts.map((t) => prompt + embedText(t)).join('\n') + '\n');
     const run = spawnSync('uv', ['run', '--quiet', LITERT_EMBED, '--model', file, '--in', inp, '--out', out, '--dims', String(dims)], { encoding: 'utf8', maxBuffer: 1 << 26 });
     if (run.status !== 0) throw new Error(`litert-embed exited ${run.status}: ${(run.stderr ?? '').split('\n').filter((l) => !/^(INFO|WARNING|I0000|W0000)/.test(l)).slice(-5).join(' ')}`);
     const buf = readFileSync(out);

@@ -259,6 +259,39 @@ export function listingText(d: ListingDraft, english: string[]): string {
   return `${parts.join('. ')}${pivots.length ? ` (${pivots.join('; ')})` : ''}`;
 }
 
+/** The draft without its last `n` claims: certificates from the last, then skills from the last, never a title. */
+export function withoutLastClaims(d: ListingDraft, n: number): ListingDraft {
+  const certificates = Math.min(Math.max(0, n), d.certificates.length);
+  const skills = Math.min(Math.max(0, n) - certificates, d.skills.length);
+  return { ...d, certificates: d.certificates.slice(0, d.certificates.length - certificates), skills: d.skills.slice(0, d.skills.length - skills) };
+}
+
+/**
+ * The listing text a phone embeds under a generation it runs (`listingText` without the English names, which only
+ * the snaps find), within the embedder's input: the whole text when the embedder takes it, else the longest it takes
+ * with claims dropped from the end (`withoutLastClaims`; each drop takes a suffix off, so the fewest drops it takes
+ * are found by halving). `accepts` says whether the embedder takes a text: LiteRT-LM's file holds its tokenizer, so
+ * the phones and the Mac refuse the same texts ("Input sequence length (2130) exceeds maximum supported signature
+ * length (1024)" from all three for one text, workspace decision 0068), and a draft gives one text everywhere. The
+ * record keeps every claim's token, so a dropped claim still gates; only the vector's ranking loses it. Throws when
+ * the titles alone are refused: `DRAFT_LIMITS` counts characters, not tokens, so five titles of 120 characters in a
+ * script the tokenizer splits finely can pass the draft's check and still be refused here; the publish flow answers
+ * that with a refusal the worker sees.
+ */
+export async function listingTextWithin(d: ListingDraft, accepts: (text: string) => Promise<boolean>): Promise<{ text: string; dropped: number }> {
+  const textDropping = (n: number) => listingText(withoutLastClaims(d, n), []);
+  if (await accepts(textDropping(0))) return { text: textDropping(0), dropped: 0 };
+  let refused = 0;
+  let taken = d.skills.length + d.certificates.length;
+  if (!(await accepts(textDropping(taken)))) throw new Error('the embedder refuses the listing text of the titles alone');
+  while (taken - refused > 1) {
+    const mid = (refused + taken) >> 1;
+    if (await accepts(textDropping(mid))) taken = mid;
+    else refused = mid;
+  }
+  return { text: textDropping(taken), dropped: taken };
+}
+
 export interface PublishDeps {
   inference: Inference;
   /** The registry the claims snap to (its store, its index, its τ). */
