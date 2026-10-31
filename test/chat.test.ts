@@ -248,11 +248,18 @@ describe('runChat', () => {
   });
 
   it('says a planned screen is coming, never ready, and still opens it', async () => {
+    const inference = fakeInference({ 'chat-router': clef('add_document', 0.95), 'chat-answer': () => sse(['x']) });
+    const events = await collect(runChat({ inference, messages: user('how do I add my welding certificate?') }));
+    expect(events).toContainEqual({ type: 'action', request: { id: 'add_document' } });
+    expect(texts(events)).toMatch(/isn't available yet; it's coming/);
+    expect(texts(events)).not.toMatch(/is ready/);
+  });
+
+  it('opens the CV import, built in the chat since 2026-10-31, as ready', async () => {
     const inference = fakeInference({ 'chat-router': clef('import_cv', 0.95), 'chat-answer': () => sse(['x']) });
     const events = await collect(runChat({ inference, messages: user('how do I upload my CV?') }));
     expect(events).toContainEqual({ type: 'action', request: { id: 'import_cv' } });
-    expect(texts(events)).toMatch(/isn't available yet; it's coming/);
-    expect(texts(events)).not.toMatch(/is ready/);
+    expect(texts(events)).toMatch(/Import your CV is ready/);
   });
 
   it('opens the hirer’s flow when the hiring check is on, says it is coming, and asks nothing when it is off', async () => {
