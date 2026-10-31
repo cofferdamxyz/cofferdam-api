@@ -27,6 +27,7 @@ import { hirerQuery, type HireDeps } from '../src/services/work/hire.js';
 import { D1ListingStore, publishListing, type ListingDraft, type PublishDeps } from '../src/services/work/listings.js';
 import { callCostMicroUsd } from '../src/services/work/meter.js';
 import { createRestAi } from './chat-eval/restAi.js';
+import { restEmbedModel } from './fixtures/work/registryTools.js';
 import { memoryIndex } from './fixtures/work/fakes.js';
 import { FIXTURE_CVS, HIRER_PROMPTS, type FixtureCv } from './fixtures/work/index.js';
 import { seededRegistry } from './work-eval/seed.js';
@@ -81,7 +82,7 @@ describe.skipIf(!LIVE)('one hirer query (live, Workers AI)', () => {
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const token = process.env.CLOUDFLARE_API_TOKEN;
     if (!accountId || !token) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
-    const inference = createInference({}, { ai: createRestAi({ accountId, token }) })!;
+    const inference = createInference({ WORK_EMBED_MODEL: restEmbedModel('WORK_EVAL') }, { ai: createRestAi({ accountId, token }) })!;
 
     // The synthetic registry seed, embedded once.
     const { db, registry } = await seededRegistry(inference);

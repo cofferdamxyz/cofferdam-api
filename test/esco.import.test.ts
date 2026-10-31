@@ -36,6 +36,7 @@ import { createInference } from '../src/services/inference/index.js';
 import { ESCO_LANGS, planEscoImport, registrySqlFiles, vectorLine, type EscoFiles, type EscoLang } from '../src/services/work/esco.js';
 import { embedTexts } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
+import { restEmbedModel } from './fixtures/work/registryTools.js';
 
 const RUN = process.env.ESCO_IMPORT === '1';
 /** Labels per bge-m3 call, and vectors per NDJSON file (about 49 MB, far below Vectorize's 100 MB upload; about three minutes a file on 2026-10-24). */
@@ -73,7 +74,7 @@ describe.skipIf(!RUN)('ESCO import (opt-in, from the Mac)', () => {
     const sqlFiles = registrySqlFiles(plan, Date.now());
     sqlFiles.forEach((text, i) => writeFileSync(join(out, `registry-${String(i + 1).padStart(3, '0')}.sql`), text));
 
-    const inference = createInference({}, { ai: createRestAi({ accountId, token }) })!;
+    const inference = createInference({ WORK_EMBED_MODEL: restEmbedModel('ESCO_IMPORT') }, { ai: createRestAi({ accountId, token }) })!;
     const tokens = new Map(plan.tokens.map((t) => [t.token, t]));
     const batches: { from: number; labels: typeof plan.labels }[] = [];
     for (let i = 0; i < plan.labels.length; i += BATCH) batches.push({ from: i, labels: plan.labels.slice(i, i + BATCH) });

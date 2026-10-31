@@ -40,6 +40,7 @@ import { planEscoImport, type EscoLang } from '../src/services/work/esco.js';
 import { onetCandidates, readCrosswalk, readOnetTitles, titleForms } from '../src/services/work/onet.js';
 import { EMBED_PROMPTS_BY_MODEL, embedTexts, labelNorm, tauFor, type EmbedRole, type Tau } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
+import { restEmbedModel } from './fixtures/work/registryTools.js';
 
 const RUN = process.env.ONET_EVAL === '1';
 const RELEASE = '31.0';
@@ -199,7 +200,7 @@ describe.skipIf(!RUN)('US layer, before and after (opt-in, from the Mac)', () =>
     if (!layer.length) throw new Error(`no national-vectors-*.ndjson in ${out}: run test/onet.import.test.ts first`);
     const dims = layer[0]!.values.length;
 
-    const inference = createInference({ WORK_EMBED_MODEL: process.env.WORK_EMBED_MODEL }, { ai: createRestAi({ accountId, token: apiToken }) })!;
+    const inference = createInference({ WORK_EMBED_MODEL: restEmbedModel('ONET_EVAL') }, { ai: createRestAi({ accountId, token: apiToken }) })!;
     const embedModel = await inference.model('work-embed');
     const tau = tauFor(embedModel);
     const embedMany = async (texts: string[], role: EmbedRole): Promise<Float32Array> => {

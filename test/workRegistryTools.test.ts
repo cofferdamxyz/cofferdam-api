@@ -33,6 +33,8 @@ import {
   litertOf,
   readLabelExport,
   readVectorCache,
+  REST_EMBED_DEFAULT,
+  restEmbedModel,
   writeVectorCache,
 } from './fixtures/work/registryTools.js';
 
@@ -97,6 +99,28 @@ describe('τ for the models the plane cannot run', () => {
     for (const model of CLIENT_EMBED_MODELS) {
       expect(DEFAULT_TAU_BY_MODEL[model], model).toBeDefined();
       expect(tauFor(model), model).not.toEqual(DEFAULT_TAU);
+    }
+  });
+});
+
+describe('the embedding model of a tool that embeds through Workers AI', () => {
+  it("is WORK_EMBED_MODEL, else bge-m3, never the seam's default, and refuses a model only the phone runs", () => {
+    const saved = process.env.WORK_EMBED_MODEL;
+    try {
+      delete process.env.WORK_EMBED_MODEL;
+      expect(restEmbedModel('WORK_EVAL')).toBe(REST_EMBED_DEFAULT);
+      expect(REST_EMBED_DEFAULT).toBe('@cf/baai/bge-m3');
+      process.env.WORK_EMBED_MODEL = '  ';
+      expect(restEmbedModel('WORK_EVAL')).toBe(REST_EMBED_DEFAULT);
+      process.env.WORK_EMBED_MODEL = '@cf/google/embeddinggemma-300m';
+      expect(restEmbedModel('WORK_EVAL')).toBe('@cf/google/embeddinggemma-300m');
+      for (const model of CLIENT_EMBED_MODELS) {
+        process.env.WORK_EMBED_MODEL = model;
+        expect(() => restEmbedModel('ONET_IMPORT'), model).toThrow(/ONET_IMPORT embeds through Workers AI.*only the phone runs/);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.WORK_EMBED_MODEL;
+      else process.env.WORK_EMBED_MODEL = saved;
     }
   });
 });

@@ -18,6 +18,7 @@ import {
   type InferenceEnv,
   type InferenceOp,
 } from '../src/services/inference/index.js';
+import { CLIENT_EMBED_MODELS, EMBED_DIMS_BY_MODEL, EMBEDDINGGEMMA_2_LITERT } from '../src/services/work/registry.js';
 
 function kv(values: Record<string, string>, reads: string[] = []): KVNamespace {
   return {
@@ -150,6 +151,21 @@ describe('createInference', () => {
     expect(signal.aborted).toBe(false);
     ctl.abort();
     expect(signal.aborted).toBe(true);
+  });
+});
+
+describe("the v2 generation's pin (workspace decision 0068)", () => {
+  it("names one model in wrangler.jsonc's var and the seam's default, the LiteRT-LM file the v2 indexes hold, at 768", () => {
+    const text = readFileSync(join(__dirname, '..', 'wrangler.jsonc'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/,(\s*[}\]])/g, '$1');
+    const config = JSON.parse(text) as { vars: Record<string, string>; vectorize: { binding: string; index_name: string }[] };
+    expect(config.vars.WORK_EMBED_MODEL).toBe(EMBEDDINGGEMMA_2_LITERT);
+    expect(OPS['work-embed'].model).toBe(EMBEDDINGGEMMA_2_LITERT);
+    expect(CLIENT_EMBED_MODELS.has(EMBEDDINGGEMMA_2_LITERT)).toBe(true);
+    expect(EMBED_DIMS_BY_MODEL[EMBEDDINGGEMMA_2_LITERT]).toBe(768);
+    expect(Object.fromEntries(config.vectorize.map((v) => [v.binding, v.index_name]))).toEqual({ TOKEN_REGISTRY: 'token-registry-v2', JOBS_LISTINGS: 'jobs-listings-v2' });
   });
 });
 

@@ -35,6 +35,7 @@ import { clefInput, DOCUMENT_TYPE_KEYS, needQuestions, readNoul, requestQuestion
 import { classifyDocument } from '../src/services/work/executor.js';
 import { candidatesFor, embedTexts } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
+import { restEmbedModel } from './fixtures/work/registryTools.js';
 import documents from './fixtures/work/documents.json';
 import { FIXTURE_CVS, HIRER_PROMPTS } from './fixtures/work/index.js';
 import { localClefPending, localClefSlug, parseLocalClef, withLocalClef } from './work-eval/localClef.js';
@@ -67,7 +68,7 @@ describe.skipIf(!LIVE)('Clef classification patterns (live, Workers AI)', () => 
     if (!accountId || !token) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
     const localClef = parseLocalClef(process.env.WORK_CLEF_LOCAL, 'WORK_CLEF_LOCAL');
     const rest = createRestAi({ accountId, token });
-    const inference = createInference({}, { ai: localClef ? withLocalClef(rest, localClef) : rest })!;
+    const inference = createInference({ WORK_EMBED_MODEL: restEmbedModel('WORK_CLEF_EVAL') }, { ai: localClef ? withLocalClef(rest, localClef) : rest })!;
     const model = await inference.model('work-classify');
     const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 1000) / 10}%` : '—');
 

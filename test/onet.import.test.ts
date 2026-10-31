@@ -64,6 +64,7 @@ import {
 } from '../src/services/work/onet.js';
 import { embedTexts, tauFor } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
+import { restEmbedModel } from './fixtures/work/registryTools.js';
 
 const RUN = process.env.ONET_IMPORT === '1';
 const RELEASE = '31.0';
@@ -120,7 +121,7 @@ describe.skipIf(!RUN)('US layer import (opt-in, from the Mac)', () => {
     ];
     process.stdout.write(`inputs: ${esco.tokens.filter((t) => t.kind === 'pos').length} ESCO occupations, ${crosswalk.length} crosswalk rows, ${titles.length} O*NET titles\n`);
 
-    const inference = createInference({ WORK_EMBED_MODEL: process.env.WORK_EMBED_MODEL }, { ai: createRestAi({ accountId, token: apiToken }) })!;
+    const inference = createInference({ WORK_EMBED_MODEL: restEmbedModel('ONET_IMPORT') }, { ai: createRestAi({ accountId, token: apiToken }) })!;
     const embedModel = await inference.model('work-embed');
     const floor = process.env.ONET_FLOOR ? Number(process.env.ONET_FLOOR) : ONET_FLOOR;
     const noneMax = process.env.ONET_NONE_MAX ? Number(process.env.ONET_NONE_MAX) : ONET_NONE_MAX;

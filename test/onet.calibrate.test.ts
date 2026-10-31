@@ -46,6 +46,7 @@ import {
 } from '../src/services/work/onet.js';
 import { embedTexts, labelNorm, type Candidate, type EmbedRole } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
+import { restEmbedModel } from './fixtures/work/registryTools.js';
 
 const RUN = process.env.ONET_CALIBRATE === '1';
 const RELEASE = '31.0';
@@ -143,7 +144,7 @@ describe.skipIf(!RUN)("US layer, Clef's floor (opt-in, from the Mac)", () => {
         asks.push({ ...pos, onetCode: other, occupation: occupation.get(other) ?? '', candidates: candidates.get(other)!, gold: null });
       });
 
-    const inference = createInference({ WORK_EMBED_MODEL: process.env.WORK_EMBED_MODEL }, { ai: createRestAi({ accountId, token: apiToken }) })!;
+    const inference = createInference({ WORK_EMBED_MODEL: restEmbedModel('ONET_CALIBRATE') }, { ai: createRestAi({ accountId, token: apiToken }) })!;
     const savedPath = process.env.ONET_CALIBRATE_ANSWERS ? home(process.env.ONET_CALIBRATE_ANSWERS) : null;
     type Saved = { title: string; code: string; occupation: string; gold: string | null; shown: string[]; token: string | null; p: number | null; probabilities?: Record<string, number>; failed: boolean };
     const answers: Answer[] = savedPath

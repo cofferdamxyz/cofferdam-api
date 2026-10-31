@@ -15,7 +15,8 @@
  * - embeddings on the Mac for a model the plane cannot run, as the scripts and the
  *   phone make them: EmbeddingGemma 2's GGUF through brew's `llama-embedding`, and
  *   its LiteRT-LM file, the v2 generation's (workspace decision 0068), through
- *   `scripts/work/litert-embed.py` (`macEmbed` picks by the model's id).
+ *   `scripts/work/litert-embed.py` (`macEmbed` picks by the model's id);
+ * - the embedding model of a tool that embeds through Workers AI (`restEmbedModel`).
  */
 
 import { spawnSync } from 'node:child_process';
@@ -27,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 
 import { vectorLine } from '../../../src/services/work/esco.js';
 import {
+  CLIENT_EMBED_MODELS,
   EMBED_DIMS_BY_MODEL,
   EMBED_PROMPTS_BY_MODEL,
   EMBEDDINGGEMMA_2_LITERT,
@@ -157,6 +159,25 @@ export function llamaEmbed(model: string, texts: readonly string[], role: EmbedR
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** The model the opt-in tools that embed through Workers AI's REST API were calibrated on. */
+export const REST_EMBED_DEFAULT = '@cf/baai/bge-m3';
+
+/**
+ * The embedding model of an opt-in tool that embeds through Workers AI (the
+ * ESCO and O*NET imports, the O*NET eval and calibration, the registry, recall
+ * and Clef evals): `WORK_EMBED_MODEL`, else bge-m3, the model they were
+ * calibrated on. The seam's own default is the v2 generation's LiteRT-LM file
+ * since the switch (2026-10-30), which only the phone runs, so a tool left on it
+ * would embed nothing; such a model is refused by name.
+ */
+export function restEmbedModel(tool: string): string {
+  const model = process.env.WORK_EMBED_MODEL?.trim() || REST_EMBED_DEFAULT;
+  if (CLIENT_EMBED_MODELS.has(model)) {
+    throw new Error(`${tool} embeds through Workers AI, and WORK_EMBED_MODEL names ${model}, which only the phone runs: unset it for bge-m3, or name a model Workers AI runs`);
+  }
+  return model;
 }
 
 /** The `.litertlm` file a client-embedded model names (`litertlm:<repo>:<file>`), else null. */

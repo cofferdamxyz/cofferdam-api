@@ -25,8 +25,10 @@
  * label vectors cached in ESCO_VECTORS, default ESCO_DIR): Brazil's and
  * Mexico's words for a trade, which ESCO's European Portuguese and Spanish
  * lack, and English false friends. It writes
- * `test/work-eval/registry-locale-<date>.md`. These two embed on Workers AI,
- * as production does until the v3 generation (bge-m3 today).
+ * `test/work-eval/registry-locale-<date>.md`. These two embed on Workers AI
+ * with bge-m3 (`restEmbedModel`; WORK_EMBED_MODEL another model it runs), as
+ * production did until the v2 switch of 2026-10-30; production's v2 vectors
+ * come from the phone, which only the replica's runs below stand in for.
  *
  * With V3_DIR, ESCO_SQL and US_SQL a third run snaps the same strings on the
  * v3 generation: the registry replica (`test/work-eval/replica.ts`: ESCO and
@@ -83,6 +85,7 @@ import {
   type TokenKind,
 } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
+import { restEmbedModel } from './fixtures/work/registryTools.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 import { cosine, memoryIndex } from './fixtures/work/fakes.js';
 import localeCases from './fixtures/work/locale-cases.json';
@@ -283,7 +286,7 @@ function liveInference(): Inference {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !token) throw new Error('WORK_EVAL needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN');
   // WORK_EMBED_MODEL tries another embedding model (2026-10-25: @cf/google/embeddinggemma-300m against bge-m3).
-  return createInference({ WORK_EMBED_MODEL: process.env.WORK_EMBED_MODEL }, { ai: createRestAi({ accountId, token }) })!;
+  return createInference({ WORK_EMBED_MODEL: restEmbedModel('WORK_EVAL') }, { ai: createRestAi({ accountId, token }) })!;
 }
 
 function reportSuffix(tau: { auto: number; low: number }): string {
