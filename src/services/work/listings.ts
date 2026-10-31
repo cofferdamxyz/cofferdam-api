@@ -27,8 +27,8 @@ import type { Inference } from '../inference/index.js';
 import { BLOCK_LANGS, scanText, type BlockLang } from './blocks.js';
 import { bloomOf } from './bloom.js';
 import type { ExecutorOptions } from './executor.js';
-import { withCalls, type WorkCall } from './fields.js';
-import { embedTexts, snap, type RegistryDeps, type SnapInput, type TokenKind, type VectorIndex } from './registry.js';
+import { withCalls, WorkCallsError, type WorkCall } from './fields.js';
+import { embedTexts, snap, type RegistryDeps, type SnapInput, type SnapResult, type TokenKind, type VectorIndex } from './registry.js';
 
 export const SCOPES = ['onsite', 'remote'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -344,8 +344,45 @@ export type PublishOutcome =
   | { ok: false; error: 'embedding_failed'; calls: WorkCall[] };
 
 /**
+ * Claims a publish snaps at once. A claim that reaches the registry's step 3 waits on a reasoning model (DeepSeek
+ * V4.1 Flash at high effort: about 3 s at the median and up to about 24 s, 2026-10-31), the phone hears nothing until
+ * the publish ends, and iOS ends a request that hears nothing for 60 s; one claim after another, a draft of several such
+ * claims would pass that. The registry's writes take two snaps at once (a token or label written twice leaves one row).
+ */
+export const SNAP_CONCURRENCY = 4;
+
+/**
+ * Snaps the claims `SNAP_CONCURRENCY` at a time, the results in the claims' order. Each finished snap's calls go to
+ * `calls`; after a failure no new snap starts, and the first failure is thrown once the ones running have settled, with
+ * the calls of any other failure kept.
+ */
+async function snapClaims(deps: PublishDeps, inputs: readonly SnapInput[], calls: WorkCall[]): Promise<SnapResult[]> {
+  const out: SnapResult[] = new Array<SnapResult>(inputs.length);
+  const errors: unknown[] = [];
+  let next = 0;
+  const runner = async () => {
+    while (next < inputs.length && errors.length === 0) {
+      const i = next++;
+      try {
+        const s = await snap(deps.registry, inputs[i]!);
+        calls.push(...s.calls);
+        out[i] = s;
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SNAP_CONCURRENCY, inputs.length) }, runner));
+  if (errors.length) {
+    for (const err of errors.slice(1)) if (err instanceof WorkCallsError) calls.push(...err.calls);
+    throw errors[0];
+  }
+  return out;
+}
+
+/**
  * Publish (or republish) a listing; the claims snap with minting allowed,
- * certificates never mint. A pseudonym holds at most `MAX_WORK_PROFILES`
+ * certificates never mint, `SNAP_CONCURRENCY` at a time. A pseudonym holds at most `MAX_WORK_PROFILES`
  * listings: a new profile beyond them is refused before anything is snapped,
  * and again by the record's write when two arrive at once. A store or index
  * failure throws a `WorkCallsError` carrying the calls already made.
@@ -367,14 +404,11 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
     ['skill', draft.skills],
     ['cert', draft.certificates],
   ];
-  for (const [kind, raws] of claims) {
-    for (const raw of raws) {
-      const s = await snap(deps.registry, claimSnapInput(kind, raw, draft, client.claims?.get(claimKey(kind, raw))));
-      calls.push(...s.calls);
-      if (s.token) {
-        tokens.add(s.token);
-        if (s.labelEn) english.push(s.labelEn);
-      }
+  const inputs = claims.flatMap(([kind, raws]) => raws.map((raw) => claimSnapInput(kind, raw, draft, client.claims?.get(claimKey(kind, raw)))));
+  for (const s of await snapClaims(deps, inputs, calls)) {
+    if (s.token) {
+      tokens.add(s.token);
+      if (s.labelEn) english.push(s.labelEn);
     }
   }
   // The occupations' ISCO-08 unit groups (`isco:7126`): a plan that needs a close occupation matches the group (decision 0069).
