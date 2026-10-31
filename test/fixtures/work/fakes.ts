@@ -15,10 +15,17 @@ export interface FakeCall {
 /** Responses per op: a value, an Error to throw, or a function of the input returning either. */
 export type FakeResponses = Partial<Record<InferenceOp, unknown>>;
 
+/**
+ * The tests' plane embeds with bge-m3 unless a test pins another model: that is the path most Work tests exercise.
+ * Production's default is the v2 file since the switch of 2026-10-30, which only the phone runs
+ * (`workClientVectors.test.ts` and the tests that pin it cover that path).
+ */
+export const TEST_MODEL_DEFAULTS: Partial<Record<InferenceOp, string>> = { 'work-embed': '@cf/baai/bge-m3' };
+
 export function fakeInference(responses: FakeResponses, calls: FakeCall[] = [], models: Partial<Record<InferenceOp, string>> = {}): Inference {
   return {
     async model(op) {
-      return models[op] ?? OPS[op].model;
+      return models[op] ?? TEST_MODEL_DEFAULTS[op] ?? OPS[op].model;
     },
     async run(op, input, _call: InferenceCall = {}) {
       calls.push({ op, input });

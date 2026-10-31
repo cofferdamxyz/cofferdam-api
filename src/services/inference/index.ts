@@ -104,7 +104,10 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   // in the τ band, and the English pivot of a new token (free text by nature,
   // JSON mode, validated as a pivot). The index pins its embedding model:
   // a change of `work-embed` is a re-embed migration, never a quiet swap.
-  'work-embed': { model: '@cf/baai/bge-m3', envVar: 'WORK_EMBED_MODEL', timeoutMs: 10_000 },
+  // Since the v2 switch (2026-10-30, workspace decision 0068): EmbeddingGemma 2's LiteRT-LM file, the indexes' generation,
+  // which only the phone runs (`work/registry.ts` EMBEDDINGGEMMA_2_LITERT, `CLIENT_EMBED_MODELS`). The default matches
+  // the var, so a dropped WORK_EMBED_MODEL never sends bge-m3's 1,024 dimensions at a 768-dimension index.
+  'work-embed': { model: 'litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm', envVar: 'WORK_EMBED_MODEL', timeoutMs: 10_000 },
   'work-adjudicate': { model: '@cf/cloudflare/clef-flash', envVar: 'WORK_ADJUDICATE_MODEL', timeoutMs: 6_000 },
   'work-pivot': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 15_000 },
   // The finalist decision (S8, workspace decision 0069): Clef, not flash, as the founder ruled on 2026-10-28.

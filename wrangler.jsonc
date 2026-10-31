@@ -83,7 +83,13 @@
     // names a gateway that does not exist fails every inference call
     // (runbook: AI Gateways).
     "AI_GATEWAY_ID": "cofferdam-strict",
-    "AI_GATEWAY_DOCUMENTS_ID": "cofferdam-documents"
+    "AI_GATEWAY_DOCUMENTS_ID": "cofferdam-documents",
+    // The embedding generation of the token registry and the listings: v2,
+    // EmbeddingGemma 2's LiteRT-LM file (workspace decision 0068, the entry
+    // "The removal"; switched 2026-10-30). Only the phone runs it, so the plane
+    // embeds no text: every Work route takes the phone's vectors (plane.md,
+    // Client vectors), and the indexes below hold the same file's vectors.
+    "WORK_EMBED_MODEL": "litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm"
   },
 
   // The deployed version id, shown by GET /v1/privacy/ai beside the live gateway settings.
@@ -178,10 +184,12 @@
   // ─────────────────────────────────────────────────────────────────
   // Cofferdam Work (workspace docs/product/engine.md; decisions 0018, 0019),
   // created by the founder on 2026-10-24 (docs/runbooks/cloudflare-deploys.md,
-  // Cofferdam Work resources): D1 cofferdam-work with migrations/work applied,
-  // Vectorize token-registry-v1 (metadata index kind) and jobs-listings-v1
-  // (metadata index tier, namespaced by coarse region and scope, decision
-  // 0019). A metadata index must exist before the first insert, or those
+  // Cofferdam Work resources): D1 cofferdam-work with migrations/work applied.
+  // The Vectorize indexes are the v2 generation, created 2026-10-30 (runbook,
+  // The v2 generation; the v1 indexes were deleted that day):
+  // token-registry-v2 (metadata index kind) and jobs-listings-v2 (metadata
+  // index tier, namespaced by coarse region and scope, decision 0019), both
+  // 768 dimensions, cosine. A metadata index must exist before the first insert, or those
   // vectors cannot be filtered. The listing routes also need the secret
   // WORK_PSEUDONYM_KEY (set 2026-10-24): the HMAC key of the account's Work
   // pseudonym. Rotating it changes every pseudonym, and no listing can be
@@ -199,8 +207,8 @@
     { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "bcaf84d1-c870-4e4e-85e9-6b0dd822ecd5", "migrations_dir": "migrations/work", "remote": true }
   ],
   "vectorize": [
-    { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v1", "remote": true },
-    { "binding": "JOBS_LISTINGS", "index_name": "jobs-listings-v1", "remote": true }
+    { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v2", "remote": true },
+    { "binding": "JOBS_LISTINGS", "index_name": "jobs-listings-v2", "remote": true }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources

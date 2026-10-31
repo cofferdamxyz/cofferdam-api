@@ -28,6 +28,7 @@ import {
   type UsageSql,
 } from '../src/services/chatUsageStore.js';
 import { clearUnpricedModels, MODEL_PRICES, modelCostMicroUsd, OPS, type InferenceOp } from '../src/services/inference/index.js';
+import { CLIENT_EMBED_MODELS } from '../src/services/work/registry.js';
 import fixtures from './fixtures/sdk-attestations.json';
 
 const GEMMA = '@cf/google/gemma-4-26b-a4b-it';
@@ -146,8 +147,9 @@ describe('MODEL_PRICES', () => {
     expect(modelCostMicroUsd('@cf/deepseek-ai/deepseek-v4.1-flash-1017', 1_070, 280)).toBe(657);
     // The same turn on glm-5.3, the Thinking tier's model until 2026-10-21: about $0.0027.
     expect(modelCostMicroUsd('@cf/zai-org/glm-5.3', 1_070, 280)).toBe(2_730);
-    // Every default chat model has a price.
-    for (const op of Object.values(OPS)) expect(MODEL_PRICES[op.model]).toBeDefined();
+    // Every default model the plane runs has a price; one only the phone runs (the v2 embedder) costs the plane nothing.
+    for (const op of Object.values(OPS)) if (!CLIENT_EMBED_MODELS.has(op.model)) expect(MODEL_PRICES[op.model], op.model).toBeDefined();
+    expect(CLIENT_EMBED_MODELS.has(OPS['work-embed'].model)).toBe(true);
   });
 
   it('prices an unknown model at zero and logs it once', () => {
