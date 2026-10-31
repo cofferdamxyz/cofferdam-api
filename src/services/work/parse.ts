@@ -2,16 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The whole-CV parse under evaluation (workspace `docs/product/engine.md`,
- * "Whole-document parse (under evaluation)"): one hosted call reads a CV,
- * as a page image or as the phone's OCR text, into the identity and the
- * `claimed` section of a `cofferdam.cv.v1`, and the plane keeps nothing.
+ * The whole-CV parse (workspace decision 0021, ruled by the founder on
+ * 2026-10-28; `docs/product/engine.md`, Whole-document parse): one hosted
+ * call reads a CV into the identity and the `claimed` section of a
+ * `cofferdam.cv.v1`, and the plane keeps nothing of the request or the answer.
  *
- * NOT ROUTED. Decision 0021 forbids any image or raw OCR text reaching a
- * hosted model; this module exists so `test/workParse.eval.test.ts` can
- * measure the alternative the founder asked for on 2026-10-27, on synthetic
- * CVs only. A route (`POST /v1/work/parse`) waits on the decision 0021
- * amendment.
+ * `POST /v1/work/parse` (`routes/work.ts`) serves it on the CV's text only:
+ * the PDF's text layer, else the phone's text recognition, after the phone's
+ * identity strip (every email and, for an account bound to a passport, the
+ * holder's name and birth date become placeholders; the founder's ruling of
+ * 2026-10-30). `parseCv` is the route's call, on `work-parse` (DeepSeek V4.1
+ * Flash, the founder's pin of 2026-10-28) through the documents AI Gateway,
+ * which cannot store; it hands its calls to the meter and logs reason codes,
+ * never text. The route never builds the image input, so no page image
+ * reaches a hosted model; the image input stays for the benchmarks
+ * (`test/workParse.eval.test.ts`, `test/workResume.eval.test.ts`), which
+ * compare it with the text.
  *
  * The request follows the model's family: Workers AI's own JSON mode for
  * llama, the OpenAI JSON-schema wrapper with thinking off for the rest. An
@@ -21,7 +27,10 @@
  */
 
 import { thinkingOff } from '../chat/run.js';
+import { InferenceTimeout, OPS, type Inference } from '../inference/index.js';
 import { dedupeClaims, languageCode, parseCvDate, type CvClaim, type CvClaimed, type CvDate, type CvLanguage } from './cv.js';
+import { failureCode } from './executor.js';
+import { estimatedUsage, usageOrEstimate, type WorkCall } from './fields.js';
 
 export interface ParsePage {
   mime: 'image/png' | 'image/jpeg';
@@ -112,8 +121,15 @@ export const PARSE_SYSTEM = [
  */
 const isLlama = (model: string) => model.startsWith('@cf/meta/');
 
-/** The request body for `model`. The CV is the only user content, with no id of any kind. */
-export function parseRequest(model: string, input: ParseInput): Record<string, unknown> {
+/** The answer's cap the benchmarks measured; the route raises it for long CVs (`PARSE_MAX_TOKENS`). */
+export const BENCH_MAX_TOKENS = 2_500;
+
+/**
+ * The request body for `model`. The CV is the only user content, with no id of any kind. `maxTokens` caps the answer
+ * only: an answer that fits under the lower cap is the same under a higher one.
+ */
+export function parseRequest(model: string, input: ParseInput, opts: { maxTokens?: number } = {}): Record<string, unknown> {
+  const max_tokens = opts.maxTokens ?? BENCH_MAX_TOKENS;
   if (input.kind === 'image' && (input.pages.length < 1 || input.pages.length > MAX_PAGES)) {
     throw new RangeError(`a parse reads 1 to ${MAX_PAGES} pages, not ${input.pages.length}`);
   }
@@ -129,13 +145,13 @@ export function parseRequest(model: string, input: ParseInput): Record<string, u
     { role: 'user', content: user },
   ];
   if (isLlama(model)) {
-    return { messages, response_format: { type: 'json_schema', json_schema: PARSE_JSON_SCHEMA }, temperature: 0, max_tokens: 2_500 };
+    return { messages, response_format: { type: 'json_schema', json_schema: PARSE_JSON_SCHEMA }, temperature: 0, max_tokens };
   }
   return {
     messages,
     response_format: { type: 'json_schema', json_schema: { name: 'cofferdam_cv_parse', schema: PARSE_JSON_SCHEMA, strict: true } },
     temperature: 0,
-    max_tokens: 2_500,
+    max_tokens,
     ...thinkingOff(model),
   };
 }
@@ -325,4 +341,137 @@ export function readParse(result: unknown, now = Date.now()): ParsedCv {
     },
     dropped,
   };
+}
+
+// ── The route's call ────────────────────────────────────────────────────────
+
+/** The longest CV text the route takes, in characters: about 10,000 tokens, several dense pages. */
+export const MAX_PARSE_TEXT = 40_000;
+
+/**
+ * The route's answer cap: the schema's lists at their limits (20 jobs of 15 skills, 40 skills, 30 certificates) take
+ * about 6,000 tokens, where the benchmarks' 2,500 would cut a long CV's answer and fail it twice. DeepSeek V4.1 Flash
+ * wrote 400 to 550 tokens for each synthetic CV.
+ */
+export const PARSE_MAX_TOKENS = 6_000;
+
+/** The keys a parse request may carry. Any other, a page image above all, is refused. */
+const PARSE_BODY_KEYS: ReadonlySet<string> = new Set(['account', 'text']);
+
+export type ParseBodyRead =
+  | { ok: true; text: string }
+  | { ok: false; status: 400; error: 'bad_request'; message: string }
+  | { ok: false; status: 413; error: 'text_too_long'; max: number };
+
+/**
+ * The route's check of a parse request, beside the account the Work gate
+ * reads: the CV's text and nothing else. A refusal never echoes the body. The
+ * text is not trimmed or rewritten: the model reads what the phone sent.
+ */
+export function readParseBody(b: Record<string, unknown>): ParseBodyRead {
+  if (Object.keys(b).some((k) => !PARSE_BODY_KEYS.has(k))) {
+    return { ok: false, status: 400, error: 'bad_request', message: "the body takes the account and the CV's text only" };
+  }
+  if (typeof b.text !== 'string' || !b.text.trim()) {
+    return { ok: false, status: 400, error: 'bad_request', message: "text must be the CV's text" };
+  }
+  if (b.text.length > MAX_PARSE_TEXT) return { ok: false, status: 413, error: 'text_too_long', max: MAX_PARSE_TEXT };
+  return { ok: true, text: b.text };
+}
+
+/**
+ * The placeholders the phone's identity strip writes (`test/work-eval/identityStrip.ts`, its constants;
+ * `test/workParseRoute.test.ts` holds the two together until the strip is ported to the app).
+ */
+const STRIP_PLACEHOLDER = /\[(?:EMAIL_\d+|PERSON_\d+|BIRTH_DATE)\]/;
+
+/** Whether an answer stopped at its token cap: a retry would stop there too. */
+function cutAtCap(result: unknown): boolean {
+  const r = (result ?? {}) as { choices?: { finish_reason?: unknown }[] };
+  return r.choices?.[0]?.finish_reason === 'length';
+}
+
+/**
+ * The parse with every identity value that holds one of the strip's
+ * placeholders dropped and recorded (`placeholder`): DeepSeek copies
+ * `[EMAIL_1]` into the email on most stripped CVs (decision 0021, measured
+ * 2026-10-30), and the phone fills the email, and a bound account's name,
+ * from what its strip removed. The benchmarks read `readParse` without it,
+ * so they still count the copies.
+ */
+export function withoutPlaceholders(parsed: ParsedCv): ParsedCv {
+  const identity = { ...parsed.identity };
+  const dropped = [...parsed.dropped];
+  for (const key of ['name', 'email', 'phone', 'location'] as const) {
+    const v = identity[key];
+    if (v != null && STRIP_PLACEHOLDER.test(v)) {
+      identity[key] = null;
+      dropped.push({ path: key, reason: 'placeholder' });
+    }
+  }
+  return { ...parsed, identity, dropped };
+}
+
+/** Why a parse failed: the call ran out of time, threw, or answered no object of the schema's shape. */
+export type ParseFailure = 'timeout' | 'call_failed' | 'shape';
+
+export type ParseOutcome =
+  | { ok: true; parsed: ParsedCv; model: string; calls: WorkCall[] }
+  | { ok: false; reason: ParseFailure; model: string; calls: WorkCall[] };
+
+/** A parse answers within this, a retry included, so the phone can wait a fixed time; the gate's checks come before it. */
+export const PARSE_BUDGET_MS = 70_000;
+/** A retry runs only with this much of the budget left. */
+export const PARSE_RETRY_MIN_MS = 15_000;
+
+export interface ParseOptions {
+  now?: () => number;
+  signal?: AbortSignal;
+  /** One JSON line per failed attempt: op, model, attempt and a reason code, never text. */
+  log?: (fields: Record<string, unknown>) => void;
+}
+
+/**
+ * Reads a CV's text on `work-parse`. One call, and a second only when the
+ * first throws (not a timeout) or answers out of shape (not cut at its cap),
+ * with enough of `PARSE_BUDGET_MS` left: on the real resumes DeepSeek answered
+ * about one CV in a hundred with no JSON object and read it at the retry
+ * (decision 0021, 2026-10-29 and 2026-10-30). Every call is returned for the
+ * meter, a call that threw at its estimated input. A failure is logged by its
+ * code, never by its message, which a provider may build from the input.
+ */
+export async function parseCv(inference: Inference, text: string, opts: ParseOptions = {}): Promise<ParseOutcome> {
+  const now = opts.now ?? Date.now;
+  const model = await inference.model('work-parse');
+  const request = parseRequest(model, { kind: 'text', text }, { maxTokens: PARSE_MAX_TOKENS });
+  const started = now();
+  const calls: WorkCall[] = [];
+  let reason: ParseFailure = 'call_failed';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const left = PARSE_BUDGET_MS - (now() - started);
+    if (attempt > 1 && (reason === 'timeout' || left < PARSE_RETRY_MIN_MS)) break;
+    const t0 = now();
+    let result: unknown;
+    try {
+      result = await inference.run('work-parse', request, { signal: opts.signal, timeoutMs: Math.min(OPS['work-parse'].timeoutMs, left) });
+    } catch (err) {
+      reason = err instanceof InferenceTimeout ? 'timeout' : 'call_failed';
+      calls.push({ op: 'work-parse', model, ok: false, ms: now() - t0, usage: estimatedUsage(request) });
+      opts.log?.({ event: 'work_parse_failed', op: 'work-parse', model, attempt, reason: failureCode(err) });
+      continue;
+    }
+    const usage = usageOrEstimate(result, request);
+    try {
+      const parsed = readParse(result, now());
+      calls.push({ op: 'work-parse', model, ok: true, ms: now() - t0, usage });
+      return { ok: true, parsed, model, calls };
+    } catch (err) {
+      reason = 'shape';
+      calls.push({ op: 'work-parse', model, ok: false, ms: now() - t0, usage });
+      const cut = cutAtCap(result);
+      opts.log?.({ event: 'work_parse_failed', op: 'work-parse', model, attempt, reason: cut ? 'cut' : err instanceof ParseShapeError ? 'shape' : failureCode(err) });
+      if (cut) break;
+    }
+  }
+  return { ok: false, reason, model, calls };
 }

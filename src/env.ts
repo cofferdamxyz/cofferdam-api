@@ -154,6 +154,8 @@ export interface Env {
   WORK_INTENT_MODEL?: string;
   /** A hirer's request into a job profile in the work profile's shape (`services/work/jobProfile.ts`); unset, DeepSeek V4.1 Flash, low reasoning for a short request and none for a vacancy (`effortFor`). */
   WORK_JOB_PROFILE_MODEL?: string;
+  /** The whole-CV parse (`POST /v1/work/parse`, `services/work/parse.ts`); unset, DeepSeek V4.1 Flash with thinking off, the founder's pin of 2026-10-28 (workspace decision 0021). */
+  WORK_PARSE_MODEL?: string;
   /**
    * The token registry's models (decision 0018): embeddings (set to
    * EmbeddingGemma 2's LiteRT-LM file, the v2 generation, which only the phone

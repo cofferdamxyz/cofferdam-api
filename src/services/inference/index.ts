@@ -112,7 +112,8 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   'work-pivot': { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 15_000 },
   // The finalist decision (S8, workspace decision 0069): Clef, not flash, as the founder ruled on 2026-10-28.
   'work-decide': { model: '@cf/cloudflare/clef', envVar: 'WORK_DECIDE_MODEL', timeoutMs: 8_000 },
-  // The whole-CV parse (decision 0021, the founder's ruling of 2026-10-28; the pin proposed by the real-resume benchmark, to confirm).
+  // The whole-CV parse (`POST /v1/work/parse`, decision 0021): DeepSeek V4.1 Flash alone, the founder's pin of 2026-10-28
+  // (evening) after the real-resume benchmark, where it read titles at 98% and every date in about 5 s for $0.0013 a resume.
   'work-parse': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_PARSE_MODEL', timeoutMs: 60_000 },
   // A hirer's request read into a job profile in the work profile's shape (the founder's flow of 2026-10-30,
   // `services/work/jobProfile.ts`): a reasoning model, since the reading translates regional titles with the
