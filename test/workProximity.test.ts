@@ -60,13 +60,13 @@ describe("an on-site listing's proximity cells (decision 0067, rule 8)", () => {
 
 describe('recall within a ring', () => {
   const vector = [1, 0, 0];
-  const record = (id: string): ListingRecord => ({
+  const record = (id: string, region = 'br'): ListingRecord => ({
     listingId: id,
     pseudonym: `P-${id}`,
     profileId: 'main',
-    region: 'br',
+    region,
     scope: 'onsite',
-    namespace: 'br:onsite',
+    namespace: `${region}:onsite`,
     tier: 1,
     tokens: ['pos:electrician'],
     embedModel: 'm',
@@ -75,15 +75,24 @@ describe('recall within a ring', () => {
   });
   const setup = async () => {
     const index = memoryIndex();
-    const listing = (id: string, score: number, cell?: string) => ({
+    const listing = (id: string, score: number, cell?: string, region = 'br') => ({
       id,
       values: [score, Math.sqrt(1 - score * score), 0],
-      namespace: 'br:onsite',
-      metadata: { v: 1, region: 'br', scope: 'onsite', tier: 1, bloom: bloomOf(['pos:electrician']), model: 'm', ...(cell ? { cell6: cell } : {}) },
+      namespace: `${region}:onsite`,
+      metadata: { v: 1, region, scope: 'onsite', tier: 1, bloom: bloomOf(['pos:electrician']), model: 'm', ...(cell ? { cell6: cell } : {}) },
     });
     // The best match is in Rio, outside Macaé's ring; one next door; one two rings out; one with no cell (an older phone's).
-    await index.upsert([listing('rio', 0.99, RIO.r6), listing('near', 0.8, MACAE_RING1[0]), listing('far', 0.95, MACAE_RING2_ONE), listing('none', 0.9)]);
-    const records = new Map(['rio', 'near', 'far', 'none'].map((id) => [id, record(id)]));
+    // Two more whose phones name another country (an app region set to the US): one next door, counted, and one in Rio, not.
+    await index.upsert([
+      listing('rio', 0.99, RIO.r6),
+      listing('near', 0.8, MACAE_RING1[0]),
+      listing('far', 0.95, MACAE_RING2_ONE),
+      listing('none', 0.9),
+      listing('near-us', 0.7, MACAE_RING1[1], 'us'),
+      listing('rio-us', 0.98, RIO.r6, 'us'),
+    ]);
+    const regionOf: Record<string, string> = { 'near-us': 'us', 'rio-us': 'us' };
+    const records = new Map(['rio', 'near', 'far', 'none', 'near-us', 'rio-us'].map((id) => [id, record(id, regionOf[id])]));
     const listings: ListingStore = {
       put: async () => true,
       get: async (ids) => new Map(ids.flatMap((id) => (records.has(id) ? [[id, records.get(id)!] as const] : []))),
@@ -103,12 +112,20 @@ describe('recall within a ring', () => {
     ...over,
   });
 
-  it("searches the namespace with `cell $in` the ring and ranks the nearest first, whatever the score", async () => {
+  it("searches every launch country's on-site namespace with `cell $in` the ring and ranks the nearest first, whatever the score", async () => {
     const { index, deps } = await setup();
     const out = await recall(deps, intent({ near: { res: 6, rings: [[MACAE.r6], MACAE_RING1, [MACAE_RING2_ONE]] } }));
-    expect(index.queries[0]!.filter).toEqual({ cell6: { $in: [MACAE.r6, ...MACAE_RING1, MACAE_RING2_ONE] } });
+    // The hirer's own region first, then the other launch countries', each with the ring's filter.
+    const filter = { cell6: { $in: [MACAE.r6, ...MACAE_RING1, MACAE_RING2_ONE] } };
+    expect(index.queries.map((q) => [q.namespace, q.filter])).toEqual([
+      ['br:onsite', filter],
+      ['us:onsite', filter],
+      ['mx:onsite', filter],
+    ]);
+    // A worker next door whose phone names the US is counted; one in Rio is not, whichever country names it.
     expect(out.ok && out.finalists.map((f) => [f.listingId, f.distance])).toEqual([
       ['near', 1],
+      ['near-us', 1],
       ['far', 2],
     ]);
   });
@@ -117,6 +134,7 @@ describe('recall within a ring', () => {
     const { index, deps } = await setup();
     const out = await recall(deps, intent());
     expect(index.queries[0]!.filter).toBeUndefined();
+    expect(index.queries.map((q) => q.namespace)).toEqual(['br:onsite']);
     expect(out.ok && out.finalists.map((f) => f.listingId)).toEqual(['rio', 'far', 'none', 'near']);
     await recall({ ...deps, remoteCountries: ['br'] }, intent({ scope: 'remote', near: { res: 6, rings: [[MACAE.r6]] } }));
     expect(index.queries.at(-1)!.filter).toBeUndefined();
