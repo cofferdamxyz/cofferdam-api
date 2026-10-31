@@ -155,10 +155,12 @@ export interface Env {
   /** A hirer's request into a job profile in the work profile's shape (`services/work/jobProfile.ts`); unset, DeepSeek V4.1 Flash, low reasoning for a short request and none for a vacancy (`effortFor`). */
   WORK_JOB_PROFILE_MODEL?: string;
   /**
-   * The token registry's models (decision 0018): embeddings (unset, `bge-m3`;
-   * changing it is a re-embed migration of `token-registry-v1`, never a quiet
-   * swap), Clef's choice in the τ band (unset, `clef-flash`), and a new
-   * token's English pivot (unset, `llama-3.3-70b` in JSON mode).
+   * The token registry's models (decision 0018): embeddings (set to
+   * EmbeddingGemma 2's LiteRT-LM file, the v2 generation, which only the phone
+   * runs, and the seam's default is the same id; changing it is a re-embed
+   * migration into indexes of its own, never a quiet swap), Clef's choice in
+   * the τ band (unset, `clef-flash`), and a new token's English pivot (unset,
+   * `llama-3.3-70b` in JSON mode).
    */
   WORK_EMBED_MODEL?: string;
   WORK_ADJUDICATE_MODEL?: string;
@@ -169,7 +171,7 @@ export interface Env {
    * the best candidate snaps without a model; down to `WORK_TAU_LOW` Clef
    * adjudicates; below, a mint. Unset or invalid: the pinned `work-embed` model's own
    * (`DEFAULT_TAU_BY_MODEL` in `services/work/registry.ts`: bge-m3 0.95 and 0.6, EmbeddingGemma
-   * 0.81 and 0.45); one set alone keeps the other's, and a pair out of order falls back to the model's.
+   * 0.81 and 0.45, the v2 pin 0.96 and 0.81); one set alone keeps the other's, and a pair out of order falls back to the model's.
    */
   WORK_TAU_AUTO?: string;
   WORK_TAU_LOW?: string;
@@ -187,15 +189,15 @@ export interface Env {
    * database too.
    */
   WORK_DB?: D1Database;
-  /** `token-registry-v1`: one bge-m3 vector per registry label (1024 dimensions, cosine), metadata index on `kind`. */
+  /** `token-registry-v2`: one vector per registry label from EmbeddingGemma 2's LiteRT-LM file (768 dimensions, cosine), metadata index on `kind`. */
   TOKEN_REGISTRY?: Vectorize;
   /**
-   * `jobs-listings-v1`: one bge-m3 vector per published listing (1024, cosine),
-   * namespaced by coarse region and scope (`us-tx:onsite`, `br:remote`,
-   * decision 0019), metadata `{v, region, scope, tier, bloom, model}` only;
-   * metadata index on `tier`. Created 2026-10-24, like `token-registry-v1`
-   * (metadata index on `kind`); both bound with `remote: true`, since
-   * Vectorize has no local mode.
+   * `jobs-listings-v2`: one vector per published listing, the phone's
+   * EmbeddingGemma 2 (768, cosine), namespaced by coarse region and scope
+   * (`us-tx:onsite`, `br:remote`, decision 0019), metadata `{v, region, scope,
+   * tier, bloom, model}` only; metadata index on `tier`. Created 2026-10-30,
+   * like `token-registry-v2`, in place of v1's bge-m3 pair of 2026-10-24; both
+   * bound with `remote: true`, since Vectorize has no local mode.
    */
   JOBS_LISTINGS?: Vectorize;
   /** Countries whose remote namespaces a remote intent queries, comma-separated ISO codes; unset, `us,br,mx`. */

@@ -146,7 +146,7 @@ export interface Finalist {
 
 export interface RecallDeps {
   inference: Inference;
-  /** `jobs-listings-v1`. */
+  /** `jobs-listings-v2`. */
   index: VectorIndex;
   listings: ListingStore;
   remoteCountries?: string[];

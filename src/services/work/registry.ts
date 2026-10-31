@@ -11,8 +11,9 @@
  *     language and in English only (`labelLangs`): another language may use
  *     the word for something else, as ESCO's Spanish gives "instructor" to
  *     the air force officer and "coach" to the life coach.
- *  2. Otherwise `bge-m3` (`work-embed`) embeds the raw string and
- *     `token-registry-v1` returns the nearest labels of the same kind, in
+ *  2. Otherwise the string's query vector (`work-embed`: the phone's under
+ *     the v2 pin, else the plane's) asks `token-registry-v2`, on exact
+ *     scores, for the nearest labels of the same kind, in
  *     every language. The best token is taken when one of its labels in
  *     those two languages is at or above τ_auto; in the band down to τ_low,
  *     or when only another language's label reaches τ_auto (bge-m3 puts a
@@ -115,7 +116,7 @@ export interface RegistryToken {
 export type LabelKind = 'preferred' | 'alternative' | 'hidden' | 'observed';
 
 export interface RegistryLabel {
-  /** Also the label's `token-registry-v1` vector id when `embedded`. */
+  /** Also the label's vector id in the registry's index (`token-registry-v2`) when `embedded`. */
   labelId: string;
   token: string;
   lang: string;
@@ -198,7 +199,7 @@ export interface RegistryStore {
   insertToken(token: RegistryToken, labels: RegistryLabel[], at: number): Promise<boolean>;
   /** Add labels to tokens that exist; a label already known is left as it is. */
   addLabels(labels: RegistryLabel[], at: number): Promise<void>;
-  /** The labels whose vectors are now in `token-registry-v1`. */
+  /** The labels whose vectors are now in the registry's index (`token-registry-v2`). */
   markEmbedded(labelIds: string[]): Promise<void>;
   recordDecision(record: SnapRecord): Promise<void>;
 }

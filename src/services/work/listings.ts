@@ -7,8 +7,8 @@
  * work on publishes a listing: the phone sends the storefront part of the
  * Cofferdam CV the worker approved (titles, skills, certificates as claimed,
  * the fluent languages), a coarse region, the scope and the personhood tier;
- * the plane snaps the claims to registry tokens, embeds the listing with
- * `bge-m3` into `jobs-listings-v1` in the namespace of its region and scope,
+ * the plane snaps the claims to registry tokens, puts the listing's vector
+ * (the phone's under the v2 pin) into `jobs-listings-v2` in the namespace of its region and scope,
  * and keeps the exact token list in D1. Turning it off deletes both.
  *
  * Location is a coarse region only (`us-tx`, `br-sp`, `mx`): no position,
@@ -43,7 +43,7 @@ export function namespaceOf(region: string, scope: Scope, prefix = ''): string {
   return scope === 'remote' ? `${prefix}${countryOf(region)}:remote` : `${prefix}${region}:onsite`;
 }
 
-/** The metadata schema of a `jobs-listings-v1` vector. */
+/** The metadata schema of a listing's vector (`jobs-listings-v2`). */
 export const LISTING_METADATA_VERSION = 1;
 
 export interface ListingDraft {
@@ -264,7 +264,7 @@ export interface PublishDeps {
   /** The registry the claims snap to (its store, its index, its τ). */
   registry: RegistryDeps;
   listings: ListingStore;
-  /** `jobs-listings-v1`. */
+  /** `jobs-listings-v2`. */
   index: VectorIndex;
   now?: () => number;
   /** Prefixes every namespace (the live check uses its own, never production's). */

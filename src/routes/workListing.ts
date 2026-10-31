@@ -20,7 +20,7 @@
  * (`services/work/pseudonym.ts`, under `WORK_PSEUDONYM_KEY`), so a caller can
  * neither choose one nor reach another account's listings, and the account is
  * never stored beside a listing, logged with one or answered with one. Turning
- * a profile on publishes (or republishes) its listing into `jobs-listings-v1`
+ * a profile on publishes (or republishes) its listing into `jobs-listings-v2`
  * in the namespace of its region and scope, with its exact tokens in D1;
  * turning it off deletes both. An account holds at most three profiles' listings
  * (decision 0060): a fourth answers `409 profile_limit` before any model runs.

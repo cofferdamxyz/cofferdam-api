@@ -4,8 +4,8 @@
 /**
  * The Work plane's stores as the routes reach them (decisions 0018 and 0019):
  * D1 `WORK_DB` (`cofferdam-work`: the registry rows and the listing records),
- * Vectorize `TOKEN_REGISTRY` (`token-registry-v1`) and `JOBS_LISTINGS`
- * (`jobs-listings-v1`). Each is null while its binding is commented in
+ * Vectorize `TOKEN_REGISTRY` (`token-registry-v2`) and `JOBS_LISTINGS`
+ * (`jobs-listings-v2`), queried on exact scores (`vectorizeIndex`). Each is null while its binding is commented in
  * `wrangler.jsonc`, and a route that needs it answers `503` with its
  * `UNPROVISIONED` code instead of failing on the first call.
  */
