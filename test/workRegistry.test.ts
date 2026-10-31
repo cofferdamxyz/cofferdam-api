@@ -19,6 +19,7 @@ import {
   tokenOf,
   tokenSlug,
   validPivot,
+  vectorizeIndex,
   type Candidate,
   type LabelKind,
   type RegistryDeps,
@@ -134,6 +135,25 @@ describe('the registry in D1', () => {
     const found = await store.tokens(['pos:electricista', 'pos:none']);
     expect([...found.entries()].map(([k, v]) => [k, v.token])).toEqual([['pos:electricista', 'pos:electrician']]);
     expect(await store.insertToken({ token: 'pos:plumber', kind: 'pos', source: 'seed', labelEn: 'x', escoUri: null, iscoCode: null, status: 'active', mergedInto: null }, [], 1)).toBe(false);
+  });
+});
+
+describe('the Vectorize adapter', () => {
+  it('asks every query for exact scores, keeps topK within 50, and drops the values it returns', async () => {
+    const asked: unknown[] = [];
+    const binding = {
+      query: (_vector: number[], options: unknown) => {
+        asked.push(options);
+        return Promise.resolve({ count: 1, matches: [{ id: 'a', score: 0.97, values: [0.6, 0.8], metadata: { token: 'pos:a', kind: 'pos' } }] });
+      },
+    } as unknown as Vectorize;
+    const index = vectorizeIndex(binding);
+    expect(await index.query([0.6, 0.8], { topK: 20, filter: { kind: 'pos' } })).toEqual([{ id: 'a', score: 0.97, metadata: { token: 'pos:a', kind: 'pos' } }]);
+    await index.query([0.6, 0.8], { topK: 80, namespace: 'br-sp:onsite' });
+    expect(asked).toEqual([
+      { topK: 20, returnValues: true, returnMetadata: 'all', filter: { kind: 'pos' } },
+      { topK: 50, returnValues: true, returnMetadata: 'all', namespace: 'br-sp:onsite' },
+    ]);
   });
 });
 

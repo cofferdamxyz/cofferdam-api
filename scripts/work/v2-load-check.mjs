@@ -12,12 +12,15 @@
  *
  * Vectorize scores a query approximately unless the query sets
  * `returnValues: true` (its docs, "Control over scoring precision and query
- * accuracy"), and the plane's queries do not. So each check asks twice: with
- * exact scores, which must answer as the copy does (a vector missing or
- * wrong fails), and as the plane asks (approximate scores, metadata `all`,
- * the 20 nearest of a kind), whose distance from the exact scores is
- * reported and never fails: τ and the tier-2 floor were set on exact
- * cosines, and what the plane does about the gap is the founder's ruling.
+ * accuracy"). Its approximate scores sat 0.23 to 0.36 below the exact ones on
+ * this index (2026-10-30), while τ and the tier-2 floor are set on exact
+ * cosines, so the plane's queries ask for exact scores since the founder's
+ * ruling of that day (registry.ts `vectorizeIndex`). Each check asks twice:
+ * with exact scores and no metadata, which must answer as the copy does (a
+ * vector missing or wrong fails), and as the plane asks (exact scores,
+ * metadata `all`, the 20 nearest of a kind), whose distance from the first is
+ * reported and never fails: a gap there means the plane's query has drifted
+ * from exact scores.
  *
  * 1. The count: Vectorize's `vectorCount` against the files' lines (229,654;
  *    D1's embedded labels are the runbook's own check).
@@ -129,10 +132,10 @@ async function exactQuery(q, kind, topK) {
   const result = await api('/query', { vector: Array.from(q), topK, returnValues: true, returnMetadata: 'none', ...(kind ? { filter: { kind } } : {}) });
   return byScore(result.matches.map((m) => ({ id: m.id, token: rows[rowById.get(m.id)]?.token, score: m.score })));
 }
-/** As the plane asks (registry.ts `vectorizeIndex`): approximate scores. */
+/** As the plane asks (registry.ts `vectorizeIndex`): exact scores, metadata `all`. */
 async function planeQuery(q, kind) {
   if (dryRun) return copyQuery(q, kind, PLANE_TOP_K);
-  const result = await api('/query', { vector: Array.from(q), topK: PLANE_TOP_K, returnMetadata: 'all', ...(kind ? { filter: { kind } } : {}) });
+  const result = await api('/query', { vector: Array.from(q), topK: PLANE_TOP_K, returnValues: true, returnMetadata: 'all', ...(kind ? { filter: { kind } } : {}) });
   return byScore(result.matches.map((m) => ({ id: m.id, token: m.metadata?.token, score: m.score })));
 }
 
@@ -143,7 +146,7 @@ const fail = (line) => {
 };
 const side = (s) => THRESHOLDS.filter((t) => s >= t).length;
 const median = (xs) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : 0);
-/** |approximate − exact| for every id both answers hold. */
+/** |the plane's score − the exact one| for every id both answers hold. */
 function gapsOf(plane, exact, into) {
   const exactScore = new Map(exact.map((m) => [m.id, m.score]));
   for (const m of plane) if (exactScore.has(m.id)) into.push(Math.abs(m.score - exactScore.get(m.id)));
@@ -181,7 +184,7 @@ for (let k = 0; k < n; k++) {
   gapsOf(plane, exact, labelGaps);
 }
 console.log(`labels: ${labelsOk} of ${n} come back as themselves`);
-console.log(`labels as the plane asks: ${labelsPlaneFirst} of ${n} first; approximate scores ${gapLine(labelGaps)}`);
+console.log(`labels as the plane asks: ${labelsPlaneFirst} of ${n} first; its scores ${gapLine(labelGaps)}`);
 
 // 3. Phone vectors against the copy, compared by text: labels of one text share a vector and tie in any order.
 if (phoneFile) {
@@ -232,7 +235,7 @@ if (phoneFile) {
   }
   console.log(`phone vectors: ${same} of ${picked.length} answer as the copy does (the ten share at least ${worstOverlap}; scores within ${worstDiff.toFixed(5)})`);
   console.log(
-    `phone vectors as the plane asks: nearest token differs for ${tokenFlips} of ${picked.length}, side of τ or the floor for ${sideFlips} (${sideFlipsAtEdge} within 0.001 of it); approximate scores ${gapLine(phoneGaps)}`,
+    `phone vectors as the plane asks: nearest token differs for ${tokenFlips} of ${picked.length}, side of τ or the floor for ${sideFlips} (${sideFlipsAtEdge} within 0.001 of it); its scores ${gapLine(phoneGaps)}`,
   );
 }
 

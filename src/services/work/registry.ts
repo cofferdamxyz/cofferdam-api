@@ -349,12 +349,23 @@ export interface VectorIndex {
   deleteByIds(ids: string[]): Promise<void>;
 }
 
-/** Vectorize metadata returns with every match ("all": the unindexed fields too); topK stays within its 50. */
+/**
+ * The plane's one Vectorize adapter, for both indexes. Every query asks for
+ * exact scores: Vectorize scores approximately unless a query asks for the
+ * stored values (`returnValues: true`, its docs' "Control over scoring
+ * precision and query accuracy"), and its approximate scores sat 0.23 to 0.36
+ * below the exact cosines on `token-registry-v2` (a label 0.74 against
+ * itself; 2026-10-30, `scripts/work/v2-load-check.mjs`), while τ and the
+ * tier-2 floor are set on exact cosines. The values are dropped here. Metadata
+ * returns with every match ("all": the unindexed fields too); topK stays within
+ * the 50 Vectorize allows with values or metadata.
+ */
 export function vectorizeIndex(binding: Vectorize): VectorIndex {
   return {
     async query(vector, opts) {
       const res = await binding.query(vector, {
         topK: Math.min(50, opts.topK),
+        returnValues: true,
         returnMetadata: 'all',
         ...(opts.namespace ? { namespace: opts.namespace } : {}),
         ...(opts.filter ? { filter: opts.filter } : {}),
