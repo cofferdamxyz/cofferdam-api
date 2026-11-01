@@ -1,0 +1,5224 @@
+{
+  "date": "2026-11-01",
+  "model": "@cf/cloudflare/clef-flash",
+  "wording": "Read the latest user message with the turns before it. Does the latest message ask for a worker: does it name work the user wants done (a repair, a task, a shift, a vacancy or a job ad) and ask for someone to do it, or, right after a request for a worker, ask to search again, nearer, or for another worker? A question about how hiring, fees or payments work, paying or messaging someone, thanks or small talk, and the user's own job search are no, even right after a request for a worker.",
+  "floor": 0.5,
+  "rows": [
+    {
+      "id": "hire-en-plumber-sink",
+      "set": "hire",
+      "hire": 0.8956,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.296,
+        "route": "answer",
+        "confidence": 0.9045
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.252,
+        "route": "action",
+        "confidence": 0.8956,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.252,
+        "route": "answer",
+        "confidence": 0.8842
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5711,
+              "send": 0.0237,
+              "add_money": 0.0084,
+              "find_document": 0.044,
+              "filter_activity": 0.0097,
+              "import_cv": 0.0052,
+              "add_document": 0.0169,
+              "looking_for": 0.1365,
+              "message": 0.1636,
+              "create_group": 0.0209
+            },
+            "confidence": 0.3055
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.9045,
+              "long": 0.0955
+            },
+            "confidence": 0.6545
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0107
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0094
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9739,
+              "pt": 0.0128,
+              "es": 0.0133
+            },
+            "confidence": 0.9233
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.8883,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4613,
+              "1": 0.3129,
+              "2": 0.102,
+              "3": 0.1238
+            },
+            "confidence": 0.1152
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8956
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0261,
+              "new": 0.9739
+            },
+            "confidence": 0.8983
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4158,
+              "send": 0.0466,
+              "add_money": 0.0135,
+              "find_document": 0.0282,
+              "filter_activity": 0.014,
+              "import_cv": 0.0123,
+              "add_document": 0.0152,
+              "looking_for": 0.3425,
+              "message": 0.0993,
+              "create_group": 0.0126
+            },
+            "confidence": 0.2266
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8842,
+              "long": 0.1158
+            },
+            "confidence": 0.5904
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0119
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0096
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9702,
+              "pt": 0.0116,
+              "es": 0.0182
+            },
+            "confidence": 0.9126
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.756,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4893,
+              "1": 0.35,
+              "2": 0.0761,
+              "3": 0.0846
+            },
+            "confidence": 0.1665
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-electrician-outlets",
+      "set": "hire",
+      "hire": 0.9082,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.618,
+        "route": "answer",
+        "confidence": 0.7782
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.579,
+        "route": "action",
+        "confidence": 0.9082,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.579,
+        "route": "answer",
+        "confidence": 0.7739
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4773,
+              "send": 0.1381,
+              "add_money": 0.0192,
+              "find_document": 0.0278,
+              "filter_activity": 0.0324,
+              "import_cv": 0.009,
+              "add_document": 0.0229,
+              "looking_for": 0.0651,
+              "message": 0.1691,
+              "create_group": 0.0391
+            },
+            "confidence": 0.2045
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7782,
+              "long": 0.2218
+            },
+            "confidence": 0.3096
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0467
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0104
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9793,
+              "pt": 0.0105,
+              "es": 0.0102
+            },
+            "confidence": 0.9389
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.8535,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2088,
+              "1": 0.1255,
+              "2": 0.2691,
+              "3": 0.3966
+            },
+            "confidence": 0.0521
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.9082
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0352,
+              "new": 0.9648
+            },
+            "confidence": 0.8641
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.3545,
+              "send": 0.142,
+              "add_money": 0.0227,
+              "find_document": 0.0298,
+              "filter_activity": 0.0305,
+              "import_cv": 0.0108,
+              "add_document": 0.0167,
+              "looking_for": 0.2949,
+              "message": 0.0858,
+              "create_group": 0.0123
+            },
+            "confidence": 0.1589
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7739,
+              "long": 0.2261
+            },
+            "confidence": 0.3001
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0249
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0084
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9758,
+              "pt": 0.0109,
+              "es": 0.0133
+            },
+            "confidence": 0.9288
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.7359,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2378,
+              "1": 0.1576,
+              "2": 0.2356,
+              "3": 0.369
+            },
+            "confidence": 0.0308
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-welder-shutdown",
+      "set": "hire",
+      "hire": 0.9098,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.41,
+        "route": "clarify",
+        "confidence": 0.3447
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.427,
+        "route": "action",
+        "confidence": 0.9098,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.427,
+        "route": "answer",
+        "confidence": 0.7319
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.3422,
+              "send": 0.031,
+              "add_money": 0.009,
+              "find_document": 0.0703,
+              "filter_activity": 0.0091,
+              "import_cv": 0.11,
+              "add_document": 0.0234,
+              "looking_for": 0.3447,
+              "message": 0.0369,
+              "create_group": 0.0234
+            },
+            "confidence": 0.1739
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7429,
+              "long": 0.2571
+            },
+            "confidence": 0.236
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0424
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0091
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9779,
+              "pt": 0.0068,
+              "es": 0.0153
+            },
+            "confidence": 0.935
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2287,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3709,
+              "1": 0.2573,
+              "2": 0.1441,
+              "3": 0.2277
+            },
+            "confidence": 0.0352
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.9098
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0343,
+              "new": 0.9657
+            },
+            "confidence": 0.8674
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.3962,
+              "send": 0.0352,
+              "add_money": 0.0155,
+              "find_document": 0.0449,
+              "filter_activity": 0.0148,
+              "import_cv": 0.0685,
+              "add_document": 0.0343,
+              "looking_for": 0.3335,
+              "message": 0.04,
+              "create_group": 0.0171
+            },
+            "confidence": 0.1996
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7319,
+              "long": 0.2681
+            },
+            "confidence": 0.2152
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.033
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0085
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9786,
+              "pt": 0.0076,
+              "es": 0.0138
+            },
+            "confidence": 0.9369
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2806,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3304,
+              "1": 0.2651,
+              "2": 0.1979,
+              "3": 0.2066
+            },
+            "confidence": 0.0151
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-cleaning",
+      "set": "hire",
+      "hire": 0.8922,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.421,
+        "route": "answer",
+        "confidence": 0.8601
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.337,
+        "route": "action",
+        "confidence": 0.8922,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.337,
+        "route": "answer",
+        "confidence": 0.936
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.3291,
+              "send": 0.244,
+              "add_money": 0.0122,
+              "find_document": 0.0207,
+              "filter_activity": 0.0241,
+              "import_cv": 0.0063,
+              "add_document": 0.0334,
+              "looking_for": 0.054,
+              "message": 0.1389,
+              "create_group": 0.1373
+            },
+            "confidence": 0.1236
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8601,
+              "long": 0.1399
+            },
+            "confidence": 0.5186
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0846
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0085
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9635,
+              "pt": 0.018,
+              "es": 0.0185
+            },
+            "confidence": 0.8936
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2615,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2632,
+              "1": 0.3527,
+              "2": 0.2435,
+              "3": 0.1406
+            },
+            "confidence": 0.0303
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8922
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0482,
+              "new": 0.9518
+            },
+            "confidence": 0.8164
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.2865,
+              "send": 0.1741,
+              "add_money": 0.016,
+              "find_document": 0.0127,
+              "filter_activity": 0.0159,
+              "import_cv": 0.0069,
+              "add_document": 0.0084,
+              "looking_for": 0.2521,
+              "message": 0.1278,
+              "create_group": 0.0996
+            },
+            "confidence": 0.1144
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.936,
+              "long": 0.064
+            },
+            "confidence": 0.7605
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0252
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0089
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9711,
+              "pt": 0.0094,
+              "es": 0.0195
+            },
+            "confidence": 0.9152
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.0098,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3708,
+              "1": 0.3523,
+              "2": 0.1731,
+              "3": 0.1038
+            },
+            "confidence": 0.0698
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-forklift-night",
+      "set": "hire",
+      "hire": 0.8911,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.229,
+        "route": "clarify",
+        "confidence": 0.3603
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.28,
+        "route": "action",
+        "confidence": 0.8911,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.28,
+        "route": "clarify",
+        "confidence": 0.3812
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.306,
+              "send": 0.0108,
+              "add_money": 0.0093,
+              "find_document": 0.0363,
+              "filter_activity": 0.0071,
+              "import_cv": 0.1738,
+              "add_document": 0.0566,
+              "looking_for": 0.3603,
+              "message": 0.0207,
+              "create_group": 0.0191
+            },
+            "confidence": 0.1769
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8109,
+              "long": 0.1891
+            },
+            "confidence": 0.3866
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0207
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0094
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9778,
+              "pt": 0.0098,
+              "es": 0.0124
+            },
+            "confidence": 0.9345
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.6856,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4473,
+              "1": 0.4469,
+              "2": 0.0787,
+              "3": 0.0271
+            },
+            "confidence": 0.2089
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8911
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.076,
+              "new": 0.924
+            },
+            "confidence": 0.719
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.348,
+              "send": 0.0194,
+              "add_money": 0.0103,
+              "find_document": 0.021,
+              "filter_activity": 0.0087,
+              "import_cv": 0.1513,
+              "add_document": 0.0265,
+              "looking_for": 0.3812,
+              "message": 0.026,
+              "create_group": 0.0076
+            },
+            "confidence": 0.213
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7783,
+              "long": 0.2217
+            },
+            "confidence": 0.3098
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0195
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0141
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9722,
+              "pt": 0.0121,
+              "es": 0.0157
+            },
+            "confidence": 0.9184
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.8413,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3698,
+              "1": 0.4777,
+              "2": 0.094,
+              "3": 0.0585
+            },
+            "confidence": 0.1696
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-babysitter",
+      "set": "hire",
+      "hire": 0.8429,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.403,
+        "route": "answer",
+        "confidence": 0.839
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.444,
+        "route": "action",
+        "confidence": 0.8429,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.444,
+        "route": "answer",
+        "confidence": 0.8372
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.3995,
+              "send": 0.0272,
+              "add_money": 0.0119,
+              "find_document": 0.0529,
+              "filter_activity": 0.0132,
+              "import_cv": 0.051,
+              "add_document": 0.0128,
+              "looking_for": 0.2344,
+              "message": 0.1015,
+              "create_group": 0.0956
+            },
+            "confidence": 0.1563
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.839,
+              "long": 0.161
+            },
+            "confidence": 0.4597
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0416
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0089
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9744,
+              "pt": 0.0122,
+              "es": 0.0134
+            },
+            "confidence": 0.9245
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2077,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3291,
+              "1": 0.3125,
+              "2": 0.1802,
+              "3": 0.1782
+            },
+            "confidence": 0.0269
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8429
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0584,
+              "new": 0.9416
+            },
+            "confidence": 0.7799
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.417,
+              "send": 0.0415,
+              "add_money": 0.0133,
+              "find_document": 0.0297,
+              "filter_activity": 0.0135,
+              "import_cv": 0.0195,
+              "add_document": 0.0124,
+              "looking_for": 0.3171,
+              "message": 0.0934,
+              "create_group": 0.0426
+            },
+            "confidence": 0.2094
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8372,
+              "long": 0.1628
+            },
+            "confidence": 0.4548
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.028
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0096
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.978,
+              "pt": 0.01,
+              "es": 0.012
+            },
+            "confidence": 0.9351
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.333,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3,
+              "1": 0.2879,
+              "2": 0.1911,
+              "3": 0.221
+            },
+            "confidence": 0.011
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-urgent-gas",
+      "set": "hire",
+      "hire": 0.9073,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.351,
+        "route": "answer",
+        "confidence": 0.7385
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.328,
+        "route": "action",
+        "confidence": 0.9073,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "message"
+        ],
+        "reasoning": 0.328,
+        "route": "clarify",
+        "confidence": 0.3474
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4582,
+              "send": 0.0471,
+              "add_money": 0.0168,
+              "find_document": 0.0287,
+              "filter_activity": 0.0141,
+              "import_cv": 0.008,
+              "add_document": 0.0246,
+              "looking_for": 0.046,
+              "message": 0.308,
+              "create_group": 0.0485
+            },
+            "confidence": 0.2372
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7385,
+              "long": 0.2615
+            },
+            "confidence": 0.2276
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.1667
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0114
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9625,
+              "pt": 0.018,
+              "es": 0.0195
+            },
+            "confidence": 0.8908
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.0533,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3762,
+              "1": 0.378,
+              "2": 0.0622,
+              "3": 0.1836
+            },
+            "confidence": 0.096
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.9073
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0517,
+              "new": 0.9483
+            },
+            "confidence": 0.8038
+          },
+          "action": {
+            "type": "choice",
+            "choice": "message",
+            "probabilities": {
+              "none": 0.3116,
+              "send": 0.0623,
+              "add_money": 0.0188,
+              "find_document": 0.0282,
+              "filter_activity": 0.0166,
+              "import_cv": 0.0121,
+              "add_document": 0.0229,
+              "looking_for": 0.1496,
+              "message": 0.3474,
+              "create_group": 0.0305
+            },
+            "confidence": 0.1633
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7749,
+              "long": 0.2251
+            },
+            "confidence": 0.3023
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.1302
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.012
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9652,
+              "pt": 0.0131,
+              "es": 0.0217
+            },
+            "confidence": 0.8985
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9834,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3927,
+              "1": 0.3808,
+              "2": 0.0769,
+              "3": 0.1496
+            },
+            "confidence": 0.1033
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-designer-remote",
+      "set": "hire",
+      "hire": 0.8615,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.431,
+        "route": "answer",
+        "confidence": 0.5275
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.427,
+        "route": "action",
+        "confidence": 0.8615,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.427,
+        "route": "answer",
+        "confidence": 0.6406
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4512,
+              "send": 0.0198,
+              "add_money": 0.0098,
+              "find_document": 0.0173,
+              "filter_activity": 0.0107,
+              "import_cv": 0.0591,
+              "add_document": 0.012,
+              "looking_for": 0.3786,
+              "message": 0.0304,
+              "create_group": 0.0111
+            },
+            "confidence": 0.2805
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.5275,
+              "long": 0.4725
+            },
+            "confidence": 0.003
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0113
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0089
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9756,
+              "pt": 0.012,
+              "es": 0.0124
+            },
+            "confidence": 0.9282
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2922,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3151,
+              "1": 0.312,
+              "2": 0.1384,
+              "3": 0.2345
+            },
+            "confidence": 0.0277
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8615
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0206,
+              "new": 0.9794
+            },
+            "confidence": 0.9195
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4307,
+              "send": 0.0289,
+              "add_money": 0.0151,
+              "find_document": 0.023,
+              "filter_activity": 0.0139,
+              "import_cv": 0.0275,
+              "add_document": 0.0157,
+              "looking_for": 0.4119,
+              "message": 0.024,
+              "create_group": 0.0093
+            },
+            "confidence": 0.2873
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.6406,
+              "long": 0.3594
+            },
+            "confidence": 0.0791
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0119
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0102
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9722,
+              "pt": 0.0122,
+              "es": 0.0156
+            },
+            "confidence": 0.9184
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2812,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2955,
+              "1": 0.3573,
+              "2": 0.1177,
+              "3": 0.2295
+            },
+            "confidence": 0.042
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-fence",
+      "set": "hire",
+      "hire": 0.8568,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.491,
+        "route": "answer",
+        "confidence": 0.8162
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.516,
+        "route": "action",
+        "confidence": 0.8568,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.516,
+        "route": "answer",
+        "confidence": 0.8753
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5732,
+              "send": 0.0695,
+              "add_money": 0.0089,
+              "find_document": 0.0177,
+              "filter_activity": 0.012,
+              "import_cv": 0.0062,
+              "add_document": 0.0128,
+              "looking_for": 0.1964,
+              "message": 0.0708,
+              "create_group": 0.0325
+            },
+            "confidence": 0.3097
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8162,
+              "long": 0.1838
+            },
+            "confidence": 0.3999
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.016
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0077
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9781,
+              "pt": 0.0104,
+              "es": 0.0115
+            },
+            "confidence": 0.9354
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.4719,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2159,
+              "1": 0.301,
+              "2": 0.2785,
+              "3": 0.2046
+            },
+            "confidence": 0.0088
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8568
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.1011,
+              "new": 0.8989
+            },
+            "confidence": 0.6365
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5178,
+              "send": 0.1165,
+              "add_money": 0.0181,
+              "find_document": 0.0237,
+              "filter_activity": 0.0185,
+              "import_cv": 0.0137,
+              "add_document": 0.0156,
+              "looking_for": 0.1863,
+              "message": 0.0669,
+              "create_group": 0.0229
+            },
+            "confidence": 0.2479
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8753,
+              "long": 0.1247
+            },
+            "confidence": 0.5635
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0116
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0094
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9782,
+              "pt": 0.0106,
+              "es": 0.0112
+            },
+            "confidence": 0.9358
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.5488,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.1952,
+              "1": 0.2555,
+              "2": 0.3546,
+              "3": 0.1947
+            },
+            "confidence": 0.0227
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-pasted-ad",
+      "set": "hire",
+      "hire": 0.8068,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.218,
+        "route": "answer",
+        "confidence": 0.7817
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.267,
+        "route": "action",
+        "confidence": 0.8068,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.267,
+        "route": "clarify",
+        "confidence": 0.3721
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.3477,
+              "send": 0.011,
+              "add_money": 0.0064,
+              "find_document": 0.045,
+              "filter_activity": 0.0048,
+              "import_cv": 0.1636,
+              "add_document": 0.0493,
+              "looking_for": 0.3241,
+              "message": 0.035,
+              "create_group": 0.0131
+            },
+            "confidence": 0.1764
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7817,
+              "long": 0.2183
+            },
+            "confidence": 0.3174
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0088
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0095
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9801,
+              "pt": 0.006,
+              "es": 0.0139
+            },
+            "confidence": 0.9411
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.6529,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5015,
+              "1": 0.3943,
+              "2": 0.054,
+              "3": 0.0502
+            },
+            "confidence": 0.2165
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8068
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0951,
+              "new": 0.9049
+            },
+            "confidence": 0.6557
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2628,
+              "send": 0.0193,
+              "add_money": 0.0087,
+              "find_document": 0.0244,
+              "filter_activity": 0.0086,
+              "import_cv": 0.1934,
+              "add_document": 0.0563,
+              "looking_for": 0.3721,
+              "message": 0.0441,
+              "create_group": 0.0103
+            },
+            "confidence": 0.1681
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.6817,
+              "long": 0.3183
+            },
+            "confidence": 0.1321
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0111
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0091
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9777,
+              "pt": 0.0075,
+              "es": 0.0148
+            },
+            "confidence": 0.9344
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.8004,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.46,
+              "1": 0.3731,
+              "2": 0.0735,
+              "3": 0.0934
+            },
+            "confidence": 0.1532
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-followup",
+      "set": "hire",
+      "hire": 0.8989,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.432,
+        "route": "answer",
+        "confidence": 0.832
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.456,
+        "route": "action",
+        "confidence": 0.8989,
+        "job": "same"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.456,
+        "route": "answer",
+        "confidence": 0.8519
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.6514,
+              "send": 0.0272,
+              "add_money": 0.0111,
+              "find_document": 0.0294,
+              "filter_activity": 0.0108,
+              "import_cv": 0.0091,
+              "add_document": 0.0159,
+              "looking_for": 0.1007,
+              "message": 0.0907,
+              "create_group": 0.0537
+            },
+            "confidence": 0.3864
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.832,
+              "long": 0.168
+            },
+            "confidence": 0.4409
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0114
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0078
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9762,
+              "pt": 0.0123,
+              "es": 0.0115
+            },
+            "confidence": 0.9299
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2959,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2542,
+              "1": 0.3468,
+              "2": 0.2479,
+              "3": 0.1511
+            },
+            "confidence": 0.0256
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8989
+          },
+          "job": {
+            "type": "choice",
+            "choice": "same",
+            "probabilities": {
+              "same": 0.6294,
+              "new": 0.3706
+            },
+            "confidence": 0.0669
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.6474,
+              "send": 0.0365,
+              "add_money": 0.0135,
+              "find_document": 0.0279,
+              "filter_activity": 0.0137,
+              "import_cv": 0.0119,
+              "add_document": 0.0168,
+              "looking_for": 0.1626,
+              "message": 0.0501,
+              "create_group": 0.0196
+            },
+            "confidence": 0.3904
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8519,
+              "long": 0.1481
+            },
+            "confidence": 0.4954
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0129
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0115
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.969,
+              "pt": 0.0151,
+              "es": 0.0159
+            },
+            "confidence": 0.9092
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.3694,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2594,
+              "1": 0.3062,
+              "2": 0.2401,
+              "3": 0.1943
+            },
+            "confidence": 0.0086
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-encanador",
+      "set": "hire",
+      "hire": 0.9371,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.325,
+        "route": "answer",
+        "confidence": 0.8657
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.266,
+        "route": "action",
+        "confidence": 0.9371,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.266,
+        "route": "answer",
+        "confidence": 0.8883
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5851,
+              "send": 0.0363,
+              "add_money": 0.0143,
+              "find_document": 0.0252,
+              "filter_activity": 0.0138,
+              "import_cv": 0.0069,
+              "add_document": 0.0199,
+              "looking_for": 0.0376,
+              "message": 0.227,
+              "create_group": 0.0339
+            },
+            "confidence": 0.3324
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8657,
+              "long": 0.1343
+            },
+            "confidence": 0.5351
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0112
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0087
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0153,
+              "pt": 0.959,
+              "es": 0.0257
+            },
+            "confidence": 0.8808
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9759,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4079,
+              "1": 0.3493,
+              "2": 0.1019,
+              "3": 0.1409
+            },
+            "confidence": 0.0915
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.9371
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0403,
+              "new": 0.9597
+            },
+            "confidence": 0.8453
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.351,
+              "send": 0.0514,
+              "add_money": 0.0227,
+              "find_document": 0.0365,
+              "filter_activity": 0.0215,
+              "import_cv": 0.0156,
+              "add_document": 0.0225,
+              "looking_for": 0.3322,
+              "message": 0.1148,
+              "create_group": 0.0318
+            },
+            "confidence": 0.1705
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8883,
+              "long": 0.1117
+            },
+            "confidence": 0.6031
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0119
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.009
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0242,
+              "pt": 0.9409,
+              "es": 0.0349
+            },
+            "confidence": 0.8307
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.7975,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4656,
+              "1": 0.3652,
+              "2": 0.0753,
+              "3": 0.0939
+            },
+            "confidence": 0.1529
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-eletricista",
+      "set": "hire",
+      "hire": 0.8891,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "send"
+        ],
+        "reasoning": 0.322,
+        "route": "clarify",
+        "confidence": 0.4272
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.364,
+        "route": "action",
+        "confidence": 0.8891,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "send"
+        ],
+        "reasoning": 0.364,
+        "route": "clarify",
+        "confidence": 0.4146
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "send",
+            "probabilities": {
+              "none": 0.2472,
+              "send": 0.4272,
+              "add_money": 0.0181,
+              "find_document": 0.0162,
+              "filter_activity": 0.0842,
+              "import_cv": 0.004,
+              "add_document": 0.0221,
+              "looking_for": 0.0367,
+              "message": 0.1153,
+              "create_group": 0.029
+            },
+            "confidence": 0.1859
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8491,
+              "long": 0.1509
+            },
+            "confidence": 0.4875
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0354
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0095
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0163,
+              "pt": 0.933,
+              "es": 0.0507
+            },
+            "confidence": 0.81
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9674,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4059,
+              "1": 0.3384,
+              "2": 0.1381,
+              "3": 0.1176
+            },
+            "confidence": 0.0829
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8891
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0415,
+              "new": 0.9585
+            },
+            "confidence": 0.8409
+          },
+          "action": {
+            "type": "choice",
+            "choice": "send",
+            "probabilities": {
+              "none": 0.2365,
+              "send": 0.4146,
+              "add_money": 0.0265,
+              "find_document": 0.02,
+              "filter_activity": 0.042,
+              "import_cv": 0.0068,
+              "add_document": 0.0106,
+              "looking_for": 0.149,
+              "message": 0.0863,
+              "create_group": 0.0077
+            },
+            "confidence": 0.1784
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8067,
+              "long": 0.1933
+            },
+            "confidence": 0.3763
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0264
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0081
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.014,
+              "pt": 0.9405,
+              "es": 0.0455
+            },
+            "confidence": 0.8302
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.0932,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3311,
+              "1": 0.3752,
+              "2": 0.1631,
+              "3": 0.1306
+            },
+            "confidence": 0.0588
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-motoboy",
+      "set": "hire",
+      "hire": 0.8686,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.438,
+        "route": "answer",
+        "confidence": 0.6662
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.451,
+        "route": "action",
+        "confidence": 0.8686,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.451,
+        "route": "answer",
+        "confidence": 0.6838
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4503,
+              "send": 0.0849,
+              "add_money": 0.0129,
+              "find_document": 0.0245,
+              "filter_activity": 0.0272,
+              "import_cv": 0.0075,
+              "add_document": 0.0134,
+              "looking_for": 0.2822,
+              "message": 0.0825,
+              "create_group": 0.0146
+            },
+            "confidence": 0.2204
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.6662,
+              "long": 0.3338
+            },
+            "confidence": 0.1105
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.1078
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0077
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0075,
+              "pt": 0.9591,
+              "es": 0.0334
+            },
+            "confidence": 0.8815
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.3143,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3355,
+              "1": 0.2486,
+              "2": 0.1821,
+              "3": 0.2338
+            },
+            "confidence": 0.0162
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8686
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0592,
+              "new": 0.9408
+            },
+            "confidence": 0.7771
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4673,
+              "send": 0.046,
+              "add_money": 0.017,
+              "find_document": 0.0254,
+              "filter_activity": 0.0146,
+              "import_cv": 0.0222,
+              "add_document": 0.0149,
+              "looking_for": 0.3346,
+              "message": 0.0451,
+              "create_group": 0.0129
+            },
+            "confidence": 0.2628
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.6838,
+              "long": 0.3162
+            },
+            "confidence": 0.1351
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0573
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0088
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0104,
+              "pt": 0.9583,
+              "es": 0.0313
+            },
+            "confidence": 0.879
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.352,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2866,
+              "1": 0.2947,
+              "2": 0.1988,
+              "3": 0.2199
+            },
+            "confidence": 0.0091
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-faxineira",
+      "set": "hire",
+      "hire": 0.8439,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.329,
+        "route": "answer",
+        "confidence": 0.8153
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.308,
+        "route": "action",
+        "confidence": 0.8439,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.308,
+        "route": "answer",
+        "confidence": 0.7821
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4511,
+              "send": 0.1134,
+              "add_money": 0.0164,
+              "find_document": 0.0267,
+              "filter_activity": 0.0463,
+              "import_cv": 0.0108,
+              "add_document": 0.0316,
+              "looking_for": 0.1337,
+              "message": 0.1568,
+              "create_group": 0.0132
+            },
+            "confidence": 0.1814
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8153,
+              "long": 0.1847
+            },
+            "confidence": 0.3977
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0349
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0071
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0083,
+              "pt": 0.9491,
+              "es": 0.0426
+            },
+            "confidence": 0.8539
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9882,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3717,
+              "1": 0.38,
+              "2": 0.1366,
+              "3": 0.1117
+            },
+            "confidence": 0.085
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8439
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.118,
+              "new": 0.882
+            },
+            "confidence": 0.5836
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4402,
+              "send": 0.0554,
+              "add_money": 0.0181,
+              "find_document": 0.0325,
+              "filter_activity": 0.0297,
+              "import_cv": 0.0138,
+              "add_document": 0.0213,
+              "looking_for": 0.3095,
+              "message": 0.067,
+              "create_group": 0.0125
+            },
+            "confidence": 0.2225
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7821,
+              "long": 0.2179
+            },
+            "confidence": 0.3183
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0241
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0099
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0116,
+              "pt": 0.916,
+              "es": 0.0724
+            },
+            "confidence": 0.7667
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9252,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3975,
+              "1": 0.3905,
+              "2": 0.1013,
+              "3": 0.1107
+            },
+            "confidence": 0.1107
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-soldador-vaga",
+      "set": "hire",
+      "hire": 0.462,
+      "today": {
+        "action": "import_cv",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.183,
+        "route": "action",
+        "confidence": 0.7963
+      },
+      "withCheck": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.22,
+        "route": "clarify",
+        "confidence": 0.4148
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.22,
+        "route": "clarify",
+        "confidence": 0.4148
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "import_cv",
+            "probabilities": {
+              "none": 0.0527,
+              "send": 0.0035,
+              "add_money": 0.003,
+              "find_document": 0.0157,
+              "filter_activity": 0.0019,
+              "import_cv": 0.7963,
+              "add_document": 0.0262,
+              "looking_for": 0.0884,
+              "message": 0.0089,
+              "create_group": 0.0034
+            },
+            "confidence": 0.6063
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7934,
+              "long": 0.2066
+            },
+            "confidence": 0.3442
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0138
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0096
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0144,
+              "pt": 0.9312,
+              "es": 0.0544
+            },
+            "confidence": 0.8054
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.5482,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5399,
+              "1": 0.3954,
+              "2": 0.0414,
+              "3": 0.0233
+            },
+            "confidence": 0.2667
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.462
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.1324,
+              "new": 0.8676
+            },
+            "confidence": 0.5405
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.1471,
+              "send": 0.0135,
+              "add_money": 0.0068,
+              "find_document": 0.0196,
+              "filter_activity": 0.0054,
+              "import_cv": 0.3404,
+              "add_document": 0.0178,
+              "looking_for": 0.4148,
+              "message": 0.0295,
+              "create_group": 0.0051
+            },
+            "confidence": 0.2349
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8118,
+              "long": 0.1882
+            },
+            "confidence": 0.3888
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0163
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0077
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0249,
+              "pt": 0.9036,
+              "es": 0.0715
+            },
+            "confidence": 0.7334
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.6613,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5071,
+              "1": 0.3765,
+              "2": 0.0645,
+              "3": 0.0519
+            },
+            "confidence": 0.2076
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-pasted-ad",
+      "set": "hire",
+      "hire": 0.8034,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.205,
+        "route": "clarify",
+        "confidence": 0.3255
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.225,
+        "route": "action",
+        "confidence": 0.8034,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.225,
+        "route": "clarify",
+        "confidence": 0.3949
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2926,
+              "send": 0.0074,
+              "add_money": 0.0046,
+              "find_document": 0.0403,
+              "filter_activity": 0.0053,
+              "import_cv": 0.2623,
+              "add_document": 0.0364,
+              "looking_for": 0.3255,
+              "message": 0.0211,
+              "create_group": 0.0045
+            },
+            "confidence": 0.1821
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8472,
+              "long": 0.1528
+            },
+            "confidence": 0.4822
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.008
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0096
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0081,
+              "pt": 0.962,
+              "es": 0.0299
+            },
+            "confidence": 0.8897
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.6157,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5074,
+              "1": 0.4058,
+              "2": 0.0506,
+              "3": 0.0362
+            },
+            "confidence": 0.2346
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8034
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.1174,
+              "new": 0.8826
+            },
+            "confidence": 0.5856
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2851,
+              "send": 0.0187,
+              "add_money": 0.0091,
+              "find_document": 0.0259,
+              "filter_activity": 0.0094,
+              "import_cv": 0.1793,
+              "add_document": 0.037,
+              "looking_for": 0.3949,
+              "message": 0.0329,
+              "create_group": 0.0077
+            },
+            "confidence": 0.1923
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7355,
+              "long": 0.2645
+            },
+            "confidence": 0.2218
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.012
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0111
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0111,
+              "pt": 0.9551,
+              "es": 0.0338
+            },
+            "confidence": 0.8702
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.6746,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4463,
+              "1": 0.4664,
+              "2": 0.0536,
+              "3": 0.0337
+            },
+            "confidence": 0.2277
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-plomero",
+      "set": "hire",
+      "hire": 0.9284,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.313,
+        "route": "answer",
+        "confidence": 0.8965
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.3,
+        "route": "action",
+        "confidence": 0.9284,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.3,
+        "route": "answer",
+        "confidence": 0.875
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.6063,
+              "send": 0.0517,
+              "add_money": 0.0195,
+              "find_document": 0.0281,
+              "filter_activity": 0.0138,
+              "import_cv": 0.0085,
+              "add_document": 0.0187,
+              "looking_for": 0.1428,
+              "message": 0.0901,
+              "create_group": 0.0205
+            },
+            "confidence": 0.3345
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8965,
+              "long": 0.1035
+            },
+            "confidence": 0.6288
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0134
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0081
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0132,
+              "pt": 0.035,
+              "es": 0.9518
+            },
+            "confidence": 0.8609
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9401,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.431,
+              "1": 0.326,
+              "2": 0.1148,
+              "3": 0.1282
+            },
+            "confidence": 0.0956
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.9284
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0332,
+              "new": 0.9668
+            },
+            "confidence": 0.8717
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4175,
+              "send": 0.0487,
+              "add_money": 0.0151,
+              "find_document": 0.0278,
+              "filter_activity": 0.0175,
+              "import_cv": 0.0122,
+              "add_document": 0.0175,
+              "looking_for": 0.3201,
+              "message": 0.1082,
+              "create_group": 0.0154
+            },
+            "confidence": 0.2143
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.875,
+              "long": 0.125
+            },
+            "confidence": 0.5626
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0124
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0071
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0183,
+              "pt": 0.0354,
+              "es": 0.9463
+            },
+            "confidence": 0.8455
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.899,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4622,
+              "1": 0.32,
+              "2": 0.0743,
+              "3": 0.1435
+            },
+            "confidence": 0.1229
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-velador",
+      "set": "hire",
+      "hire": 0.2278,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.593,
+        "route": "answer",
+        "confidence": 0.609
+      },
+      "withCheck": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.521,
+        "route": "answer",
+        "confidence": 0.806
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.521,
+        "route": "answer",
+        "confidence": 0.806
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5475,
+              "send": 0.0279,
+              "add_money": 0.0175,
+              "find_document": 0.0295,
+              "filter_activity": 0.0106,
+              "import_cv": 0.0088,
+              "add_document": 0.0291,
+              "looking_for": 0.2393,
+              "message": 0.0792,
+              "create_group": 0.0106
+            },
+            "confidence": 0.2959
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.609,
+              "long": 0.391
+            },
+            "confidence": 0.0475
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0414
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0078
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0092,
+              "pt": 0.0127,
+              "es": 0.9781
+            },
+            "confidence": 0.9354
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.7779,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.1714,
+              "1": 0.2021,
+              "2": 0.3037,
+              "3": 0.3228
+            },
+            "confidence": 0.0222
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.2278
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.1592,
+              "new": 0.8408
+            },
+            "confidence": 0.4645
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4098,
+              "send": 0.0276,
+              "add_money": 0.0136,
+              "find_document": 0.0276,
+              "filter_activity": 0.0124,
+              "import_cv": 0.033,
+              "add_document": 0.0167,
+              "looking_for": 0.3897,
+              "message": 0.0587,
+              "create_group": 0.0109
+            },
+            "confidence": 0.2518
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.806,
+              "long": 0.194
+            },
+            "confidence": 0.3746
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0298
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0077
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0118,
+              "pt": 0.0173,
+              "es": 0.9709
+            },
+            "confidence": 0.9146
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.5634,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2248,
+              "1": 0.2493,
+              "2": 0.2637,
+              "3": 0.2622
+            },
+            "confidence": 0.0013
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-mesero",
+      "set": "hire",
+      "hire": 0.9039,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.265,
+        "route": "clarify",
+        "confidence": 0.3626
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.221,
+        "route": "action",
+        "confidence": 0.9039,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.221,
+        "route": "clarify",
+        "confidence": 0.3914
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2373,
+              "send": 0.0141,
+              "add_money": 0.0117,
+              "find_document": 0.0293,
+              "filter_activity": 0.008,
+              "import_cv": 0.2441,
+              "add_document": 0.0524,
+              "looking_for": 0.3626,
+              "message": 0.0238,
+              "create_group": 0.0167
+            },
+            "confidence": 0.1691
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8183,
+              "long": 0.1817
+            },
+            "confidence": 0.4053
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0077
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0083
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0165,
+              "pt": 0.0151,
+              "es": 0.9684
+            },
+            "confidence": 0.9075
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.7952,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3527,
+              "1": 0.5434,
+              "2": 0.0598,
+              "3": 0.0441
+            },
+            "confidence": 0.2337
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.9039
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0602,
+              "new": 0.9398
+            },
+            "confidence": 0.7737
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2506,
+              "send": 0.0194,
+              "add_money": 0.0114,
+              "find_document": 0.0405,
+              "filter_activity": 0.0091,
+              "import_cv": 0.1971,
+              "add_document": 0.0395,
+              "looking_for": 0.3914,
+              "message": 0.0346,
+              "create_group": 0.0064
+            },
+            "confidence": 0.1777
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7005,
+              "long": 0.2995
+            },
+            "confidence": 0.1607
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0084
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0083
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0151,
+              "pt": 0.0166,
+              "es": 0.9683
+            },
+            "confidence": 0.9072
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.662,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4399,
+              "1": 0.484,
+              "2": 0.0504,
+              "3": 0.0257
+            },
+            "confidence": 0.2412
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-pintar",
+      "set": "hire",
+      "hire": 0.8831,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.485,
+        "route": "answer",
+        "confidence": 0.8661
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.432,
+        "route": "action",
+        "confidence": 0.8831,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for",
+          "send"
+        ],
+        "reasoning": 0.432,
+        "route": "clarify",
+        "confidence": 0.2704
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.3895,
+              "send": 0.1732,
+              "add_money": 0.0128,
+              "find_document": 0.0158,
+              "filter_activity": 0.0196,
+              "import_cv": 0.0064,
+              "add_document": 0.0281,
+              "looking_for": 0.1994,
+              "message": 0.1026,
+              "create_group": 0.0526
+            },
+            "confidence": 0.1515
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8661,
+              "long": 0.1339
+            },
+            "confidence": 0.5362
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0867
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0074
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0085,
+              "pt": 0.0298,
+              "es": 0.9617
+            },
+            "confidence": 0.8887
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.4545,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2432,
+              "1": 0.279,
+              "2": 0.258,
+              "3": 0.2198
+            },
+            "confidence": 0.0025
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8831
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0323,
+              "new": 0.9677
+            },
+            "confidence": 0.8748
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2631,
+              "send": 0.203,
+              "add_money": 0.0206,
+              "find_document": 0.0168,
+              "filter_activity": 0.0123,
+              "import_cv": 0.0081,
+              "add_document": 0.013,
+              "looking_for": 0.2704,
+              "message": 0.1216,
+              "create_group": 0.0711
+            },
+            "confidence": 0.1161
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8788,
+              "long": 0.1212
+            },
+            "confidence": 0.5739
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0385
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0088
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0082,
+              "pt": 0.0231,
+              "es": 0.9687
+            },
+            "confidence": 0.9084
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2945,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2835,
+              "1": 0.2997,
+              "2": 0.2556,
+              "3": 0.1612
+            },
+            "confidence": 0.0154
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-chofer",
+      "set": "hire",
+      "hire": 0.726,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "add_document"
+        ],
+        "reasoning": 0.142,
+        "route": "clarify",
+        "confidence": 0.4142
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.161,
+        "route": "action",
+        "confidence": 0.726,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "add_document"
+        ],
+        "reasoning": 0.161,
+        "route": "clarify",
+        "confidence": 0.2997
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "add_document",
+            "probabilities": {
+              "none": 0.2012,
+              "send": 0.0315,
+              "add_money": 0.0197,
+              "find_document": 0.1489,
+              "filter_activity": 0.0204,
+              "import_cv": 0.0519,
+              "add_document": 0.4142,
+              "looking_for": 0.0638,
+              "message": 0.0293,
+              "create_group": 0.0191
+            },
+            "confidence": 0.16
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8209,
+              "long": 0.1791
+            },
+            "confidence": 0.4119
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0594
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0091
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0183,
+              "pt": 0.0444,
+              "es": 0.9373
+            },
+            "confidence": 0.8212
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.426,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.6631,
+              "1": 0.2804,
+              "2": 0.024,
+              "3": 0.0325
+            },
+            "confidence": 0.3599
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.726
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0572,
+              "new": 0.9428
+            },
+            "confidence": 0.7841
+          },
+          "action": {
+            "type": "choice",
+            "choice": "add_document",
+            "probabilities": {
+              "none": 0.2264,
+              "send": 0.0344,
+              "add_money": 0.0145,
+              "find_document": 0.1482,
+              "filter_activity": 0.0177,
+              "import_cv": 0.0677,
+              "add_document": 0.2997,
+              "looking_for": 0.1304,
+              "message": 0.0536,
+              "create_group": 0.0074
+            },
+            "confidence": 0.0992
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7207,
+              "long": 0.2793
+            },
+            "confidence": 0.1949
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0305
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0134
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0215,
+              "pt": 0.0529,
+              "es": 0.9256
+            },
+            "confidence": 0.79
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.4821,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.6145,
+              "1": 0.3218,
+              "2": 0.0309,
+              "3": 0.0328
+            },
+            "confidence": 0.3109
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-pasted-ad",
+      "set": "hire",
+      "hire": 0.812,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "looking_for",
+          "import_cv"
+        ],
+        "reasoning": 0.255,
+        "route": "clarify",
+        "confidence": 0.3294
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.234,
+        "route": "action",
+        "confidence": 0.812,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [
+          "import_cv",
+          "looking_for"
+        ],
+        "reasoning": 0.234,
+        "route": "clarify",
+        "confidence": 0.3472
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2782,
+              "send": 0.0081,
+              "add_money": 0.0053,
+              "find_document": 0.0303,
+              "filter_activity": 0.0054,
+              "import_cv": 0.2668,
+              "add_document": 0.0416,
+              "looking_for": 0.3294,
+              "message": 0.0284,
+              "create_group": 0.0065
+            },
+            "confidence": 0.1785
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7243,
+              "long": 0.2757
+            },
+            "confidence": 0.2012
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0136
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0079
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0103,
+              "pt": 0.0213,
+              "es": 0.9684
+            },
+            "confidence": 0.9077
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.7651,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4521,
+              "1": 0.3831,
+              "2": 0.1125,
+              "3": 0.0523
+            },
+            "confidence": 0.1553
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.812
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.1179,
+              "new": 0.8821
+            },
+            "confidence": 0.5839
+          },
+          "action": {
+            "type": "choice",
+            "choice": "import_cv",
+            "probabilities": {
+              "none": 0.2129,
+              "send": 0.02,
+              "add_money": 0.009,
+              "find_document": 0.036,
+              "filter_activity": 0.0075,
+              "import_cv": 0.3472,
+              "add_document": 0.0533,
+              "looking_for": 0.2783,
+              "message": 0.0298,
+              "create_group": 0.006
+            },
+            "confidence": 0.1655
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7754,
+              "long": 0.2246
+            },
+            "confidence": 0.3034
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0138
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.01
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0128,
+              "pt": 0.0247,
+              "es": 0.9625
+            },
+            "confidence": 0.8909
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.7017,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4544,
+              "1": 0.4405,
+              "2": 0.0541,
+              "3": 0.051
+            },
+            "confidence": 0.2081
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-followup-again",
+      "set": "hire",
+      "hire": 0.7486,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.367,
+        "route": "clarify",
+        "confidence": 0.4858
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.332,
+        "route": "action",
+        "confidence": 0.7486,
+        "job": "same"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.332,
+        "route": "clarify",
+        "confidence": 0.4357
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.241,
+              "send": 0.045,
+              "add_money": 0.0255,
+              "find_document": 0.0565,
+              "filter_activity": 0.0239,
+              "import_cv": 0.0163,
+              "add_document": 0.0327,
+              "looking_for": 0.4858,
+              "message": 0.0559,
+              "create_group": 0.0174
+            },
+            "confidence": 0.2281
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7913,
+              "long": 0.2087
+            },
+            "confidence": 0.3395
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0107
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0129
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9514,
+              "pt": 0.022,
+              "es": 0.0266
+            },
+            "confidence": 0.8595
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.1022,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3889,
+              "1": 0.2989,
+              "2": 0.1332,
+              "3": 0.179
+            },
+            "confidence": 0.0538
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.7486
+          },
+          "job": {
+            "type": "choice",
+            "choice": "same",
+            "probabilities": {
+              "same": 0.9244,
+              "new": 0.0756
+            },
+            "confidence": 0.7204
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.3065,
+              "send": 0.0334,
+              "add_money": 0.0199,
+              "find_document": 0.0552,
+              "filter_activity": 0.0183,
+              "import_cv": 0.0196,
+              "add_document": 0.0341,
+              "looking_for": 0.4357,
+              "message": 0.0597,
+              "create_group": 0.0176
+            },
+            "confidence": 0.2156
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7975,
+              "long": 0.2025
+            },
+            "confidence": 0.3541
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0114
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0122
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9689,
+              "pt": 0.0125,
+              "es": 0.0186
+            },
+            "confidence": 0.9088
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9964,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4456,
+              "1": 0.2928,
+              "2": 0.0812,
+              "3": 0.1804
+            },
+            "confidence": 0.0979
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-followup-closer",
+      "set": "hire",
+      "hire": 0.6449,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.297,
+        "route": "answer",
+        "confidence": 0.8531
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.314,
+        "route": "action",
+        "confidence": 0.6449,
+        "job": "same"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.314,
+        "route": "answer",
+        "confidence": 0.8219
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5389,
+              "send": 0.0384,
+              "add_money": 0.0143,
+              "find_document": 0.0596,
+              "filter_activity": 0.025,
+              "import_cv": 0.0076,
+              "add_document": 0.022,
+              "looking_for": 0.201,
+              "message": 0.0738,
+              "create_group": 0.0194
+            },
+            "confidence": 0.27
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8531,
+              "long": 0.1469
+            },
+            "confidence": 0.4988
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0125
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0073
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9799,
+              "pt": 0.0107,
+              "es": 0.0094
+            },
+            "confidence": 0.9408
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.8897,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3663,
+              "1": 0.4493,
+              "2": 0.1128,
+              "3": 0.0716
+            },
+            "confidence": 0.1385
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.6449
+          },
+          "job": {
+            "type": "choice",
+            "choice": "same",
+            "probabilities": {
+              "same": 0.9651,
+              "new": 0.0349
+            },
+            "confidence": 0.8652
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5145,
+              "send": 0.0606,
+              "add_money": 0.0202,
+              "find_document": 0.055,
+              "filter_activity": 0.0232,
+              "import_cv": 0.015,
+              "add_document": 0.0211,
+              "looking_for": 0.2023,
+              "message": 0.0743,
+              "create_group": 0.0138
+            },
+            "confidence": 0.244
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8219,
+              "long": 0.1781
+            },
+            "confidence": 0.4144
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0131
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0086
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9738,
+              "pt": 0.0123,
+              "es": 0.0139
+            },
+            "confidence": 0.9228
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.941,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.3605,
+              "1": 0.4318,
+              "2": 0.114,
+              "3": 0.0937
+            },
+            "confidence": 0.1176
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-en-followup-another",
+      "set": "hire",
+      "hire": 0.6284,
+      "today": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.335,
+        "route": "answer",
+        "confidence": 0.8261
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.316,
+        "route": "action",
+        "confidence": 0.6284,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "en",
+        "candidates": [],
+        "reasoning": 0.316,
+        "route": "answer",
+        "confidence": 0.8463
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.3909,
+              "send": 0.0516,
+              "add_money": 0.0362,
+              "find_document": 0.0696,
+              "filter_activity": 0.0319,
+              "import_cv": 0.0174,
+              "add_document": 0.0617,
+              "looking_for": 0.1328,
+              "message": 0.0585,
+              "create_group": 0.1494
+            },
+            "confidence": 0.1224
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8261,
+              "long": 0.1739
+            },
+            "confidence": 0.4254
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0132
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0084
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.9822,
+              "pt": 0.0091,
+              "es": 0.0087
+            },
+            "confidence": 0.9473
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.0044,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4518,
+              "1": 0.2693,
+              "2": 0.1015,
+              "3": 0.1774
+            },
+            "confidence": 0.0912
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.6284
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.3682,
+              "new": 0.6318
+            },
+            "confidence": 0.0695
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.354,
+              "send": 0.0525,
+              "add_money": 0.0238,
+              "find_document": 0.0416,
+              "filter_activity": 0.0227,
+              "import_cv": 0.0185,
+              "add_document": 0.0255,
+              "looking_for": 0.3213,
+              "message": 0.046,
+              "create_group": 0.0941
+            },
+            "confidence": 0.1623
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8463,
+              "long": 0.1537
+            },
+            "confidence": 0.4796
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0118
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0095
+          },
+          "language": {
+            "type": "choice",
+            "choice": "en",
+            "probabilities": {
+              "en": 0.976,
+              "pt": 0.012,
+              "es": 0.012
+            },
+            "confidence": 0.9294
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9486,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.428,
+              "1": 0.3353,
+              "2": 0.0968,
+              "3": 0.1399
+            },
+            "confidence": 0.0994
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-followup-again",
+      "set": "hire",
+      "hire": 0.7485,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.244,
+        "route": "clarify",
+        "confidence": 0.3869
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.243,
+        "route": "action",
+        "confidence": 0.7485,
+        "job": "same"
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.243,
+        "route": "clarify",
+        "confidence": 0.4558
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.3114,
+              "send": 0.053,
+              "add_money": 0.0253,
+              "find_document": 0.0571,
+              "filter_activity": 0.0329,
+              "import_cv": 0.0201,
+              "add_document": 0.0251,
+              "looking_for": 0.3869,
+              "message": 0.069,
+              "create_group": 0.0192
+            },
+            "confidence": 0.1784
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7126,
+              "long": 0.2874
+            },
+            "confidence": 0.1808
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.009
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0096
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0372,
+              "pt": 0.8601,
+              "es": 0.1027
+            },
+            "confidence": 0.6276
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.7311,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5788,
+              "1": 0.2274,
+              "2": 0.0778,
+              "3": 0.116
+            },
+            "confidence": 0.2083
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.7485
+          },
+          "job": {
+            "type": "choice",
+            "choice": "same",
+            "probabilities": {
+              "same": 0.9552,
+              "new": 0.0448
+            },
+            "confidence": 0.8288
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.2604,
+              "send": 0.053,
+              "add_money": 0.0256,
+              "find_document": 0.0605,
+              "filter_activity": 0.0266,
+              "import_cv": 0.0216,
+              "add_document": 0.0277,
+              "looking_for": 0.4558,
+              "message": 0.0521,
+              "create_group": 0.0167
+            },
+            "confidence": 0.2085
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7633,
+              "long": 0.2367
+            },
+            "confidence": 0.2773
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0078
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0135
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.018,
+              "pt": 0.8938,
+              "es": 0.0882
+            },
+            "confidence": 0.7104
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.7302,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5136,
+              "1": 0.3355,
+              "2": 0.0581,
+              "3": 0.0928
+            },
+            "confidence": 0.1844
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-pt-followup-another",
+      "set": "hire",
+      "hire": 0.8484,
+      "today": {
+        "action": null,
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.262,
+        "route": "answer",
+        "confidence": 0.9093
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "pt",
+        "candidates": [],
+        "reasoning": 0.206,
+        "route": "action",
+        "confidence": 0.8484,
+        "job": "new"
+      },
+      "asked": {
+        "action": null,
+        "language": "pt",
+        "candidates": [
+          "looking_for"
+        ],
+        "reasoning": 0.206,
+        "route": "clarify",
+        "confidence": 0.3388
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5047,
+              "send": 0.0509,
+              "add_money": 0.0445,
+              "find_document": 0.0571,
+              "filter_activity": 0.0323,
+              "import_cv": 0.024,
+              "add_document": 0.0524,
+              "looking_for": 0.113,
+              "message": 0.0603,
+              "create_group": 0.0608
+            },
+            "confidence": 0.2078
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.9093,
+              "long": 0.0907
+            },
+            "confidence": 0.6702
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0169
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0072
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0112,
+              "pt": 0.9385,
+              "es": 0.0503
+            },
+            "confidence": 0.8251
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.7871,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5131,
+              "1": 0.3065,
+              "2": 0.0606,
+              "3": 0.1198
+            },
+            "confidence": 0.167
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8484
+          },
+          "job": {
+            "type": "choice",
+            "choice": "new",
+            "probabilities": {
+              "same": 0.0553,
+              "new": 0.9447
+            },
+            "confidence": 0.7911
+          },
+          "action": {
+            "type": "choice",
+            "choice": "looking_for",
+            "probabilities": {
+              "none": 0.3196,
+              "send": 0.0628,
+              "add_money": 0.0348,
+              "find_document": 0.0503,
+              "filter_activity": 0.0352,
+              "import_cv": 0.0229,
+              "add_document": 0.0369,
+              "looking_for": 0.3388,
+              "message": 0.0584,
+              "create_group": 0.0403
+            },
+            "confidence": 0.1475
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8643,
+              "long": 0.1357
+            },
+            "confidence": 0.531
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0114
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0082
+          },
+          "language": {
+            "type": "choice",
+            "choice": "pt",
+            "probabilities": {
+              "en": 0.0102,
+              "pt": 0.9361,
+              "es": 0.0537
+            },
+            "confidence": 0.8188
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.6192,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.5502,
+              "1": 0.3428,
+              "2": 0.0448,
+              "3": 0.0622
+            },
+            "confidence": 0.2347
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-followup-again",
+      "set": "hire",
+      "hire": 0.9092,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.332,
+        "route": "answer",
+        "confidence": 0.688
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.309,
+        "route": "action",
+        "confidence": 0.9092,
+        "job": "same"
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.309,
+        "route": "answer",
+        "confidence": 0.7461
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.345,
+              "send": 0.0708,
+              "add_money": 0.04,
+              "find_document": 0.0627,
+              "filter_activity": 0.0332,
+              "import_cv": 0.0189,
+              "add_document": 0.0554,
+              "looking_for": 0.2872,
+              "message": 0.0695,
+              "create_group": 0.0173
+            },
+            "confidence": 0.1353
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.688,
+              "long": 0.312
+            },
+            "confidence": 0.1413
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0112
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0111
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0404,
+              "pt": 0.0592,
+              "es": 0.9004
+            },
+            "confidence": 0.7237
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9969,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4587,
+              "1": 0.2363,
+              "2": 0.1543,
+              "3": 0.1507
+            },
+            "confidence": 0.0837
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.9092
+          },
+          "job": {
+            "type": "choice",
+            "choice": "same",
+            "probabilities": {
+              "same": 0.9549,
+              "new": 0.0451
+            },
+            "confidence": 0.8277
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.4201,
+              "send": 0.0667,
+              "add_money": 0.0366,
+              "find_document": 0.0851,
+              "filter_activity": 0.0377,
+              "import_cv": 0.026,
+              "add_document": 0.0436,
+              "looking_for": 0.1956,
+              "message": 0.0604,
+              "create_group": 0.0282
+            },
+            "confidence": 0.1514
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.7461,
+              "long": 0.2539
+            },
+            "confidence": 0.2423
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0083
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0108
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0248,
+              "pt": 0.0348,
+              "es": 0.9404
+            },
+            "confidence": 0.8292
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 0.9268,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.4682,
+              "1": 0.2748,
+              "2": 0.1189,
+              "3": 0.1381
+            },
+            "confidence": 0.1039
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "id": "hire-es-followup-closer",
+      "set": "hire",
+      "hire": 0.8468,
+      "today": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.405,
+        "route": "answer",
+        "confidence": 0.8127
+      },
+      "withCheck": {
+        "action": "post_job",
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.42,
+        "route": "action",
+        "confidence": 0.8468,
+        "job": "same"
+      },
+      "asked": {
+        "action": null,
+        "language": "es",
+        "candidates": [],
+        "reasoning": 0.42,
+        "route": "answer",
+        "confidence": 0.8374
+      },
+      "answers": {
+        "plain": {
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.5475,
+              "send": 0.0378,
+              "add_money": 0.0203,
+              "find_document": 0.0411,
+              "filter_activity": 0.0205,
+              "import_cv": 0.0103,
+              "add_document": 0.0205,
+              "looking_for": 0.2637,
+              "message": 0.026,
+              "create_group": 0.0123
+            },
+            "confidence": 0.3051
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8127,
+              "long": 0.1873
+            },
+            "confidence": 0.391
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0091
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0073
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0149,
+              "pt": 0.0286,
+              "es": 0.9565
+            },
+            "confidence": 0.8738
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2161,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2781,
+              "1": 0.3357,
+              "2": 0.2782,
+              "3": 0.108
+            },
+            "confidence": 0.0388
+          }
+        },
+        "checked": {
+          "hire": {
+            "type": "noul",
+            "noul": 0.8468
+          },
+          "job": {
+            "type": "choice",
+            "choice": "same",
+            "probabilities": {
+              "same": 0.9634,
+              "new": 0.0366
+            },
+            "confidence": 0.859
+          },
+          "action": {
+            "type": "choice",
+            "choice": "none",
+            "probabilities": {
+              "none": 0.6431,
+              "send": 0.0405,
+              "add_money": 0.018,
+              "find_document": 0.03,
+              "filter_activity": 0.0247,
+              "import_cv": 0.0131,
+              "add_document": 0.0181,
+              "looking_for": 0.1639,
+              "message": 0.0357,
+              "create_group": 0.0129
+            },
+            "confidence": 0.3842
+          },
+          "depth": {
+            "type": "choice",
+            "choice": "short",
+            "probabilities": {
+              "short": 0.8374,
+              "long": 0.1626
+            },
+            "confidence": 0.4553
+          },
+          "harmful": {
+            "type": "noul",
+            "noul": 0.0089
+          },
+          "injection": {
+            "type": "noul",
+            "noul": 0.0082
+          },
+          "language": {
+            "type": "choice",
+            "choice": "es",
+            "probabilities": {
+              "en": 0.0158,
+              "pt": 0.0272,
+              "es": 0.957
+            },
+            "confidence": 0.8753
+          },
+          "reasoning": {
+            "type": "score",
+            "score": 1.2588,
+            "legend": {
+              "0": "A greeting, or one fact to look up",
+              "1": "A plain question with one answer",
+              "2": "A question with conditions or trade-offs to weigh",
+              "3": "A problem with several interacting constraints or steps"
+            },
+            "probabilities": {
+              "0": 0.2417,
+              "1": 0.3415,
+              "2": 0.3332,
+              "3": 0.0836
+            },
+            "confidence": 0.0574
+          }
+        }
+      },
+      "error": null
+    }
+  ]
+}

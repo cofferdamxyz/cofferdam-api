@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createChatRoutes, parseFloor, type ChatRouteDeps } from '../src/routes/chat.js';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
-import { actionTool, CHAT_ACTIONS, decideRoute, HIRE_OVER_PAYMENT, HIRE_QUESTION, ROUTER_THRESHOLDS, routerQuestions } from '../src/services/chat/router.js';
+import { actionTool, CHAT_ACTIONS, decideRoute, HIRE_OVER_PAYMENT, HIRE_QUESTION, JOB_QUESTION, jobQuestions, readJob, ROUTER_THRESHOLDS, routerQuestions } from '../src/services/chat/router.js';
 import {
   CHOOSE_TEXT,
   CLARIFY_TEXT,
@@ -174,6 +174,18 @@ describe('decideRoute', () => {
     expect(decideRoute(hired(clef('none', 0.8), 0.99), ROUTER_THRESHOLDS, CHAT_ACTIONS, { hireFloor: null }).route).toBe('answer');
   });
 
+  it("reads a hiring turn's job, the same as an earlier request or a new one, only when Clef is sure (one card per job)", () => {
+    const answered = (job: string, p: number) => ({ job: { type: 'choice', choice: job, probabilities: { [job]: p, [job === 'same' ? 'new' : 'same']: 1 - p } } });
+    expect(readJob(answered('same', 0.8))).toBe('same');
+    expect(readJob(answered('new', 0.7))).toBe('new');
+    expect(readJob(answered('new', 0.55))).toBeUndefined();
+    expect(readJob(answered('other', 0.9))).toBeUndefined();
+    expect(readJob(undefined)).toBeUndefined();
+    expect(jobQuestions()).toEqual({ job: { type: 'choice', instructions: JOB_QUESTION, criteria: { same: expect.any(String), new: expect.any(String) } } });
+    // Not in the router's own call: asked there, it moved the hiring check's answers.
+    expect(routerQuestions(CHAT_ACTIONS, { hire: true })).not.toHaveProperty('job');
+  });
+
   it('asks the hiring check only when it is on, and never offers post_job on the action question', () => {
     expect(routerQuestions()).not.toHaveProperty('hire');
     expect(routerQuestions(CHAT_ACTIONS, { hire: true })).toMatchObject({ hire: { type: 'noul', instructions: HIRE_QUESTION } });
@@ -279,10 +291,29 @@ describe('runChat', () => {
 
   it('opens the hirer’s flow when the hiring check is on, says Find workers is ready, and asks nothing when it is off', async () => {
     const calls: Call[] = [];
-    const answers = { answers: { ...clef('none', 0.8).answers, hire: { type: 'noul', noul: 0.94 } } };
+    const answers = {
+      answers: { ...clef('none', 0.8).answers, hire: { type: 'noul', noul: 0.94 }, job: { type: 'choice', choice: 'new', probabilities: { new: 0.9, same: 0.1 } } },
+    };
     const inference = fakeInference({ 'chat-router': answers, 'chat-answer': () => sse(['x']) }, calls);
     const events = await collect(runChat({ inference, messages: user('Hi, I am looking for a plumber to fix my sink'), hireFloor: 0.5 }));
     expect(events).toContainEqual({ type: 'action', request: { id: 'post_job' } });
+    // The route event names the job, for the app's one card per job: a first request is new, with no call to ask.
+    expect(events.find((e) => e.type === 'route')).toMatchObject({ route: 'action', action: 'post_job', job: 'new' });
+    expect(calls.filter((c) => c.op === 'chat-router')).toHaveLength(1);
+    // After an earlier turn, one more call of its own asks whether it is the same job.
+    const again: Call[] = [];
+    const sameJob = { answers: { ...answers.answers, job: { type: 'choice', choice: 'same', probabilities: { same: 0.92, new: 0.08 } } } };
+    const followUp = fakeInference({ 'chat-router': sameJob, 'chat-answer': () => sse(['x']) }, again);
+    const history = [
+      { role: 'user' as const, text: 'We are looking for a plumber to work at our sink tomorrow 2pm' },
+      { role: 'assistant' as const, text: 'Find workers is ready. Check the details and confirm there.' },
+      { role: 'user' as const, text: 'Try searching again' },
+    ];
+    const againEvents = await collect(runChat({ inference: followUp, messages: history, hireFloor: 0.5 }));
+    expect(againEvents.find((e) => e.type === 'route')).toMatchObject({ action: 'post_job', job: 'same' });
+    const routerCalls = again.filter((c) => c.op === 'chat-router');
+    expect(routerCalls).toHaveLength(2);
+    expect(routerCalls[1]!.input).toMatchObject({ questions: { job: { instructions: JOB_QUESTION } } });
     expect(texts(events)).toMatch(/Find workers is ready\. Check the details and confirm there\./);
     const router = calls.find((c) => c.op === 'chat-router')!;
     expect(router.input).toMatchObject({ questions: { hire: { instructions: HIRE_QUESTION } } });

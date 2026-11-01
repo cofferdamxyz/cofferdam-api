@@ -122,6 +122,24 @@ export const HIRE_QUESTION =
   "Read the latest user message with the turns before it. Does the latest message ask for a worker: does it name work the user wants done (a repair, a task, a shift, a vacancy or a job ad) and ask for someone to do it, or, right after a request for a worker, ask to search again, nearer, or for another worker? A question about how hiring, fees or payments work, paying or messaging someone, thanks or small talk, and the user's own job search are no, even right after a request for a worker.";
 
 /**
+ * Asked after the router, in a call of its own, on a turn that opens the hirer's flow with an earlier user turn before
+ * it: whether the worker it asks for is for the same job as an earlier request or a new one, so the app keeps one card
+ * per job (workspace `docs/architecture/job-card.md`). Model-reasoned over the same turns; nothing is stored. Not in the
+ * router's own call: asked there, it moved the hiring check's answers (a Portuguese vacancy from 0.62 to 0.46, three
+ * runs of three, 2026-11-01). On the 29 requests for a worker the check routes, with production's rule (new without an
+ * earlier user turn), it names all 29 as expected; a first wording called "and an electrician too" the same job
+ * (`test/chat-eval/router-hire-2026-11-01-job-*.md`; `readJob`, `JOB_FLOOR`).
+ */
+export const JOB_QUESTION =
+  'The latest user message asks for a worker. Read it with the turns before it: is it the same job as an earlier request for a worker in this conversation (the same kind of worker for the same work: searching again, nearer, or changing its time, pay or details), or a new job (another kind of worker or work, even for the same place or day, or the first request for a worker here)?';
+export const JOB_CRITERIA = {
+  same: 'The same job: the same kind of worker for the same work as an earlier request in this conversation',
+  new: 'A new job: another kind of worker or work, or the first request for a worker in this conversation',
+} as const;
+/** The probability Clef's job answer needs before a hiring turn names it. */
+export const JOB_FLOOR = 0.6;
+
+/**
  * The reasoning question's legend, in order. Clef's `score` is the expected
  * position on it (0 to 3: "hi" scored 0.11, "¿Qué es Cofferdam?" 0.86, a
  * step-by-step escrow question 2.81; checked 2026-10-20), which `decideRoute`
@@ -228,6 +246,8 @@ export interface RouteDecision {
   candidates: string[];
   /** How much reasoning the request needs, 0 (a greeting) to 1 (several interacting constraints); 0 when Clef did not say. */
   reasoning: number;
+  /** On a turn that opens the hirer's flow: the same job as an earlier request, or a new one (`JOB_QUESTION`); absent when unsure. */
+  job?: 'same' | 'new';
 }
 
 const MAX_CANDIDATES = 3;
@@ -274,7 +294,9 @@ export function decideRoute(
   if (opts.hireFloor != null && hiring) {
     const hire = Number(a.hire?.noul ?? 0);
     const over = id != null && HIRING_YIELDS_TO.has(id) ? Math.max(opts.hireFloor, HIRE_OVER_PAYMENT) : opts.hireFloor;
-    if (Number.isFinite(hire) && hire >= over) return { ...none, route: 'action', action: hiring.id, confidence: hire };
+    if (Number.isFinite(hire) && hire >= over) {
+      return { ...none, route: 'action', action: hiring.id, confidence: hire };
+    }
   }
   // A hiring screen is never the action question's to open, even from an answer that names it.
   if (id && id !== 'none' && !actions.some((x) => x.id === id && x.hiring)) {
@@ -292,6 +314,19 @@ export function decideRoute(
   const depthP = Number(a.depth?.probabilities?.[depth ?? ''] ?? 0);
   if (depth === 'long' && depthP >= thresholds.long) return { ...none, route: 'answer_long', confidence: depthP };
   return { ...none, route: 'answer', confidence: depth === 'short' ? depthP : 0 };
+}
+
+/** Clef's questions for a hiring turn's job (`JOB_QUESTION`). */
+export function jobQuestions() {
+  return { job: { type: 'choice' as const, instructions: JOB_QUESTION, criteria: JOB_CRITERIA } };
+}
+
+/** The job Clef's answer names at `JOB_FLOOR` or above, else undefined. */
+export function readJob(answers: unknown): 'same' | 'new' | undefined {
+  const job = (answers && typeof answers === 'object' ? (answers as Record<string, ClefChoice>).job : undefined) ?? {};
+  const choice = job.choice;
+  const p = Number(job.probabilities?.[choice ?? ''] ?? 0);
+  return (choice === 'same' || choice === 'new') && p >= JOB_FLOOR ? choice : undefined;
 }
 
 /** The OpenAI-style tool for an action with fields, or null when it opens with nothing prefilled. */

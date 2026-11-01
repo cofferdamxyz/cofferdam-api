@@ -31,7 +31,18 @@
 
 import { InferenceTimeout, OPS, type Inference } from '../inference/index.js';
 import { PRODUCT_FACTS } from './facts.generated.js';
-import { actionTool, CHAT_ACTIONS, decideRoute, ROUTER_THRESHOLDS, routerQuestions, type ChatLanguage, type ChatRoute, type RouteDecision } from './router.js';
+import {
+  actionTool,
+  CHAT_ACTIONS,
+  decideRoute,
+  jobQuestions,
+  readJob,
+  ROUTER_THRESHOLDS,
+  routerQuestions,
+  type ChatLanguage,
+  type ChatRoute,
+  type RouteDecision,
+} from './router.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -55,6 +66,8 @@ export type ChatEvent =
       effort?: ReasoningEffort;
       /** Clef's reasoning score, 0 to 1. */
       reasoning: number;
+      /** A hiring turn's job: the same as an earlier request, or a new one (`JOB_QUESTION`); absent when unsure. */
+      job?: 'same' | 'new';
     }
   | { type: 'text'; delta: string }
   | { type: 'action'; request: Record<string, unknown> }
@@ -262,6 +275,9 @@ export const ROUTER_FIRST_TRY_MS = 3_000;
  * call began within 9 s (2026-10-21). The retry waits the full window.
  */
 export const REASONING_FIRST_TRY_MS = 15_000;
+
+/** The job question's own call on a hiring turn: short, since the reply waits on it and a miss only names no job. */
+export const JOB_TIMEOUT_MS = 4_000;
 
 /** Earlier turns reach the router cut to this many characters; the latest message goes whole. */
 export const ROUTER_EARLIER_CHARS = 300;
@@ -699,6 +715,25 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         await holdBack('router');
         return;
       }
+      // A hiring turn's job, for the app's one card per job: new with no earlier user turn, else Clef's answer in a call
+      // of its own (the router's call stays as measured); a failed or unsure answer names none.
+      if (routed && decision.route === 'action' && decision.action === 'post_job') {
+        if (messages.filter((m) => m.role === 'user').length <= 1) decision = { ...decision, job: 'new' };
+        else {
+          try {
+            const out = (await inference.run('chat-router', { model: clefName(router.model), state, questions: jobQuestions() }, { timeoutMs: JOB_TIMEOUT_MS })) as {
+              answers?: unknown;
+              usage?: Usage;
+            };
+            const reported = out?.usage?.input_tokens ?? out?.usage?.prompt_tokens;
+            router.tokensIn += typeof reported === 'number' && reported > 0 ? reported : Math.ceil(state.length / 4);
+            const job = readJob(out?.answers);
+            if (job) decision = { ...decision, job };
+          } catch (err) {
+            opts.log?.({ event: 'chat_job_failed', reason: reasonOf(err) });
+          }
+        }
+      }
       if (!routed) {
         dropEarly();
         opts.log?.({ event: 'chat_router_unavailable', tier, ms: Date.now() - started });
@@ -718,6 +753,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
         tier,
         reasoning: decision.reasoning,
         ...(effort ? { effort } : {}),
+        ...(decision.job ? { job: decision.job } : {}),
       });
       routeSent = true;
 

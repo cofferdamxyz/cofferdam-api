@@ -30,6 +30,8 @@ export interface EvalPrompt {
   expect: {
     route: ChatRoute;
     action: string | null;
+    /** A request for a worker: the same job as an earlier request in the conversation, or a new one (`new` when absent). */
+    job?: 'same' | 'new';
     fields?: Record<string, FieldExpectation>;
     candidates?: string[];
     /** Regexes (case-insensitive) the reply must not match: wrong claims (decision 0048). */

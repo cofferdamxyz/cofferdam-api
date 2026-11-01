@@ -30,7 +30,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { parseFloor } from '../src/routes/chat.js';
-import { CHAT_ACTIONS, decideRoute, HIRE_QUESTION, ROUTER_THRESHOLDS, routerQuestions, type RouteDecision } from '../src/services/chat/router.js';
+import { CHAT_ACTIONS, decideRoute, HIRE_QUESTION, jobQuestions, readJob, ROUTER_THRESHOLDS, routerQuestions, type RouteDecision } from '../src/services/chat/router.js';
 import { parseChatRequest, routerState } from '../src/services/chat/run.js';
 import { createInference } from '../src/services/inference/index.js';
 import hirePrompts from './chat-eval/hire-prompts.json';
@@ -55,7 +55,9 @@ interface Row {
   /** The decision with the hiring question asked but its floor off: what the added question does to the other answers. */
   asked: RouteDecision;
   /** Clef's answers to both calls, so another rule can be replayed on a run without asking again. */
-  answers?: { plain: unknown; checked: unknown };
+  answers?: { plain: unknown; checked: unknown; job?: unknown };
+  /** On a turn that opens the hirer's flow: the job production names (`run.ts`: new without an earlier user turn, else `readJob` of its own call). */
+  job?: 'same' | 'new' | null;
   error?: string;
 }
 
@@ -97,14 +99,26 @@ describe.skipIf(!LIVE)('the router’s hiring check (live, Workers AI)', () => {
         try {
           const [plain, checked] = await Promise.all([ask(state, false), ask(state, true)]);
           const hire = Number((checked as Record<string, { noul?: number }> | undefined)?.hire?.noul);
+          const withCheck = decideRoute(checked, ROUTER_THRESHOLDS, CHAT_ACTIONS, { hireFloor: floor });
+          // The job question, as production asks it: its own call, only on a hiring turn with an earlier user turn.
+          let jobAnswers: unknown;
+          let job: 'same' | 'new' | null | undefined;
+          if (withCheck.action === HIRING) {
+            if (!prompt.history?.some((t) => t.role === 'user')) job = 'new';
+            else {
+              jobAnswers = ((await inference.run('chat-router', { model: clef, state, questions: jobQuestions() })) as { answers?: unknown })?.answers;
+              job = readJob(jobAnswers) ?? null;
+            }
+          }
           rows.push({
             prompt,
             set,
             hire: Number.isFinite(hire) ? hire : null,
             today: decideRoute(plain),
-            withCheck: decideRoute(checked, ROUTER_THRESHOLDS, CHAT_ACTIONS, { hireFloor: floor }),
+            withCheck,
             asked: decideRoute(checked),
-            answers: { plain, checked },
+            answers: { plain, checked, ...(jobAnswers !== undefined ? { job: jobAnswers } : {}) },
+            ...(job !== undefined ? { job } : {}),
           });
         } catch (err) {
           const failed = decideRoute(undefined);
@@ -128,6 +142,8 @@ describe.skipIf(!LIVE)('the router’s hiring check (live, Workers AI)', () => {
     });
     // Apart from the hiring check's own route, does asking it move any other decision?
     const moved = scored.filter((r) => short(r.asked) !== short(r.today));
+    const jobRows = scored.filter((r) => r.job !== undefined && r.prompt.expect.action === HIRING);
+    const jobRight = (r: Row) => r.job === (r.prompt.expect.job ?? 'new');
     const expectedOk = (d: RouteDecision, p: EvalPrompt) => d.route === p.expect.route && (d.action ?? null) === (p.expect.action ?? null);
     const agree = (set: Row['set'], pick: (r: Row) => RouteDecision) => scored.filter((r) => r.set === set && expectedOk(pick(r), r.prompt)).length;
     const total = (set: Row['set']) => scored.filter((r) => r.set === set).length;
@@ -158,6 +174,12 @@ describe.skipIf(!LIVE)('the router’s hiring check (live, Workers AI)', () => {
         ? `${moved.length} prompts decided otherwise once the question was asked, before its own floor:\n\n| Prompt | Without | With the question asked |\n|---|---|---|\n${moved.map((r) => `| ${r.prompt.id} | ${short(r.today)} | ${short(r.asked)} |`).join('\n')}`
         : 'No other decision moved when the question was asked.',
       '',
+      `## The job of each hiring turn`,
+      '',
+      jobRows.length
+        ? `${jobRows.filter(jobRight).length} of ${jobRows.length} hiring turns name the job expected (the same as an earlier request, or new; production's rule: new without an earlier user turn, else the job question's own call at JOB_FLOOR).${jobRows.some((r) => !jobRight(r)) ? `\n\n| Prompt | Expected | Named |\n|---|---|---|\n${jobRows.filter((r) => !jobRight(r)).map((r) => `| ${r.prompt.id} | ${r.prompt.expect.job ?? 'new'} | ${r.job ?? 'none'} |`).join('\n')}` : ''}`
+        : 'No turn opened the hirer\'s flow.',
+      '',
       `## Every prompt`,
       '',
       '| Prompt | Text | Expected | Hire | Today | With the check |',
@@ -172,7 +194,7 @@ describe.skipIf(!LIVE)('the router’s hiring check (live, Workers AI)', () => {
     writeFileSync(join(dir, `${name}.md`), md);
     writeFileSync(
       join(dir, `${name}.json`),
-      JSON.stringify({ date, model, wording, floor, rows: rows.map((r) => ({ id: r.prompt.id, set: r.set, hire: r.hire, today: r.today, withCheck: r.withCheck, asked: r.asked, answers: r.answers ?? null, error: r.error ?? null })) }, null, 2) + '\n',
+      JSON.stringify({ date, model, wording, floor, rows: rows.map((r) => ({ id: r.prompt.id, set: r.set, hire: r.hire, today: r.today, withCheck: r.withCheck, asked: r.asked, job: r.job ?? null, answers: r.answers ?? null, error: r.error ?? null })) }, null, 2) + '\n',
     );
     console.log(sweep.map((s) => `floor ${s.f}: caught ${s.tp}/${positives.length}, false ${s.fp.length}`).join('\n'));
     expect(rows.length).toBeGreaterThan(0);
