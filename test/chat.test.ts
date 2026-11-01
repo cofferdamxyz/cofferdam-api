@@ -12,12 +12,16 @@ import {
   CHOOSE_TEXT,
   CLARIFY_TEXT,
   FIXED_TEXT,
+  answerSystem,
+  CHAT_LIMITS,
   isStrictBlock,
   keepsAmount,
   mentionsOtherCurrency,
   REASONING_FIRST_TRY_MS,
   REFUSE_TEXT,
   parseChatRequest,
+  PROFILE_RULE,
+  profileClose,
   routerState,
   runChat,
   SYSTEM_PROMPT,
@@ -220,6 +224,17 @@ describe('parseChatRequest', () => {
     expect(parseFloor('0.6')).toBe(0.6);
     expect(parseFloor(undefined)).toBeNull();
     expect(parseFloor('1.5')).toBeNull();
+  });
+
+  it("reads the saved Work Profile's facts, trimmed, and refuses one that is not text or too long (workspace decision 0076)", () => {
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi') }).profile).toBeNull();
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), profile: '  Occupation: Electrician.  ' }).profile).toBe('Occupation: Electrician.');
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), profile: '   ' }).profile).toBeNull();
+    expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), profile: { occupation: 'x' } })).toThrow(/profile must be text/);
+    expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), profile: 'x'.repeat(CHAT_LIMITS.profileChars + 1) })).toThrow(/profile is too long/);
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), language: 'pt' }).language).toBe('pt');
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi') }).language).toBeNull();
+    expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), language: 'fr' })).toThrow(/language must be/);
   });
 });
 
@@ -539,6 +554,56 @@ function dlpBlock(): Error {
   err.name = 'AiGatewayError';
   return err;
 }
+
+describe("the saved Work Profile's facts (workspace decision 0076)", () => {
+  const PROFILE = "The user's Work Profile (their CV, as they reviewed and approved it):\nOccupation: Eletricista Offshore.\n- Eletricista Montador at Atlântico Engenharia, from 2017 to 2021 (about 4 years).";
+
+  it('follows the rules and product facts in the answer models\' system, after its rule, and nothing without one', () => {
+    expect(answerSystem(PROFILE)).toBe(`${answerSystem()}\n\n${PROFILE_RULE}\n\n${PROFILE}\n\n${profileClose(null)}`);
+    expect(answerSystem(PROFILE, 'en').endsWith(`${PROFILE}\n\nReply in English.`)).toBe(true);
+    expect(answerSystem(PROFILE, 'pt').endsWith('Reply in Brazilian Portuguese.')).toBe(true);
+    expect(answerSystem(null, 'en')).toBe(answerSystem());
+    expect(answerSystem(null)).toBe(answerSystem());
+  });
+
+  it('reaches the everyday and Thinking answers, never the router or a log line', async () => {
+    const calls: Call[] = [];
+    const logs: Record<string, unknown>[] = [];
+    const inference = fakeInference({ 'chat-router': later(20, clef('none', 0.8)), 'chat-answer': () => sse(['About 4 years.']) }, calls);
+    const events = await collect(
+      runChat({ inference, messages: user('How long did I work at Atlântico Engenharia?'), profile: PROFILE, language: 'en', log: (f) => logs.push(f) }),
+    );
+    expect(texts(events)).toBe('About 4 years.');
+    const answer = calls.find((c) => c.op === 'chat-answer')!;
+    expect((answer.input.messages as { role: string; content: string }[])[0]).toEqual({ role: 'system', content: answerSystem(PROFILE, 'en') });
+    // The router reads the user's message, as always, but none of the profile: its occupation is in the profile alone.
+    expect(JSON.stringify(calls.find((c) => c.op === 'chat-router')!.input)).not.toContain('Eletricista Offshore');
+    expect(JSON.stringify(logs)).not.toContain('Eletricista Offshore');
+    expect(JSON.stringify(logs)).not.toContain('Atlântico');
+
+    const thinking: Call[] = [];
+    const deep = fakeInference(
+      { 'chat-router': clef('none', 0.8, 'short', 0.9, 0.01, 0.01, {}, 0.9), 'chat-reasoning': () => sse(['From 2017 to 2021.']) },
+      thinking,
+    );
+    await collect(runChat({ inference: deep, messages: user('How long did I work at Atlântico Engenharia?'), tier: 'thinking', profile: PROFILE }));
+    const reasoning = thinking.find((c) => c.op === 'chat-reasoning')!;
+    expect((reasoning.input.messages as { content: string }[])[0]!.content).toBe(answerSystem(PROFILE));
+  });
+
+  it("answers a certificate question the phone sent facts for, where the router would open the Vault's search", async () => {
+    const certificates = "The user's Work Profile (their CV, as they reviewed and approved it), the parts this question needs:\nCertificates: NR-35 Trabalho em Altura (valid until 2026-11).\nToday is 2026-10-31.";
+    const calls: Call[] = [];
+    const inference = fakeInference({ 'chat-router': later(20, clef('find_document', 0.93)), 'chat-answer': () => sse(['Your NR-35 is valid until November 2026.']) }, calls);
+    const events = await collect(runChat({ inference, messages: user('When does my NR-35 expire?'), profile: certificates, language: 'en' }));
+    expect(events[0]).toMatchObject({ type: 'route', route: 'answer' });
+    expect(events.some((e) => e.type === 'action')).toBe(false);
+    expect(texts(events)).toBe('Your NR-35 is valid until November 2026.');
+    // Without facts the same question still opens the search: the Vault comes first once it can be searched.
+    const plain = await collect(runChat({ inference: fakeInference({ 'chat-router': clef('find_document', 0.93), 'chat-answer': () => sse(['x']) }), messages: user('When does my NR-35 expire?') }));
+    expect(plain).toContainEqual({ type: 'action', request: { id: 'find_document' } });
+  });
+});
 
 describe('the strict gateway holding a turn back (decision 0021 (h))', () => {
   it('answers a router the gateway blocked with the notice and a fixed reply, once, unmetered and unlogged', async () => {

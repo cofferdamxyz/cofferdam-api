@@ -73,12 +73,21 @@ export type ChatInference = Pick<Inference, 'run' | 'model'>;
 
 // ── Request ──────────────────────────────────────────────────────────────────
 
-export const CHAT_LIMITS = { messages: 12, messageChars: 4_000, totalChars: 12_000 } as const;
+export const CHAT_LIMITS = { messages: 12, messageChars: 4_000, totalChars: 12_000, profileChars: 3_000 } as const;
 
 export class ChatRequestError extends Error {}
 
-/** Validate the app's body: `{ account, messages: [{ role, text }] }`, ending with the user's turn. */
-export function parseChatRequest(body: unknown): { account: string; messages: ChatMessage[]; tier: ChatTier } {
+/**
+ * Validate the app's body: `{ account, messages: [{ role, text }] }`, ending with the user's turn, and optionally
+ * `profile`, the saved Work Profile's facts the phone wrote and gated (workspace decision 0076).
+ */
+export function parseChatRequest(body: unknown): {
+  account: string;
+  messages: ChatMessage[];
+  tier: ChatTier;
+  profile: string | null;
+  language: ChatLanguage | null;
+} {
   if (!body || typeof body !== 'object') throw new ChatRequestError('expected a JSON object');
   const b = body as Record<string, unknown>;
   const account = String(b.account ?? '');
@@ -95,7 +104,12 @@ export function parseChatRequest(body: unknown): { account: string; messages: Ch
   if (messages.reduce((n, m) => n + m.text.length, 0) > CHAT_LIMITS.totalChars) throw new ChatRequestError('the conversation is too long');
   const tier = b.tier ?? 'ordinary';
   if (tier !== 'ordinary' && tier !== 'thinking') throw new ChatRequestError('tier must be ordinary or thinking');
-  return { account, messages, tier };
+  if (b.profile != null && typeof b.profile !== 'string') throw new ChatRequestError('profile must be text');
+  const profile = typeof b.profile === 'string' ? b.profile.trim() : '';
+  if (profile.length > CHAT_LIMITS.profileChars) throw new ChatRequestError('profile is too long');
+  const language = b.language ?? null;
+  if (language !== null && language !== 'en' && language !== 'pt' && language !== 'es') throw new ChatRequestError('language must be en, pt or es');
+  return { account, messages, tier, profile: profile || null, language };
 }
 
 // ── Prompts ──────────────────────────────────────────────────────────────────
@@ -116,9 +130,34 @@ export const SYSTEM_PROMPT = [
   "Only legal, tax or investment advice about the user's own case goes to a professional; say so briefly and still give the general picture.",
 ].join(' ');
 
-/** The answer models' system message: the rules, then the product facts (decision 0048). */
-export function answerSystem(): string {
-  return `${SYSTEM_PROMPT}\n\n${PRODUCT_FACTS}`;
+/**
+ * The rule before a Work Profile's facts (workspace decision 0076); the app's On device prompt says the same
+ * (cofferdam-app `src/lib/work/cv/profileFacts.ts` `PROFILE_RULE`).
+ */
+export const PROFILE_RULE =
+  "Questions about the user's own work, jobs, education, skills, certificates or languages are answered from their Work Profile below, and only from it: when it does not say, say so and never invent. Give its dates and lengths as it states them and its names as written, and reply in the language the rules above set, never in the profile's own.";
+
+/**
+ * The answer models' system message: the rules, then the product facts (decision 0048), then, when the phone sent the
+ * saved Work Profile's facts, the rule for questions about them and the facts (workspace decision 0076). The router never
+ * sees them; nothing keeps or logs them.
+ */
+/** How the line after the facts names each language: the dialects the app speaks (cofferdam-app `chatLanguage.ts`). */
+export const REPLY_LANGUAGE_NAMES: Readonly<Record<ChatLanguage, string>> = { en: 'English', pt: 'Brazilian Portuguese', es: 'Mexican Spanish' };
+
+/**
+ * Said after the facts: what a model reads last pulls its language, and Gemma 4 answered English questions in the
+ * profile's Portuguese with the rule alone and with a line asking for the user's language (wrangler dev, 2026-10-31).
+ * So it names the language the phone picked (`language`, cofferdam-app `chatLanguage.ts` `replyLanguage`: the user's
+ * message's when its words show one, else the app's), as the On device prompt's last line does; without one, the rule.
+ */
+export function profileClose(language?: ChatLanguage | null): string {
+  return language ? `Reply in ${REPLY_LANGUAGE_NAMES[language]}.` : "Reply in the language of the user's latest message, not in the Work Profile's.";
+}
+
+export function answerSystem(profile?: string | null, language?: ChatLanguage | null): string {
+  const base = `${SYSTEM_PROMPT}\n\n${PRODUCT_FACTS}`;
+  return profile ? `${base}\n\n${PROFILE_RULE}\n\n${profile}\n\n${profileClose(language)}` : base;
 }
 
 function actionSystem(today: string): string {
@@ -395,9 +434,9 @@ async function startedWithin(stream: ReadableStream<Uint8Array>, ms: number): Pr
 }
 
 /** The Thinking tier's input: the same conversation, reasoning on at `effort`, room for the answer after it. */
-function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort): Record<string, unknown> {
+function reasoningInput(messages: ChatMessage[], effort: ReasoningEffort, system: string): Record<string, unknown> {
   return {
-    messages: [{ role: 'system', content: answerSystem() }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
+    messages: [{ role: 'system', content: system }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
     stream: true,
     max_completion_tokens: 1_600,
     reasoning_effort: effort,
@@ -418,9 +457,9 @@ export function thinkingOff(model: string): Record<string, unknown> {
 }
 
 /** The answer models' input: the conversation under the system prompt, streamed, thinking off. */
-function answerInput(messages: ChatMessage[], long: boolean, model: string): Record<string, unknown> {
+function answerInput(messages: ChatMessage[], long: boolean, model: string, system: string): Record<string, unknown> {
   return {
-    messages: [{ role: 'system', content: answerSystem() }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
+    messages: [{ role: 'system', content: system }, ...messages.map((m) => ({ role: m.role, content: m.text }))],
     stream: true,
     max_completion_tokens: long ? 1_200 : 400,
     ...thinkingOff(model),
@@ -483,12 +522,17 @@ export interface RunChatOptions {
   onTurn?: (usage: ChatTurnUsage) => void;
   /** The fixed replies' language when the router's language answer is below `LANGUAGE_FLOOR` (from `Accept-Language`). */
   fallbackLanguage?: ChatLanguage | null;
+  /** The saved Work Profile's facts for the answer models (workspace decision 0076); never the router's, never logged. */
+  profile?: string | null;
+  /** The language the phone picked for the reply, named after the profile's facts (`profileClose`). */
+  language?: ChatLanguage | null;
 }
 
 /** Run one turn; the returned stream carries `ChatEvent`s as SSE. */
 export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
   const { inference, messages } = opts;
   const latest = messages[messages.length - 1]!.text;
+  const system = answerSystem(opts.profile, opts.language);
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
   const started = Date.now();
@@ -589,7 +633,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
     const router = { model: routerModel, called: false, tokensIn: Math.ceil(state.length / 4), estimated: true };
     let languageP = 0;
     const early = new AbortController();
-    const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared, answerModel), { signal: early.signal });
+    const startAnswer = () => inference.run('chat-answer', answerInput(messages, shared, answerModel, system), { signal: early.signal });
     // No early answer in the Thinking tier: a cancelled reasoning call costs real money.
     const earlyAnswer = opts.early === false || thinking ? null : startAnswer();
     earlyAnswer?.catch(() => {});
@@ -638,6 +682,10 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           const reported = clef?.usage?.input_tokens ?? clef?.usage?.prompt_tokens;
           if (typeof reported === 'number' && reported > 0) Object.assign(router, { tokensIn: reported, estimated: false });
           decision = decideRoute(clef?.answers, ROUTER_THRESHOLDS, CHAT_ACTIONS, { hireFloor: opts.hireFloor });
+          // A question the phone sent profile facts for is the user's own (workspace decision 0076): it is answered from
+          // them, not by opening the Vault's search, which finds nothing until the Vault is built. The founder's order
+          // is the Vault first and the Work Profile behind it, so the phone will search the Vault before it sends these.
+          if (opts.profile && decision.route === 'action' && decision.action === 'find_document') decision = { ...decision, route: 'answer', action: null };
           languageP = languageProbability(clef?.answers);
           timings.router = Date.now() - t0;
           routed = true;
@@ -716,11 +764,11 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
           // The early answer's call began with the turn.
           const t2 = useEarly ? started : Date.now();
           const res = thinking
-            ? await reasoningCall(reasoningInput(messages, effort ?? 'low'))
+            ? await reasoningCall(reasoningInput(messages, effort ?? 'low', system))
             : useEarly
               ? await earlyAnswer
               : long && !shared
-                ? await inference.run('chat-long', answerInput(messages, true, longModel))
+                ? await inference.run('chat-long', answerInput(messages, true, longModel, system))
                 : await startAnswer();
           let sent = 0;
           let usage = usageOf(res);

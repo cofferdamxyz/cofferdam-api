@@ -9,6 +9,8 @@
  *   DPoP: <proof>                  (signed by the session's device key)
  *   (or Authorization: Bearer csa1:… — a v1 token, while CSA1_V1_ACCEPTED allows it)
  *   { "account": "0x…", "messages": [{ "role": "user", "text": "…" }, …] }
+ *   (and optionally "profile": the saved Work Profile's facts, gated on the phone, for the answer models only,
+ *   with "language", the reply's language the phone picked: en, pt or es; workspace decision 0076)
  *
  * Workers AI spends money, so the route is gated like the bind-bundle pickup:
  * the session must verify and be pinned to the account (a v1 token at most an
@@ -303,6 +305,8 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       hireFloor: parseFloor(c.env.CHAT_HIRE_FLOOR),
       log,
       fallbackLanguage: headerLanguage(c.req.header('accept-language')),
+      profile: parsed.profile,
+      language: parsed.language,
       onTurn: store
         ? (usage) => {
             const at = deps.now();
