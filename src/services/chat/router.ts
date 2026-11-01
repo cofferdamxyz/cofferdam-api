@@ -101,17 +101,25 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
  * prompts on clef-flash). Asked only when `CHAT_HIRE_FLOOR` sets its floor
  * (0.5 since 2026-10-31, when the app's Find workers took `post_job`).
  *
- * Of four wordings measured on 142 prompts in three languages, this one did
- * best on clef-flash (`test/chatRouter.eval.test.ts`,
- * `test/chat-eval/router-hire-2026-10-30-v4-wording.md`). At 0.5 it caught 22
- * of 23 requests for a worker and sent no other message to the hirer's flow,
- * apart from a harmful one the safety checks refuse first. The first wording
- * sent fee and hiring questions there at 0.53 to 0.84. The miss is a Mexican
- * "velador" (a night guard), which flash read at 0.21 and Clef (not flash)
- * caught.
+ * The question reads the latest message with the turns before it, so a
+ * follow-up to a hiring request ("Try searching again", "any closer?", "and an
+ * electrician too") asks for a worker too: the founder's iPhone sent "Try
+ * searching again" to Looking for work on 2026-11-01. On 154 prompts in three
+ * languages (`test/chat-eval/router-hire-2026-11-01-followups-*.md`, 12 of
+ * them follow-ups and their negatives), at 0.5 on clef-flash, it catches 29 of
+ * 30 requests for a worker (all 7 follow-ups; the earlier wording, which asked
+ * about the latest message alone, caught 26, missing 3 of them at 0.33 to
+ * 0.47), and sends no other message to the hirer's flow: a payment to a
+ * worker reads 0.61 and stays under `HIRE_OVER_PAYMENT`, and a worker's own
+ * "try again" after Looking for work reads 0.10 to 0.21. A first context
+ * wording sent "how much is the fee?" after a hiring request there at 0.56;
+ * naming thanks and questions "even right after a request for a worker" as no
+ * brought it to 0.26. One chat prompt moved (`clarify-pt-joao`: an answer, as
+ * without the check, where the earlier wording asked). The miss is still the
+ * Mexican "velador" (0.21 on flash; Clef, not flash, caught it on 2026-10-30).
  */
 export const HIRE_QUESTION =
-  "Is the latest user message a request for a worker: does it name work the user wants done (a repair, a task, a shift, a vacancy or a job ad) and ask for someone to do it? Asking how hiring, fees or payments work, paying or messaging someone, and the user's own job search are no.";
+  "Read the latest user message with the turns before it. Does the latest message ask for a worker: does it name work the user wants done (a repair, a task, a shift, a vacancy or a job ad) and ask for someone to do it, or, right after a request for a worker, ask to search again, nearer, or for another worker? A question about how hiring, fees or payments work, paying or messaging someone, thanks or small talk, and the user's own job search are no, even right after a request for a worker.";
 
 /**
  * The reasoning question's legend, in order. Clef's `score` is the expected
