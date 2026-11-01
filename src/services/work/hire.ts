@@ -65,6 +65,7 @@ import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
 import { INTENT_MAX_CHARS, parseIntent, type IntentFields } from './intent.js';
 import { H3_CELL, h3CenterChildAt, REGION, type Scope } from './listings.js';
+import { ISO_DAY, readStart, type JobStart } from './start.js';
 import { MAX_REGIONS, recall, type RecallDeps, type RecallIntent, type RecallOutcome } from './recall.js';
 import { candidatesFor, embedTexts, requestFallback, snap, type Candidate, type RegistryDeps } from './registry.js';
 
@@ -118,6 +119,8 @@ export interface HirerRequest {
   at?: string;
   /** On site, from an app before the amendment: the ring its hirer's radius covered, whose centre stands for `at`. */
   near?: LegacyRing;
+  /** The day it is where the job is, `YYYY-MM-DD` (the phone's local date): the start's words are read against it (`start.ts`). */
+  today?: string;
   /**
    * The client's query vector for the sentence (EmbeddingGemma 2 on the
    * phone), already checked against the pinned model. Recall searches with
@@ -138,14 +141,24 @@ export interface HirePlan {
   intent: RecallIntent;
   /** What the assistant still has to ask for before the confirm card. */
   missing: ('budget' | 'when')[];
+  /**
+   * The job draft's other settings (workspace decision 0065; the founder, 2026-10-31: the chat's card and the MCP
+   * connector set the same job): the start the hirer's words name, read against `today` (`start.ts`; null when the
+   * words name neither a day nor a time, or without `today`), whether the job may run Instant (today exactly when it is
+   * Instant: every requirement it states is gated), and whether its budget is under the smallest contract, which the job
+   * cannot be funded below, though it is counted.
+   */
+  start: JobStart | null;
+  instantAllowed: boolean;
+  belowMinimum: boolean;
 }
 
 export type PlanOutcome =
   | { ok: true; plan: HirePlan; calls: WorkCall[] }
   | { ok: false; error: 'refused'; reason: 'harmful' | 'injection'; calls: WorkCall[] }
   | { ok: false; error: 'text_refused'; reason: BlockRefusal; calls: WorkCall[] }
-  | { ok: false; error: 'bad_request'; reason: 'lang' | 'regions' | 'at' | 'near'; calls: WorkCall[] }
-  | { ok: false; error: 'intent_failed' | 'below_minimum' | 'classification_failed' | 'embedding_failed'; calls: WorkCall[] };
+  | { ok: false; error: 'bad_request'; reason: 'lang' | 'regions' | 'at' | 'near' | 'today'; calls: WorkCall[] }
+  | { ok: false; error: 'intent_failed' | 'classification_failed' | 'embedding_failed'; calls: WorkCall[] };
 
 type RequestRefusal = Extract<PlanOutcome, { error: 'text_refused' | 'bad_request' }>;
 
@@ -163,6 +176,7 @@ export function checkHirerRequest(req: HirerRequest): { ok: true; sentence: stri
   }
   if (req.at != null && (typeof req.at !== 'string' || !H3_CELL[6].test(req.at))) return { ok: false, error: 'bad_request', reason: 'at', calls: [] };
   if (req.near != null && !checkLegacyRing(req.near)) return { ok: false, error: 'bad_request', reason: 'near', calls: [] };
+  if (req.today != null && (typeof req.today !== 'string' || !ISO_DAY.test(req.today))) return { ok: false, error: 'bad_request', reason: 'today', calls: [] };
   return { ok: true, sentence };
 }
 
@@ -218,7 +232,9 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
   calls.push(...parsed.calls);
   if (!parsed.ok) return parsed.error === 'text_refused' ? { ok: false, error: 'text_refused', reason: parsed.reason, calls } : { ok: false, error: parsed.error, calls };
   const fields = parsed.intent;
-  if (fields.budgetUsd != null && fields.budgetUsd < MIN_BUDGET_USD) return { ok: false, error: 'below_minimum', calls };
+  // A budget under the smallest contract is counted all the same, and flagged: the hirer fixes the amount on the card,
+  // and nothing can be funded below it (the founder, 2026-10-31).
+  const belowMinimum = fields.budgetUsd != null && fields.budgetUsd < MIN_BUDGET_USD;
 
   // 3. The registry's nearest occupations and skills to the task, and which of them the job needs.
   const task = fields.task ?? sentence;
@@ -309,7 +325,9 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
   const missing: HirePlan['missing'] = [];
   if (fields.budgetUsd == null) missing.push('budget');
   if (fields.when == null) missing.push('when');
-  return { ok: true, plan: { fields, scope, scopeP: checked.scopeP, needs, certificate, language, intent, missing }, calls };
+  const start = readStart(fields.when, req.today, req.lang);
+  const draft = { start, instantAllowed: !curated, belowMinimum };
+  return { ok: true, plan: { fields, scope, scopeP: checked.scopeP, needs, certificate, language, intent, missing, ...draft }, calls };
 }
 
 export type HireOutcome = { ok: true; plan: HirePlan; recall: RecallOutcome; calls: WorkCall[] } | Extract<PlanOutcome, { ok: false }>;

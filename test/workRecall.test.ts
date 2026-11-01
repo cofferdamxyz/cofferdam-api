@@ -493,9 +493,9 @@ describe('one hirer query', () => {
     expect(await planHire(halfAnswered.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] })).toMatchObject({ ok: false, error: 'classification_failed' });
   });
 
-  it('refuses a budget under $50, asks for what is missing, and reads remote work', async () => {
+  it('flags a budget under $50 and plans it all the same, asks for what is missing, and reads remote work', async () => {
     const low = await world({ 'work-intent': intentAnswer({ budget: 30 }), 'work-classify': clefSays(/plumber/) });
-    expect(await planHire(low.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] })).toMatchObject({ ok: false, error: 'below_minimum' });
+    expect(await planHire(low.hire, { sentence: SINK, lang: 'en', regions: ['us-tx'] })).toMatchObject({ ok: true, plan: { belowMinimum: true } });
     const open = await world({ 'work-intent': intentAnswer({ budget: null, when: null }), 'work-classify': clefSays(/plumber/) });
     const planned = await planHire(open.hire, { sentence: 'My kitchen sink is leaking under the cabinet.', lang: 'en', regions: ['us-tx'] });
     expect(planned.ok && planned.plan.missing).toEqual(['budget', 'when']);

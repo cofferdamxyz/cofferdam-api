@@ -6,7 +6,7 @@
  * `docs/product/work-wallet.md`, Matching and award; `docs/product/engine.md`,
  * Pipeline, S5 to S8).
  *
- *   POST /v1/jobs/intent  { account, sentence, lang, regions, at?, vector }
+ *   POST /v1/jobs/intent  { account, sentence, lang, regions, at?, today?, vector }
  *        → { ok, plan, finalists: { count, byGateTier: { 1, 2 }, byPersonhood: { 0, 1, 2 } } }
  *
  *   Authorization: DPoP csa1:… + DPoP: <proof>   (a fast or slow session, decision 0055)
@@ -76,6 +76,11 @@ export function planView(plan: HirePlan) {
     anyOf: plan.intent.anyOf,
     regions: plan.intent.regions,
     missing: plan.missing,
+    // The job draft's settings (decision 0065): the start, whether Instant is open, and a budget under the smallest contract.
+    start: plan.start,
+    instantAllowed: plan.instantAllowed,
+    belowMinimum: plan.belowMinimum,
+    minimumUsd: MIN_BUDGET_USD,
   };
 }
 
@@ -119,6 +124,7 @@ export function createJobsRoutes(deps: JobsRouteDeps = defaultWorkRouteDeps) {
         regions: b.regions,
         ...(b.at != null ? { at: b.at } : {}),
         ...(b.near != null ? { near: b.near } : {}),
+        ...(b.today != null ? { today: b.today } : {}),
       } as HirerRequest;
       const checked = checkHirerRequest(req);
       if (checked.ok) return { req, vector: b.vector };
@@ -176,8 +182,6 @@ export function createJobsRoutes(deps: JobsRouteDeps = defaultWorkRouteDeps) {
           return c.json({ ok: false, error: 'text_refused', reason: outcome.reason }, 422);
         case 'bad_request':
           return c.json({ ok: false, error: 'bad_request', reason: outcome.reason }, 400);
-        case 'below_minimum':
-          return c.json({ ok: false, error: 'below_minimum', minimumUsd: MIN_BUDGET_USD }, 422);
         case 'intent_failed':
         case 'classification_failed':
         case 'embedding_failed':

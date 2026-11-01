@@ -88,7 +88,8 @@ describe('POST /v1/jobs/intent', () => {
     const plumber = await a.publish(draft({ pseudonym: 'p-plumber', certificates: ['Texas Journeyman Plumber License'] }));
     await a.publish(draft({ pseudonym: 'p-plumber', profileId: 'helper', titles: ["Plumber's Helper"], skills: ['leak repair'] }));
     await a.publish(draft({ pseudonym: 'p-electrician', titles: ['Journeyman Electrician'], skills: ['EV charger installation'] }));
-    const res = await a.post(REQUEST);
+    // The phone's local day, which the start's words are read against (decision 0065's job draft).
+    const res = await a.post({ ...REQUEST, today: '2026-11-01' });
     expect(res.status).toBe(200);
     const text = await res.text();
     const body = JSON.parse(text);
@@ -96,6 +97,10 @@ describe('POST /v1/jobs/intent', () => {
     expect(body.plan).toMatchObject({
       scope: 'onsite',
       mode: 'instant',
+      start: { date: '2026-11-01', time: '14:00' },
+      instantAllowed: true,
+      belowMinimum: false,
+      minimumUsd: 50,
       certificate: null,
       language: null,
       allOf: [],
@@ -105,7 +110,23 @@ describe('POST /v1/jobs/intent', () => {
     });
     expect([...body.plan.anyOf].sort()).toEqual(['pos:plumber', 'skill:leak-repair']);
     expect(body.plan.needs.map((n: { token: string }) => n.token).sort()).toEqual(['pos:plumber', 'skill:leak-repair']);
-    expect(Object.keys(body.plan).sort()).toEqual(['allOf', 'anyOf', 'certificate', 'fields', 'language', 'missing', 'mode', 'needs', 'regions', 'scope', 'scopeP']);
+    expect(Object.keys(body.plan).sort()).toEqual([
+      'allOf',
+      'anyOf',
+      'belowMinimum',
+      'certificate',
+      'fields',
+      'instantAllowed',
+      'language',
+      'minimumUsd',
+      'missing',
+      'mode',
+      'needs',
+      'regions',
+      'scope',
+      'scopeP',
+      'start',
+    ]);
     // One listing per pseudonym: the plumber counts once, their helper profile beside it never.
     expect(body.finalists).toEqual({ count: 1, byGateTier: { 1: 1, 2: 0 }, byPersonhood: { 0: 0, 1: 1, 2: 0 } });
     const ids = [plumber, await listingIdOf('p-plumber', 'helper')];
@@ -161,6 +182,7 @@ describe('POST /v1/jobs/intent', () => {
       [{ at: '29.76,-95.37' }, 400, { error: 'bad_request', reason: 'at' }],
       [{ at: '85a8b1a3fffffff' }, 400, { error: 'bad_request', reason: 'at' }],
       [{ near: { res: 6, rings: [['29.76,-95.37']] } }, 400, { error: 'bad_request', reason: 'near' }],
+      [{ today: '1 Nov 2026' }, 400, { error: 'bad_request', reason: 'today' }],
     ];
     for (const [over, status, expected] of cases) {
       const res = await a.post({ ...REQUEST, ...over });
@@ -188,11 +210,11 @@ describe('POST /v1/jobs/intent', () => {
     ]);
   });
 
-  it('refuses a budget under the $50 floor, and answers 502 when Clef cannot read the request', async () => {
+  it('counts a budget under the $50 floor and flags it, and answers 502 when Clef cannot read the request', async () => {
     const low = await app(STAGING, {}, { 'work-intent': intentAnswer({ budget: 30 }) });
     const res = await low.post(REQUEST);
-    expect(res.status).toBe(422);
-    expect(await res.json()).toEqual({ ok: false, error: 'below_minimum', minimumUsd: 50 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, plan: { belowMinimum: true, minimumUsd: 50, fields: { budgetUsd: 30 }, start: null } });
 
     const { store, recorded } = memoryUsageStore();
     const down = await app(STAGING, { usageStore: () => store }, { 'work-classify': new Error('down') });
