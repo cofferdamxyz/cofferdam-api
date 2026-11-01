@@ -131,13 +131,15 @@ describe("a search's reach: the widest radius a worker can set, around the job's
     });
   });
 
-  it("holds every worker whose circle can hold the job in that radius step's search, across the launch markets (8,000 seeded pairs)", async () => {
+  it("holds every worker whose circle can hold the job in that radius step's search, across the launch markets, Alaska and Hawaii (8,000 seeded pairs)", async () => {
     const random = seeded(67);
     let measured = 0;
     for (let i = 0; i < 8_000; i++) {
       // A job between Canada's border and Patagonia, and a worker up to their step and its slack away.
       const { radius, res } = STEP_SEARCHES[i % STEP_SEARCHES.length]!;
-      const job: [number, number] = [-50 + random() * 99, -125 + random() * 90];
+      // Every third job in Alaska (the Aleutians across 180° included) or Hawaii, where the cells' margins are thinnest.
+      const box = i % 3 === 2 ? (i % 2 ? [51, 20, -190, 60] : [18.5, 4, -161, 6]) : [-50, 99, -125, 90];
+      const job: [number, number] = [box[0]! + random() * box[1]!, ((box[2]! + random() * box[3]! + 540) % 360) - 180];
       const worker = destination(job, random() * (radius + CONTAINMENT_SLACK_KM + 4), random() * 360);
       const at = latLngToCell(job[0], job[1], 6);
       const cell6 = latLngToCell(worker[0], worker[1], 6);
