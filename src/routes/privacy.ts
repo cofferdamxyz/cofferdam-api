@@ -8,8 +8,10 @@
  * settings and not from a policy page, whether any of them can store what a
  * user sends: logs, cache, Logpush or an OpenTelemetry exporter; and whether
  * each accepts only requests authorized in the account. It also
- * names the plane's deployed version and Cloudflare's own commitments for
- * Workers AI. Public, cached five minutes in the isolate and at the edge;
+ * names the plane's deployed version, each use of the user's data on
+ * Cofferdam Cloud with the gateway it takes and that nothing keeps it
+ * (`uses`; the Work Profile's parts by workspace decision 0076), and
+ * Cloudflare's own commitments for Workers AI. Public, cached five minutes in the isolate and at the edge;
  * nothing of the request is read beyond the path.
  *
  * Without the read token and the account id (secrets) the route answers
@@ -42,11 +44,19 @@ export interface GatewayFacts {
   canStore: boolean;
 }
 
+/** One use of the user's own data on Cofferdam Cloud: what goes, the gateway it takes (null when none is configured), and that nothing keeps it. */
+export interface DataUse {
+  what: string;
+  gateway: string | null;
+  kept: 'nowhere';
+}
+
 export interface TransparencyAnswer {
   ok: true;
   checkedAt: string;
   plane: { version: string | null; environment: string; logs: string };
   gateways: GatewayFacts[];
+  uses: DataUse[];
   noGatewayCanStore: boolean;
   commitments: {
     workersAi: { retainsInputsOrOutputs: false; trainsOnCustomerContent: false; source: string };
@@ -70,7 +80,12 @@ interface LiveGateway {
 /** The gateways the plane is configured to use, with what each carries. */
 export function configuredGateways(env: Pick<Env, 'AI_GATEWAY_ID' | 'AI_GATEWAY_DOCUMENTS_ID'>): { id: string; carries: string }[] {
   const out: { id: string; carries: string }[] = [];
-  if (env.AI_GATEWAY_ID) out.push({ id: env.AI_GATEWAY_ID, carries: 'text you type in the app, after your phone has removed personal details' });
+  if (env.AI_GATEWAY_ID) {
+    out.push({
+      id: env.AI_GATEWAY_ID,
+      carries: 'text you type in the app, after your phone has removed personal details, and the parts of your Work Profile a question about your own work needs',
+    });
+  }
   if (env.AI_GATEWAY_DOCUMENTS_ID && env.AI_GATEWAY_DOCUMENTS_ID !== env.AI_GATEWAY_ID) out.push({ id: env.AI_GATEWAY_DOCUMENTS_ID, carries: 'a document you chose to send for reading, such as your CV' });
   return out;
 }
@@ -131,12 +146,31 @@ export function transparencyAnswer(env: TransparencyEnv, facts: GatewayFacts[], 
       logs: 'the plane logs reason codes and sizes, never the text of a request or an answer',
     },
     gateways: facts,
+    uses: dataUses(env),
     noGatewayCanStore: facts.every((f) => !f.canStore),
     commitments: {
       workersAi: { retainsInputsOrOutputs: false, trainsOnCustomerContent: false, source: WORKERS_AI_DATA_USAGE },
       gatewayLogsAndCache: { source: AI_GATEWAY_LOGGING },
     },
   };
+}
+
+/**
+ * Each use of the user's data on Cofferdam Cloud, in the user's words. The Work Profile's: only the parts a question
+ * about the user's own work needs, as structured claims, never the identity (workspace decision 0076, with the
+ * founder's tightenings of 2026-10-31).
+ */
+export function dataUses(env: Pick<Env, 'AI_GATEWAY_ID' | 'AI_GATEWAY_DOCUMENTS_ID'>): DataUse[] {
+  const strict = env.AI_GATEWAY_ID ?? null;
+  return [
+    { what: 'your chat messages, after your phone has removed personal details', gateway: strict, kept: 'nowhere' },
+    {
+      what: 'the parts of your Work Profile a question about your own work needs (jobs, dates, education, skills, certificates, languages), as structured claims: never your name, email, phone, birth date or where you live, and only when you ask',
+      gateway: strict,
+      kept: 'nowhere',
+    },
+    { what: "your CV's text, when you choose Cofferdam Cloud to read it", gateway: env.AI_GATEWAY_DOCUMENTS_ID ?? strict, kept: 'nowhere' },
+  ];
 }
 
 let cached: { at: number; answer: TransparencyAnswer } | null = null;

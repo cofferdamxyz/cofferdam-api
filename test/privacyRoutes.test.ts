@@ -54,6 +54,15 @@ describe('the transparency answer', () => {
     expect(answer.noGatewayCanStore).toBe(true);
     expect(answer.plane.version).toBe('v-123');
     expect(answer.commitments.workersAi.retainsInputsOrOutputs).toBe(false);
+    // Each use of the user's data on Cofferdam Cloud, its gateway, kept nowhere: the Work Profile's parts on the strict
+    // gateway (workspace decision 0076).
+    expect(answer.uses.map((x) => [x.gateway, x.kept])).toEqual([
+      ['cofferdam-strict', 'nowhere'],
+      ['cofferdam-strict', 'nowhere'],
+      ['cofferdam-documents', 'nowhere'],
+    ]);
+    expect(answer.uses[1]!.what).toMatch(/^the parts of your Work Profile a question about your own work needs .*structured claims: never your name, email, phone, birth date or where you live, and only when you ask$/);
+    expect(read.facts[0]!.carries).toContain('the parts of your Work Profile a question about your own work needs');
   });
 
   it('calls a gateway that logs, caches, pushes or exports one that can store', () => {
