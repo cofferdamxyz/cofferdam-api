@@ -25,9 +25,8 @@ import {
   DISTANCE_BAND_KM,
   MAX_WORKER_RADIUS_KM,
   recall,
-  SEARCH_RES,
-  SEARCH_RINGS,
   searchReach,
+  STEP_SEARCHES,
   type RecallIntent,
 } from '../src/services/work/recall.js';
 import { fakeInference, memoryIndex } from './fixtures/work/fakes.js';
@@ -112,30 +111,44 @@ describe("an on-site listing's proximity cells and radius (decision 0067, rule 8
 });
 
 describe("a search's reach: the widest radius a worker can set, around the job's cell", () => {
-  it("uses h3-js's mean edges, and filters by 61 resolution-4 cells under Vectorize's 2 KB", async () => {
+  it("uses h3-js's mean edges, and searches each radius step with its own ring, every filter under Vectorize's 2 KB", async () => {
     for (const res of [4, 5, 6] as const) expect(EDGE_KM[res]).toBeCloseTo(getHexagonEdgeLengthAvg(res, 'km'), 6);
-    expect([SEARCH_RES, SEARCH_RINGS, MAX_WORKER_RADIUS_KM]).toEqual([4, 4, 100]);
+    expect(MAX_WORKER_RADIUS_KM).toBe(100);
+    expect(STEP_SEARCHES.map((s) => [s.radius, s.res, s.rings])).toEqual([
+      [10, 6, 4],
+      [25, 5, 4],
+      [50, 5, 5],
+      [100, 4, 4],
+    ]);
     const reach = await searchReach(MACAE.r6);
-    expect(reach.cells).toHaveLength(61);
-    expect(reach.cells.every((c) => H3_CELL[4].test(c))).toBe(true);
-    expect(JSON.stringify({ cell4: { $in: reach.cells } }).length).toBeLessThan(2048);
+    expect(reach.filters.map((f) => f.radius)).toEqual([...WORKER_RADIUS_STEPS_KM]);
+    reach.filters.forEach((filter, i) => {
+      const { res } = STEP_SEARCHES[i]!;
+      const cells = (filter[`cell${res}`] as { $in: string[] }).$in;
+      expect(cells).toHaveLength(res === 5 && filter.radius === 50 ? 91 : 61);
+      expect(cells.every((c) => H3_CELL[res].test(c))).toBe(true);
+      expect(JSON.stringify(filter).length).toBeLessThan(1_800);
+    });
   });
 
-  it('holds every worker whose circle can hold the job, across the launch markets (8,000 seeded pairs)', async () => {
+  it("holds every worker whose circle can hold the job in that radius step's search, across the launch markets (8,000 seeded pairs)", async () => {
     const random = seeded(67);
     let measured = 0;
     for (let i = 0; i < 8_000; i++) {
-      // A job between Canada's border and Patagonia, and a worker up to the widest radius and its slack away.
+      // A job between Canada's border and Patagonia, and a worker up to their step and its slack away.
+      const { radius, res } = STEP_SEARCHES[i % STEP_SEARCHES.length]!;
       const job: [number, number] = [-50 + random() * 99, -125 + random() * 90];
-      const worker = destination(job, random() * (MAX_WORKER_RADIUS_KM + CONTAINMENT_SLACK_KM + 8), random() * 360);
+      const worker = destination(job, random() * (radius + CONTAINMENT_SLACK_KM + 4), random() * 360);
       const at = latLngToCell(job[0], job[1], 6);
       const cell6 = latLngToCell(worker[0], worker[1], 6);
       const km = greatCircleDistance(cellToLatLng(at), cellToLatLng(cell6), 'km');
-      if (km > MAX_WORKER_RADIUS_KM + CONTAINMENT_SLACK_KM) continue;
+      if (km > radius + CONTAINMENT_SLACK_KM) continue;
       measured++;
       const reach = await searchReach(at);
-      expect(reach.cells, `job ${at}, worker ${cell6}, ${km.toFixed(1)} km`).toContain(cellToParent(cell6, 4));
-      expect(reach.kmTo({ cell6, radius: MAX_WORKER_RADIUS_KM })).toBeCloseTo(km, 6);
+      const filter = reach.filters.find((f) => f.radius === radius)!;
+      const cells = (filter[`cell${res}`] as { $in: string[] }).$in;
+      expect(cells, `job ${at}, worker ${cell6}, ${km.toFixed(1)} km, ${radius} km step`).toContain(res === 6 ? cell6 : cellToParent(cell6, res));
+      expect(reach.kmTo({ cell6, radius })).toBeCloseTo(km, 6);
     }
     expect(measured).toBeGreaterThan(7_000);
   });
@@ -268,12 +281,8 @@ describe("recall within the workers' own circles", () => {
   it("searches every launch country's on-site namespace within the widest reach, keeps the circles that hold the job, nearest band first", async () => {
     const { index, deps } = await setup();
     const out = await recall(deps, intent({ at: MACAE.r6 }));
-    const filter = { cell4: { $in: (await searchReach(MACAE.r6)).cells } };
-    expect(index.queries.map((q) => [q.namespace, q.filter])).toEqual([
-      ['br:onsite', filter],
-      ['us:onsite', filter],
-      ['mx:onsite', filter],
-    ]);
+    const { filters } = await searchReach(MACAE.r6);
+    expect(index.queries.map((q) => [q.namespace, q.filter])).toEqual(['br:onsite', 'us:onsite', 'mx:onsite'].flatMap((n) => filters.map((f) => [n, f])));
     // Out: Rio and the one 40 km out (their circles stop short), the one with no cell and the one with no radius.
     const band = (cell: string) => Math.floor(greatCircleDistance(job, cellToLatLng(cell), 'km') / DISTANCE_BAND_KM);
     expect(out.ok && out.finalists.map((f) => [f.listingId, f.distance])).toEqual([
@@ -282,6 +291,30 @@ describe("recall within the workers' own circles", () => {
       ['twenty', band(cellAt(20))],
       ['eighty', band(cellAt(80, 300))],
     ]);
+  });
+
+  it("finds a far worker whose wide circle holds the job past a crowd of nearer ones whose circles do not (the dense-area fix)", async () => {
+    const index = memoryIndex();
+    const listing = (id: string, score: number, cell6: string, radius: number) => ({
+      id,
+      values: [score, Math.sqrt(1 - score * score), 0],
+      namespace: 'br:onsite',
+      metadata: { v: 1, region: 'br', scope: 'onsite', tier: 1, bloom: bloomOf(['pos:electrician']), model: 'm', cell6, cell5: cellToParent(cell6, 5), cell4: cellToParent(cell6, 4), radius },
+    });
+    // Fifty-five workers 30 to 90 km out, each with a 10 km circle, all closer to the job's words than the one 80 km out
+    // whose 100 km circle holds it. One query over the whole reach would return the crowd's 50 and lose that one.
+    const crowd = Array.from({ length: 55 }, (_, i) => listing(`crowd-${i}`, 0.95 - i * 0.0005, cellAt(30 + i, (i * 37) % 360), 10));
+    await index.upsert([...crowd, listing('far', 0.5, cellAt(80, 300), 100)]);
+    const ids = [...crowd.map((c) => c.id), 'far'];
+    const records = new Map(ids.map((id) => [id, record(id)]));
+    const listings: ListingStore = {
+      put: async () => true,
+      get: async (wanted) => new Map(wanted.flatMap((id) => (records.has(id) ? [[id, records.get(id)!] as const] : []))),
+      profilesOf: async () => [],
+      delete: async () => undefined,
+    };
+    const out = await recall({ inference: fakeInference({}), index, listings, remoteCountries: ['br'] }, intent({ at: MACAE.r6 }));
+    expect(out.ok && out.finalists.map((f) => f.listingId)).toEqual(['far']);
   });
 
   it('searches the whole namespace without the job\'s cell, and a remote search ignores it', async () => {

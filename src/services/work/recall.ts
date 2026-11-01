@@ -12,12 +12,12 @@
  *     locality; remote work queries every launch country's remote namespace
  *     and ignores the cell.
  *  2. One query per namespace, in parallel, each at Vectorize's 50 with
- *     metadata (on site with the job's cell, filtered by the resolution-4
- *     cells within the widest radius a worker can set, `searchReach`), merged
- *     by score in the Worker: K is up to 50 × namespaces. Then only the
- *     listings whose own circle holds the job's point stay: the distance
- *     between the two resolution-6 cells' centres within the listing's
- *     radius and one cell's edge.
+ *     metadata, or on site with the job's cell one per radius step in each
+ *     (`STEP_SEARCHES`: the listings with that radius whose cell is within
+ *     the step of the job's), merged by score in the Worker: K is up to 50 ×
+ *     queries. Then only the listings whose own circle holds the job's point
+ *     stay: the distance between the two resolution-6 cells' centres within
+ *     the listing's radius and one cell's edge.
  *  3. The Bloom gate on the merged set, before any D1 read: a candidate must
  *     hold every required token (`allOf`: certificates, languages) and, when
  *     the intent names some, at least one of the occupation, unit-group or
@@ -104,19 +104,27 @@ export const MAX_REGIONS = 8;
 export const CONTAINMENT_SLACK_KM = EDGE_KM[6];
 /** The widest radius a worker can set (`WORKER_RADIUS_STEPS_KM`), which an on-site search must reach. */
 export const MAX_WORKER_RADIUS_KM = Math.max(...WORKER_RADIUS_STEPS_KM);
+/** The resolution each radius step searches at: the finest whose ring keeps its filter under Vectorize's 2 KB. */
+const STEP_RES: Readonly<Record<(typeof WORKER_RADIUS_STEPS_KM)[number], 4 | 5 | 6>> = { 10: 6, 25: 5, 50: 5, 100: 4 };
+
 /**
- * An on-site search filters by resolution-4 cells (about 26 km a side): those within the widest radius a worker can set,
- * and its slack, of the job's, and one ring more, since an H3 parent does not hold all of its children. Four rings are 61
- * cells, a `cell4 $in` filter of about 1.1 KB under Vectorize's 2 KB (`test/workProximity.test.ts` measures both).
+ * One search per radius step (the founder's fix for a dense area, accepted with rule 8's amendment on 2026-11-01): each
+ * filters by `radius`, the step, and by the cells of its resolution within the step and the slack of the job's, one ring
+ * more for H3's distortion and because a parent does not hold all of its children. So a crowd of workers with a short
+ * radius cannot keep a farther one whose circle holds the job out of the 50 a query returns. Four queries per namespace:
+ * 61 resolution-6 cells at 10 km, 61 and 91 resolution-5 cells at 25 and 50 km, 61 resolution-4 cells at 100 km, each
+ * filter under 1.7 KB (`test/workProximity.test.ts` measures every step).
  */
-export const SEARCH_RES = 4;
-export const SEARCH_RINGS = ringsFor(MAX_WORKER_RADIUS_KM + CONTAINMENT_SLACK_KM, SEARCH_RES) + 1;
+export const STEP_SEARCHES: readonly { radius: number; res: 4 | 5 | 6; rings: number }[] = WORKER_RADIUS_STEPS_KM.map((radius) => {
+  const res = STEP_RES[radius];
+  return { radius, res, rings: ringsFor(radius + CONTAINMENT_SLACK_KM, res) + 1 };
+});
 /** Within a tier and kind of hit, finalists rank by the job's distance in bands of this many kilometres, then by cosine. */
 export const DISTANCE_BAND_KM = 5;
 
-/** An on-site search around the job's cell: the cells it filters by, and each listing's distance when its circle holds the job. */
+/** An on-site search around the job's cell: the filter of each radius step's query, and each listing's distance when its circle holds the job. */
 export interface SearchReach {
-  cells: string[];
+  filters: IndexFilter[];
   /** The kilometres between the job's cell and a listing's, from its metadata; null when its circle does not reach the job. */
   kmTo(metadata: IndexMatch['metadata']): number | null;
 }
@@ -126,7 +134,7 @@ export async function searchReach(at: string): Promise<SearchReach> {
   const h3 = await loadH3();
   const job = h3.cellToLatLng(at);
   return {
-    cells: h3.gridDisk(h3.cellToParent(at, SEARCH_RES), SEARCH_RINGS),
+    filters: STEP_SEARCHES.map(({ radius, res, rings }) => ({ radius, [`cell${res}`]: { $in: h3.gridDisk(res === 6 ? at : h3.cellToParent(at, res), rings) } })),
     kmTo: (metadata) => {
       const cell = metadata?.cell6;
       const radius = metadata?.radius;
@@ -290,10 +298,13 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
   // then only the listings whose own circle holds the job (decision 0067, rule 8, as amended).
   const at = intent.scope === 'onsite' ? intent.at : undefined;
   const reach = at ? await searchReach(at) : undefined;
-  const filter: IndexFilter | undefined = reach ? { cell4: { $in: reach.cells } } : undefined;
+  // On site with the job's cell, one query per radius step in each namespace; else one per namespace, unfiltered.
+  const filters: (IndexFilter | undefined)[] = reach ? reach.filters : [undefined];
   const answers = await Promise.all(
-    namespaces.map(async (namespace) =>
-      (await deps.index.query(vector, { topK: RECALL_TOP_K, namespace, ...(filter ? { filter } : {}) })).map((m) => ({ ...m, namespace })),
+    namespaces.flatMap((namespace) =>
+      filters.map(async (filter) =>
+        (await deps.index.query(vector, { topK: RECALL_TOP_K, namespace, ...(filter ? { filter } : {}) })).map((m) => ({ ...m, namespace })),
+      ),
     ),
   );
   const bandOf = new Map<string, number>();
