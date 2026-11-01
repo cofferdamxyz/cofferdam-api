@@ -13,9 +13,11 @@
  *
  * Location is a coarse region (`us`, `br-sp`, `mx`; the app sends its
  * country) and, on site, the H3 cells of the worker's circle's centre at
- * resolutions 6 and 5 (workspace decision 0067, rule 8): no position or
- * radius reaches the plane, and the vector's metadata carries the region,
- * the scope, the tier, the Bloom filter, the model and, on site, the cells,
+ * resolutions 6 and 5 with the circle's radius (workspace decision 0067,
+ * rule 8, as amended: the worker's radius decides who a job reaches): no
+ * position reaches the plane, and the vector's metadata carries the region,
+ * the scope, the tier, the Bloom filter, the model and, on site, the cells
+ * (and their resolution-4 parent, which a search filters by) and the radius,
  * nothing else. The namespace is `<region>:onsite` for on-site work and
  * `<country>:remote` for remote work. A listing is keyed by the account's Work pseudonym and a
  * profile id, so one account can hold several, up to `MAX_WORK_PROFILES`
@@ -39,27 +41,49 @@ export const REGION = /^[a-z]{2}(-[a-z0-9]{1,3})?$/;
 /**
  * An on-site listing's proximity cells (decision 0067, rule 8): the H3 cells at the centre of the worker's circle, at
  * resolution 6 (about 36 km²) and 5 (about 250 km²), which the phone computes from its approximate location. The plane
- * checks their shape and that the second is the first's parent; a remote listing carries none.
+ * checks their shape and that the second is the first's parent, and adds their resolution-4 parent (about 1,770 km²); a
+ * remote listing carries none.
  */
 export interface ListingCells {
   r6: string;
   r5: string;
 }
 
-/** An H3 cell index as h3-js writes it, at resolution 5 or 6: the cell mode, the resolution, its digits, the unused ones 7. */
-export const H3_CELL: Readonly<Record<5 | 6, RegExp>> = { 5: /^85[0-9a-f]{5}[37bf]f{7}$/, 6: /^86[0-9a-f]{6}[7f]f{6}$/ };
+/** An H3 cell index as h3-js writes it, at resolution 4, 5 or 6: the cell mode, the resolution, its digits, the unused ones 7. */
+export const H3_CELL: Readonly<Record<4 | 5 | 6, RegExp>> = {
+  4: /^84[0-9a-f]{4}[13579bdf]f{8}$/,
+  5: /^85[0-9a-f]{5}[37bf]f{7}$/,
+  6: /^86[0-9a-f]{6}[7f]f{6}$/,
+};
 
-/** The resolution-5 parent of a resolution-6 H3 cell: the resolution set to 5 and the sixth digit unused (7). */
-export function h3ParentRes5(r6: string): string {
-  const h = BigInt(`0x${r6}`);
-  return ((h & ~(0xfn << 52n)) | (5n << 52n) | (0x7n << 27n)).toString(16);
+/** The parent of an H3 cell at a coarser resolution: the resolution set, and each digit past it unused (7). */
+export function h3ParentAt(cell: string, res: number): string {
+  let h = BigInt(`0x${cell}`);
+  const from = Number((h >> 52n) & 0xfn);
+  h = (h & ~(0xfn << 52n)) | (BigInt(res) << 52n);
+  for (let digit = res + 1; digit <= from; digit++) h |= 0x7n << BigInt(45 - 3 * digit);
+  return h.toString(16);
 }
+
+/** The centre child of an H3 cell at a finer resolution: the resolution set, and each digit past the cell's the centre (0). */
+export function h3CenterChildAt(cell: string, res: number): string {
+  let h = BigInt(`0x${cell}`);
+  const from = Number((h >> 52n) & 0xfn);
+  h = (h & ~(0xfn << 52n)) | (BigInt(res) << 52n);
+  for (let digit = from + 1; digit <= res; digit++) h &= ~(0x7n << BigInt(45 - 3 * digit));
+  return h.toString(16);
+}
+
+/** The radii a worker's circle may have, in kilometres (the app's `RADIUS_STEPS_KM`, the Looking For map). */
+export const WORKER_RADIUS_STEPS_KM = [10, 25, 50, 100] as const;
+/** An on-site listing's radius when an older phone sent its cells without one: the app's default. */
+export const DEFAULT_WORKER_RADIUS_KM = 25;
 
 /** Whether a listing's cells are a resolution-6 H3 cell and its resolution-5 parent. */
 export function checkCells(c: unknown): c is ListingCells {
   if (!c || typeof c !== 'object') return false;
   const { r6, r5 } = c as Record<string, unknown>;
-  return typeof r6 === 'string' && typeof r5 === 'string' && H3_CELL[6].test(r6) && H3_CELL[5].test(r5) && h3ParentRes5(r6) === r5;
+  return typeof r6 === 'string' && typeof r5 === 'string' && H3_CELL[6].test(r6) && H3_CELL[5].test(r5) && h3ParentAt(r6, 5) === r5;
 }
 
 export function countryOf(region: string): string {
@@ -92,6 +116,8 @@ export interface ListingDraft {
   languages: string[];
   /** On-site only: the proximity cells of the worker's circle (decision 0067, rule 8). */
   cells?: ListingCells;
+  /** With the cells: the circle's radius in kilometres, one of `WORKER_RADIUS_STEPS_KM` (`DEFAULT_WORKER_RADIUS_KM` when absent). */
+  radiusKm?: number;
 }
 
 export interface ListingRecord {
@@ -223,7 +249,18 @@ export async function listingIdOf(pseudonym: string, profileId: string): Promise
 
 export const DRAFT_LIMITS = { titles: 5, skills: 30, certificates: 20, languages: 8, chars: 120 } as const;
 
-export type DraftRefusal = 'bad_shape' | 'bad_region' | 'bad_scope' | 'bad_cells' | 'bad_tier' | 'bad_lang' | 'too_many' | 'too_long' | 'refused_pattern' | 'no_claims';
+export type DraftRefusal =
+  | 'bad_shape'
+  | 'bad_region'
+  | 'bad_scope'
+  | 'bad_cells'
+  | 'bad_radius'
+  | 'bad_tier'
+  | 'bad_lang'
+  | 'too_many'
+  | 'too_long'
+  | 'refused_pattern'
+  | 'no_claims';
 
 /** Check a draft before anything is snapped or embedded; every string passes the same tripwire as a block. */
 export function checkDraft(d: ListingDraft): DraftRefusal | null {
@@ -235,6 +272,8 @@ export function checkDraft(d: ListingDraft): DraftRefusal | null {
   if (!(SCOPES as readonly string[]).includes(d.scope)) return 'bad_scope';
   // A remote listing carries no cell; an on-site one may (an older phone's has none, and recall's ring then misses it).
   if (d.cells !== undefined && (d.scope !== 'onsite' || !checkCells(d.cells))) return 'bad_cells';
+  // The radius goes with the cells, and only as one of the map's steps.
+  if (d.radiusKm !== undefined && (d.cells === undefined || !(WORKER_RADIUS_STEPS_KM as readonly unknown[]).includes(d.radiusKm))) return 'bad_radius';
   if (![0, 1, 2].includes(d.tier)) return 'bad_tier';
   if (!(BLOCK_LANGS as readonly unknown[]).includes(d.lang)) return 'bad_lang';
   if (
@@ -483,8 +522,16 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
         tier: draft.tier,
         bloom: bloomOf(list),
         model: embedModel,
-        // The proximity cells recall filters an on-site search's ring by (`cell6`, `cell5`, indexed on `jobs-listings-v2`).
-        ...(draft.scope === 'onsite' && draft.cells ? { cell6: draft.cells.r6, cell5: draft.cells.r5 } : {}),
+        // The proximity cells (`cell6`, `cell5`, `cell4`, indexed on `jobs-listings-v2`; a search filters by `cell4`) and the
+        // radius recall measures a job's distance against (decision 0067, rule 8, as amended).
+        ...(draft.scope === 'onsite' && draft.cells
+          ? {
+              cell6: draft.cells.r6,
+              cell5: draft.cells.r5,
+              cell4: h3ParentAt(draft.cells.r5, 4),
+              radius: draft.radiusKm ?? DEFAULT_WORKER_RADIUS_KM,
+            }
+          : {}),
       },
     },
   ]);

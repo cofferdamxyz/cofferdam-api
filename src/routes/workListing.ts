@@ -6,7 +6,7 @@
  * workspace `docs/product/work-wallet.md`, Listing lifecycle; decisions 0019
  * and 0060).
  *
- *   PUT    /v1/work/listing  { account, profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells?, vector, claims? }
+ *   PUT    /v1/work/listing  { account, profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells?, radiusKm?, vector, claims? }
  *                            → { ok, listingId, profileId, namespace, tier, tokens, unsnapped }
  *   DELETE /v1/work/listing  { account, profileId }  → { ok, listingId, profileId }
  *
@@ -107,7 +107,7 @@ interface ListingBody {
  * derived after the gate.
  */
 function readDraft(b: Record<string, unknown>): DraftBody | DraftRefusal {
-  const { profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells } = b;
+  const { profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells, radiusKm } = b;
   if (
     typeof profileId !== 'string' ||
     typeof region !== 'string' ||
@@ -118,7 +118,19 @@ function readDraft(b: Record<string, unknown>): DraftBody | DraftRefusal {
   ) {
     return 'bad_shape';
   }
-  const draft = { profileId, region, scope, tier, lang, titles, skills, certificates, languages, ...(cells != null ? { cells } : {}) } as DraftBody;
+  const draft = {
+    profileId,
+    region,
+    scope,
+    tier,
+    lang,
+    titles,
+    skills,
+    certificates,
+    languages,
+    ...(cells != null ? { cells } : {}),
+    ...(radiusKm != null ? { radiusKm } : {}),
+  } as DraftBody;
   return checkDraft({ ...draft, pseudonym: 'P' }) ?? draft;
 }
 

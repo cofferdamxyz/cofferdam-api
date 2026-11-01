@@ -157,6 +157,10 @@ describe('POST /v1/jobs/intent', () => {
       [{ regions: ['29.76,-95.37'] }, 400, { error: 'bad_request', reason: 'regions' }],
       [{ regions: [] }, 400, { error: 'bad_request', reason: 'regions' }],
       [{ regions: 'us-tx' }, 400, { error: 'bad_request', reason: 'regions' }],
+      // The job's cell: a resolution-6 H3 cell, never a position (decision 0067, rule 8, as amended).
+      [{ at: '29.76,-95.37' }, 400, { error: 'bad_request', reason: 'at' }],
+      [{ at: '85a8b1a3fffffff' }, 400, { error: 'bad_request', reason: 'at' }],
+      [{ near: { res: 6, rings: [['29.76,-95.37']] } }, 400, { error: 'bad_request', reason: 'near' }],
     ];
     for (const [over, status, expected] of cases) {
       const res = await a.post({ ...REQUEST, ...over });

@@ -121,6 +121,26 @@ describe('PUT /v1/work/listing', () => {
     expect(JSON.stringify(body).toLowerCase()).not.toContain(fxAccount.slice(2).toLowerCase());
   });
 
+  it("publishes an on-site listing's cells, their resolution-4 parent and the worker's radius, never a position", async () => {
+    // Real H3 cells (h3-js 4.5.0): Macaé's at resolutions 6, 5 and 4.
+    const cells = { r6: '86a8b1a07ffffff', r5: '85a8b1a3fffffff' };
+    const a = await app();
+    const res = await a.put({ account: fxAccount, ...DRAFT, region: 'br', cells, radiusKm: 50 });
+    expect(res.status).toBe(200);
+    const vector = [...a.listingIndex.vectors.values()][0]!;
+    expect(vector.metadata).toMatchObject({ cell6: cells.r6, cell5: cells.r5, cell4: '84a8b1bffffffff', radius: 50 });
+    expect(Object.keys(vector.metadata).sort()).toEqual(['bloom', 'cell4', 'cell5', 'cell6', 'model', 'radius', 'region', 'scope', 'tier', 'v']);
+    // An older phone's cells without a radius take the app's default; a radius off the map's steps, or without cells, is refused.
+    const older = await app();
+    expect((await older.put({ account: fxAccount, ...DRAFT, region: 'br', cells })).status).toBe(200);
+    expect([...older.listingIndex.vectors.values()][0]!.metadata.radius).toBe(25);
+    for (const over of [{ cells, radiusKm: 30 }, { radiusKm: 25 }]) {
+      const refused = await a.put({ account: fxAccount, ...DRAFT, region: 'br', ...over });
+      expect(refused.status).toBe(422);
+      expect(await refused.json()).toEqual({ ok: false, error: 'draft_refused', reason: 'bad_radius' });
+    }
+  });
+
   it('ignores a pseudonym in the body: the plane derives its own', async () => {
     const a = await app();
     const res = await a.put({ account: fxAccount, ...DRAFT, pseudonym: 'someone-else' });

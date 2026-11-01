@@ -6,7 +6,7 @@
  * `docs/product/work-wallet.md`, Matching and award; `docs/product/engine.md`,
  * Pipeline, S5 to S8).
  *
- *   POST /v1/jobs/intent  { account, sentence, lang, regions, near?, vector }
+ *   POST /v1/jobs/intent  { account, sentence, lang, regions, at?, vector }
  *        → { ok, plan, finalists: { count, byGateTier: { 1, 2 }, byPersonhood: { 0, 1, 2 } } }
  *
  *   Authorization: DPoP csa1:… + DPoP: <proof>   (a fast or slow session, decision 0055)
@@ -24,9 +24,11 @@
  * check, before the gate and any model (`422 text_refused` with the reason,
  * never the text), and never logs it. `lang` is `en`, `pt` or `es`;
  * `regions` are coarse regions (`us`, `br-sp`, `mx`), the hirer's own first,
- * at most eight (the app sends its country); on site, `near` names the H3
- * cells the hirer's radius covers, by ring (workspace decision 0067, rule 8;
- * `checkRing`): cells, never a position.
+ * at most eight (the app sends its country); on site, `at` names the job's
+ * H3 cell at resolution 6, the hirer's approximate centre (workspace decision
+ * 0067, rule 8, as amended): a cell, never a position. The hirer picks no
+ * radius: each worker's own circle decides whether the job reaches them. An
+ * older app's ring (`near`) stands for its centre cell.
  *
  * The finalists come back as counts only: how many, by gate tier (1 passed
  * the Bloom gate, or a miss Clef's fit promoted; 2 a vector-strong token
@@ -111,7 +113,13 @@ export function createJobsRoutes(deps: JobsRouteDeps = defaultWorkRouteDeps) {
 
   routes.post('/intent', async (c) => {
     const admitted = await gate.admit<{ req: HirerRequest; vector: unknown }>(c, (b) => {
-      const req = { sentence: b.sentence, lang: b.lang, regions: b.regions, ...(b.near != null ? { near: b.near } : {}) } as HirerRequest;
+      const req = {
+        sentence: b.sentence,
+        lang: b.lang,
+        regions: b.regions,
+        ...(b.at != null ? { at: b.at } : {}),
+        ...(b.near != null ? { near: b.near } : {}),
+      } as HirerRequest;
       const checked = checkHirerRequest(req);
       if (checked.ok) return { req, vector: b.vector };
       workLog({ event: 'jobs_intent_refused', error: checked.error, reason: checked.reason });

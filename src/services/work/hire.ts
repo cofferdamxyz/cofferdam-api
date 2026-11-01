@@ -6,8 +6,10 @@
  * `docs/product/engine.md`, Pipeline, and `docs/product/work-wallet.md`,
  * Matching and award). The sentence is typed text that passed the phone's
  * privacy gate; the phone also sends its coarse region (the app's country)
- * and, on site, the ring of H3 cells its radius covers (`near`, workspace
- * decision 0067, rule 8), never a position.
+ * and, on site, the job's H3 cell at resolution 6, the hirer's approximate
+ * centre (`at`, workspace decision 0067, rule 8, as amended: the worker's
+ * radius decides who a job reaches, and the hirer picks none; an older app's
+ * ring, `near`, stands for its centre cell), never a position.
  *
  *  0. Before any hosted call, the sentence runs the block tripwire
  *     (`scanText`, after NFC and a trim, at most `INTENT_MAX_CHARS`), and
@@ -62,8 +64,8 @@ import { BLOCK_LANGS, scanText, type BlockLang, type BlockRefusal } from './bloc
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
 import { INTENT_MAX_CHARS, parseIntent, type IntentFields } from './intent.js';
-import { REGION, type Scope } from './listings.js';
-import { checkRing, MAX_REGIONS, recall, type RecallDeps, type RecallIntent, type RecallOutcome, type SearchRing } from './recall.js';
+import { H3_CELL, h3CenterChildAt, REGION, type Scope } from './listings.js';
+import { MAX_REGIONS, recall, type RecallDeps, type RecallIntent, type RecallOutcome } from './recall.js';
 import { candidatesFor, embedTexts, requestFallback, snap, type Candidate, type RegistryDeps } from './registry.js';
 
 /** The smallest contract (work-wallet.md, Fees): a $1 fee is 2 % of it. */
@@ -79,13 +81,43 @@ export interface HireDeps {
   log?: ExecutorOptions['log'];
 }
 
+/** An older app's ring (before the worker's radius decided): its resolution, then its cells by grid distance from the hirer's own. */
+export interface LegacyRing {
+  res: 5 | 6;
+  rings: string[][];
+}
+
+/** Whether an older app's ring has its shape: one resolution, at most six rings and a hundred cells, the hirer's own first. */
+export function checkLegacyRing(n: unknown): n is LegacyRing {
+  if (!n || typeof n !== 'object') return false;
+  const { res, rings } = n as Record<string, unknown>;
+  if ((res !== 5 && res !== 6) || !Array.isArray(rings) || !rings.length || rings.length > 6) return false;
+  let cells = 0;
+  for (const ring of rings) {
+    if (!Array.isArray(ring)) return false;
+    for (const c of ring) {
+      if (typeof c !== 'string' || !H3_CELL[res].test(c)) return false;
+      cells++;
+    }
+  }
+  return cells > 0 && cells <= 100 && (rings[0] as unknown[]).length === 1;
+}
+
+/** The job's resolution-6 cell an older app's ring stands for: its centre, or the centre child of a resolution-5 centre. */
+export function legacyRingCell(ring: LegacyRing): string {
+  const own = ring.rings[0]![0]!;
+  return ring.res === 6 ? own : h3CenterChildAt(own, 6);
+}
+
 export interface HirerRequest {
   sentence: string;
   lang: BlockLang;
   /** The hirer's coarse region first (the app sends its country), then any others it names, at most `MAX_REGIONS`. */
   regions: string[];
-  /** On site, from the phone: the H3 cells the hirer's radius covers, by ring (decision 0067, rule 8). */
-  near?: SearchRing;
+  /** On site, from the phone: the job's resolution-6 H3 cell, the hirer's approximate centre (decision 0067, rule 8, as amended). */
+  at?: string;
+  /** On site, from an app before the amendment: the ring its hirer's radius covered, whose centre stands for `at`. */
+  near?: LegacyRing;
   /**
    * The client's query vector for the sentence (EmbeddingGemma 2 on the
    * phone), already checked against the pinned model. Recall searches with
@@ -112,7 +144,7 @@ export type PlanOutcome =
   | { ok: true; plan: HirePlan; calls: WorkCall[] }
   | { ok: false; error: 'refused'; reason: 'harmful' | 'injection'; calls: WorkCall[] }
   | { ok: false; error: 'text_refused'; reason: BlockRefusal; calls: WorkCall[] }
-  | { ok: false; error: 'bad_request'; reason: 'lang' | 'regions' | 'near'; calls: WorkCall[] }
+  | { ok: false; error: 'bad_request'; reason: 'lang' | 'regions' | 'at' | 'near'; calls: WorkCall[] }
   | { ok: false; error: 'intent_failed' | 'below_minimum' | 'classification_failed' | 'embedding_failed'; calls: WorkCall[] };
 
 type RequestRefusal = Extract<PlanOutcome, { error: 'text_refused' | 'bad_request' }>;
@@ -129,7 +161,8 @@ export function checkHirerRequest(req: HirerRequest): { ok: true; sentence: stri
   if (!Array.isArray(regions) || !regions.length || regions.length > MAX_REGIONS || regions.some((r) => typeof r !== 'string' || !REGION.test(r))) {
     return { ok: false, error: 'bad_request', reason: 'regions', calls: [] };
   }
-  if (req.near != null && !checkRing(req.near)) return { ok: false, error: 'bad_request', reason: 'near', calls: [] };
+  if (req.at != null && (typeof req.at !== 'string' || !H3_CELL[6].test(req.at))) return { ok: false, error: 'bad_request', reason: 'at', calls: [] };
+  if (req.near != null && !checkLegacyRing(req.near)) return { ok: false, error: 'bad_request', reason: 'near', calls: [] };
   return { ok: true, sentence };
 }
 
@@ -258,6 +291,8 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
   // stated: it counts as one the gate cannot hold.
   const dropped = parsed.violations.some((v) => v.field === 'credential' || v.field === 'language');
   const curated = fields.credential != null || (fields.language != null && language == null) || dropped || passed.length === 0;
+  // The job's cell: the phone's own, or the centre of an older app's ring (decision 0067, rule 8, as amended).
+  const jobCell = req.at ?? (req.near ? legacyRingCell(req.near) : undefined);
   const intent: RecallIntent = {
     scope,
     regions: [...new Set(req.regions)],
@@ -269,7 +304,7 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
     allOf,
     anyOf,
     mode: curated ? 'curated' : 'instant',
-    ...(scope === 'onsite' && req.near ? { near: req.near } : {}),
+    ...(scope === 'onsite' && jobCell ? { at: jobCell } : {}),
   };
   const missing: HirePlan['missing'] = [];
   if (fields.budgetUsd == null) missing.push('budget');

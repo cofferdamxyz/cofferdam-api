@@ -6,14 +6,18 @@
  * and the Bloom gate, E1 to E3, E10; decision 0019).
  *
  *  1. The intent names its namespaces: on-site work queries the regions
- *     the hirer names (the app sends its country), and with a ring (`near`,
- *     workspace decision 0067, rule 8) every launch country's as well, but
- *     only the listings whose `cell6` or `cell5` is in it, since the cells
- *     do the locality; remote work queries every launch country's remote
- *     namespace and ignores the ring.
+ *     the hirer names (the app sends its country), and with the job's cell
+ *     (`at`, workspace decision 0067, rule 8, as amended: the worker's radius
+ *     decides) every launch country's as well, since the cells do the
+ *     locality; remote work queries every launch country's remote namespace
+ *     and ignores the cell.
  *  2. One query per namespace, in parallel, each at Vectorize's 50 with
- *     metadata (on site with a ring, filtered by its cells), merged by score
- *     in the Worker: K is up to 50 × namespaces.
+ *     metadata (on site with the job's cell, filtered by the resolution-4
+ *     cells within the widest radius a worker can set, `searchReach`), merged
+ *     by score in the Worker: K is up to 50 × namespaces. Then only the
+ *     listings whose own circle holds the job's point stay: the distance
+ *     between the two resolution-6 cells' centres within the listing's
+ *     radius and one cell's edge.
  *  3. The Bloom gate on the merged set, before any D1 read: a candidate must
  *     hold every required token (`allOf`: certificates, languages) and, when
  *     the intent names some, at least one of the occupation, unit-group or
@@ -24,8 +28,8 @@
  *     every required token, since only Clef's fit can make it tier 1 there.
  *     The floor follows the pinned embedding model (`tier2FloorFor`).
  *     Before the cut to `FINALIST_CAP`, tier 1 orders an occupation hit before
- *     a unit-group hit before a skill hit alone, then by the ring's
- *     distance when there is one, then by cosine (decision
+ *     a unit-group hit before a skill hit alone, then by the job's
+ *     distance in bands of 5 km when there is one, then by cosine (decision
  *     0069; on real vacancies an occupation hit was right 85% of the time, a
  *     skill hit alone 19%); a hit on an occupation kept under Clef's floor
  *     ranks as a skill hit.
@@ -43,7 +47,7 @@
  *     (OTHER_FLOOR) drops a finalist, token hit or not; a fit (FIT_FLOOR)
  *     promotes a miss that holds every required token to tier 1; otherwise
  *     the gate's tier stands, as it does when a call fails or answers
- *     nothing. Within a tier the finalists rank by the ring's distance when
+ *     nothing. Within a tier the finalists rank by the distance band when
  *     there is one, then by one weighted sum: P(fit),
  *     half of P(related), a fifth of the share of the job's needed skills
  *     they hold and cosine (tuned on prompts across ISCO groups and on real
@@ -65,7 +69,8 @@ import { bloomHas, bloomProbe } from './bloom.js';
 import { clefInput, FIT_FLOOR, FIT_KEYS, fitQuestions, fitState, OTHER_FLOOR, readChoice, type FitKey, type FitProfile } from './clef.js';
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
-import { H3_CELL, namespaceOf, REGION, type ListingRecord, type ListingStore, type Scope } from './listings.js';
+import { EDGE_KM, loadH3, ringsFor } from './h3.js';
+import { H3_CELL, namespaceOf, REGION, WORKER_RADIUS_STEPS_KM, type ListingRecord, type ListingStore, type Scope } from './listings.js';
 import { EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, embedTexts, type IndexFilter, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
 
 /** Results Vectorize returns per query when metadata comes back (decision 0019; re-check at build time). */
@@ -93,32 +98,44 @@ export function tier2FloorFor(model: string): number {
 export const MAX_REGIONS = 8;
 
 /**
- * The most H3 cells an on-site search's ring names (decision 0067, rule 8): a `cell $in` filter stays under Vectorize's
- * 2 KB at 100 cells of 15 characters, which holds a ring of radius 5 (91 cells), so at most six rings.
+ * How far past a worker's radius a job may be and still reach them: one resolution-6 cell's edge, since both points are
+ * known only as cells, whose centres stand for them (decision 0067, rule 8, as amended).
  */
-export const MAX_RING_CELLS = 100;
-export const MAX_RINGS = 6;
+export const CONTAINMENT_SLACK_KM = EDGE_KM[6];
+/** The widest radius a worker can set (`WORKER_RADIUS_STEPS_KM`), which an on-site search must reach. */
+export const MAX_WORKER_RADIUS_KM = Math.max(...WORKER_RADIUS_STEPS_KM);
+/**
+ * An on-site search filters by resolution-4 cells (about 26 km a side): those within the widest radius a worker can set,
+ * and its slack, of the job's, and one ring more, since an H3 parent does not hold all of its children. Four rings are 61
+ * cells, a `cell4 $in` filter of about 1.1 KB under Vectorize's 2 KB (`test/workProximity.test.ts` measures both).
+ */
+export const SEARCH_RES = 4;
+export const SEARCH_RINGS = ringsFor(MAX_WORKER_RADIUS_KM + CONTAINMENT_SLACK_KM, SEARCH_RES) + 1;
+/** Within a tier and kind of hit, finalists rank by the job's distance in bands of this many kilometres, then by cosine. */
+export const DISTANCE_BAND_KM = 5;
 
-/** An on-site search's ring, as the phone sends it: its resolution, then its cells by grid distance from the hirer's own. */
-export interface SearchRing {
-  res: 5 | 6;
-  rings: string[][];
+/** An on-site search around the job's cell: the cells it filters by, and each listing's distance when its circle holds the job. */
+export interface SearchReach {
+  cells: string[];
+  /** The kilometres between the job's cell and a listing's, from its metadata; null when its circle does not reach the job. */
+  kmTo(metadata: IndexMatch['metadata']): number | null;
 }
 
-/** Whether a ring is one recall can filter by: a resolution, at most `MAX_RINGS` rings and `MAX_RING_CELLS` cells, each a cell of that resolution. */
-export function checkRing(n: unknown): n is SearchRing {
-  if (!n || typeof n !== 'object') return false;
-  const { res, rings } = n as Record<string, unknown>;
-  if ((res !== 5 && res !== 6) || !Array.isArray(rings) || !rings.length || rings.length > MAX_RINGS) return false;
-  let cells = 0;
-  for (const ring of rings) {
-    if (!Array.isArray(ring)) return false;
-    for (const c of ring) {
-      if (typeof c !== 'string' || !H3_CELL[res].test(c)) return false;
-      cells++;
-    }
-  }
-  return cells > 0 && cells <= MAX_RING_CELLS;
+/** The reach of an on-site search from the job's resolution-6 cell (decision 0067, rule 8, as amended). */
+export async function searchReach(at: string): Promise<SearchReach> {
+  const h3 = await loadH3();
+  const job = h3.cellToLatLng(at);
+  return {
+    cells: h3.gridDisk(h3.cellToParent(at, SEARCH_RES), SEARCH_RINGS),
+    kmTo: (metadata) => {
+      const cell = metadata?.cell6;
+      const radius = metadata?.radius;
+      // A listing without its cell or radius (published before the radius reached the plane) cannot be measured.
+      if (typeof cell !== 'string' || !H3_CELL[6].test(cell) || typeof radius !== 'number' || !Number.isFinite(radius)) return null;
+      const km = h3.greatCircleDistance(job, h3.cellToLatLng(cell), 'km');
+      return km <= radius + CONTAINMENT_SLACK_KM ? km : null;
+    },
+  };
 }
 /**
  * The launch markets, unless `WORK_REMOTE_COUNTRIES` says otherwise: remote work is queried in their remote namespaces,
@@ -163,10 +180,11 @@ export interface RecallIntent {
   anyOf: string[];
   mode: HireMode;
   /**
-   * On-site, when the phone sent it: the cells the hirer's radius covers (decision 0067, rule 8). Each namespace is searched
-   * with `cell $in` them, and within a tier finalists rank by their ring, nearest first.
+   * On-site, when the phone sent it: the job's resolution-6 cell (decision 0067, rule 8, as amended). Each namespace is
+   * searched within `searchReach`, only the listings whose own circle holds the job stay, and within a tier finalists rank
+   * by their distance band, nearest first.
    */
-  near?: SearchRing;
+  at?: string;
 }
 
 export interface Finalist {
@@ -176,7 +194,7 @@ export interface Finalist {
   gateTier: 1 | 2;
   /** The worker's personhood tier, from the listing. */
   personhood: number;
-  /** On a search with a ring: the listing's ring, 0 the hirer's own cell. */
+  /** On a search with the job's cell: the listing's distance band (`DISTANCE_BAND_KM`), 0 the nearest. */
   distance?: number;
   /** The intent's tokens the listing holds, by its exact list. */
   matched: string[];
@@ -237,7 +255,7 @@ export function namespacesFor(intent: RecallIntent, remoteCountries: string[] = 
   if (intent.scope === 'remote') return remoteCountries.map((c) => namespaceOf(c, 'remote', prefix));
   const regions = [...new Set(intent.regions)];
   if (!regions.length || regions.length > MAX_REGIONS || regions.some((r) => !REGION.test(r))) return null;
-  const read = intent.near ? [...new Set([...regions, ...remoteCountries])] : regions;
+  const read = intent.at ? [...new Set([...regions, ...remoteCountries])] : regions;
   return read.map((r) => namespaceOf(r, 'onsite', prefix));
 }
 
@@ -246,7 +264,7 @@ interface Gated {
   gateTier: 1 | 2;
   /** Within tier 1, the kind of hit: 3 an occupation, 2 its unit group alone, 1 a skill alone; 0 for a miss. */
   hit: number;
-  /** The listing's ring on a search with one, else 0. */
+  /** The listing's distance band on a search with the job's cell, else 0. */
   distance: number;
 }
 
@@ -267,23 +285,28 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
     vector = embedding.vectors[0]!;
   }
 
-  // S6: one query per namespace, in parallel, merged by score; on site with a ring, only the listings in its cells.
-  const near = intent.scope === 'onsite' ? intent.near : undefined;
-  const cellKey = near ? `cell${near.res}` : '';
-  const filter: IndexFilter | undefined = near ? { [cellKey]: { $in: near.rings.flat() } } : undefined;
+  // S6: one query per namespace, in parallel, merged by score; on site with the job's cell, within the widest reach, and
+  // then only the listings whose own circle holds the job (decision 0067, rule 8, as amended).
+  const at = intent.scope === 'onsite' ? intent.at : undefined;
+  const reach = at ? await searchReach(at) : undefined;
+  const filter: IndexFilter | undefined = reach ? { cell4: { $in: reach.cells } } : undefined;
   const answers = await Promise.all(
     namespaces.map(async (namespace) =>
       (await deps.index.query(vector, { topK: RECALL_TOP_K, namespace, ...(filter ? { filter } : {}) })).map((m) => ({ ...m, namespace })),
     ),
   );
-  const ringOf = new Map<string, number>();
-  near?.rings.forEach((ring, k) => ring.forEach((c) => ringOf.has(c) || ringOf.set(c, k)));
-  const distanceOf = (m: IndexMatch): number => {
-    if (!near) return 0;
-    const cell = m.metadata?.[cellKey];
-    return typeof cell === 'string' ? (ringOf.get(cell) ?? MAX_RINGS) : MAX_RINGS;
-  };
-  const merged = answers.flat().sort((a, b) => b.score - a.score);
+  const bandOf = new Map<string, number>();
+  const merged = answers
+    .flat()
+    .filter((m) => {
+      if (!reach) return true;
+      const km = reach.kmTo(m.metadata);
+      if (km === null) return false;
+      bandOf.set(m.id, Math.floor(km / DISTANCE_BAND_KM));
+      return true;
+    })
+    .sort((a, b) => b.score - a.score);
+  const distanceOf = (m: IndexMatch): number => bandOf.get(m.id) ?? 0;
 
   // S7: the Bloom gate on the merged set, before any D1 read; the tier-2 floor on the pinned embedding model's scale.
   const tier2Floor = tier2FloorFor(await deps.inference.model('work-embed'));
@@ -326,7 +349,7 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
       personhood: r.tier,
       matched: wanted.filter((t) => held.has(t)),
       namespace: g.match.namespace,
-      ...(near ? { distance: g.distance } : {}),
+      ...(reach ? { distance: g.distance } : {}),
     });
   }
   // One listing per pseudonym, the first of a list already in order (Work Profiles).
