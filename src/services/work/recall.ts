@@ -70,7 +70,7 @@ import { clefInput, FIT_FLOOR, FIT_KEYS, fitQuestions, fitState, OTHER_FLOOR, re
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
 import { EDGE_KM, loadH3, ringsFor } from './h3.js';
-import { H3_CELL, namespaceOf, REGION, WORKER_RADIUS_STEPS_KM, type ListingRecord, type ListingStore, type Scope } from './listings.js';
+import { isH3Cell, namespaceOf, REGION, WORKER_RADIUS_STEPS_KM, type ListingRecord, type ListingStore, type Scope } from './listings.js';
 import { EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT, embedTexts, type IndexFilter, type IndexMatch, type RegistryStore, type VectorIndex } from './registry.js';
 
 /** Results Vectorize returns per query when metadata comes back (decision 0019; re-check at build time). */
@@ -131,7 +131,7 @@ export async function searchReach(at: string): Promise<SearchReach> {
       const cell = metadata?.cell6;
       const radius = metadata?.radius;
       // A listing without its cell or radius (published before the radius reached the plane) cannot be measured.
-      if (typeof cell !== 'string' || !H3_CELL[6].test(cell) || typeof radius !== 'number' || !Number.isFinite(radius)) return null;
+      if (!isH3Cell(cell, 6) || typeof radius !== 'number' || !Number.isFinite(radius)) return null;
       const km = h3.greatCircleDistance(job, h3.cellToLatLng(cell), 'km');
       return km <= radius + CONTAINMENT_SLACK_KM ? km : null;
     },
@@ -139,7 +139,7 @@ export async function searchReach(at: string): Promise<SearchReach> {
 }
 /**
  * The launch markets, unless `WORK_REMOTE_COUNTRIES` says otherwise: remote work is queried in their remote namespaces,
- * and on-site work with a ring in their on-site namespaces too.
+ * and on-site work with the job's cell in their on-site namespaces too.
  */
 export const DEFAULT_REMOTE_COUNTRIES = ['us', 'br', 'mx'];
 
@@ -247,9 +247,10 @@ export function parseRemoteCountries(raw: string | undefined): string[] {
 }
 
 /**
- * The namespaces an intent queries (decision 0019). With a ring, the cells do the locality, and a country is only what
- * each phone's region names (the app's region, workspace decision 0046), which two people in one place may set apart:
- * so an on-site search with a ring also reads every launch country's on-site namespace, after the hirer's own.
+ * The namespaces an intent queries (decision 0019). With the job's cell, the cells do the locality, and a country is only
+ * what each phone's region names (the app's region, workspace decision 0046), which two people in one place may set
+ * apart: so an on-site search with the job's cell also reads every launch country's on-site namespace, after the hirer's
+ * own.
  */
 export function namespacesFor(intent: RecallIntent, remoteCountries: string[] = DEFAULT_REMOTE_COUNTRIES, prefix = ''): string[] | null {
   if (intent.scope === 'remote') return remoteCountries.map((c) => namespaceOf(c, 'remote', prefix));

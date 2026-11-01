@@ -13,7 +13,7 @@
  *
  *  0. Before any hosted call, the sentence runs the block tripwire
  *     (`scanText`, after NFC and a trim, at most `INTENT_MAX_CHARS`), and
- *     the language, the regions and the ring are checked: a contact detail the gate
+ *     the language, the regions and the job's cell are checked: a contact detail the gate
  *     missed stops here when the tripwire recognises it (it is a tripwire,
  *     not a detector, and cannot find a name).
  *  1. One Clef call on the sentence (`work-classify`), before anything is
@@ -64,7 +64,7 @@ import { BLOCK_LANGS, scanText, type BlockLang, type BlockRefusal } from './bloc
 import { failureCode, type ExecutorOptions } from './executor.js';
 import { estimatedUsage, usageOrEstimate, withCalls, type WorkCall } from './fields.js';
 import { INTENT_MAX_CHARS, parseIntent, type IntentFields } from './intent.js';
-import { H3_CELL, h3CenterChildAt, REGION, type Scope } from './listings.js';
+import { h3CenterChildAt, isH3Cell, REGION, type Scope } from './listings.js';
 import { ISO_DAY, readStart, type JobStart } from './start.js';
 import { MAX_REGIONS, recall, type RecallDeps, type RecallIntent, type RecallOutcome } from './recall.js';
 import { candidatesFor, embedTexts, requestFallback, snap, type Candidate, type RegistryDeps } from './registry.js';
@@ -97,7 +97,7 @@ export function checkLegacyRing(n: unknown): n is LegacyRing {
   for (const ring of rings) {
     if (!Array.isArray(ring)) return false;
     for (const c of ring) {
-      if (typeof c !== 'string' || !H3_CELL[res].test(c)) return false;
+      if (!isH3Cell(c, res)) return false;
       cells++;
     }
   }
@@ -174,7 +174,7 @@ export function checkHirerRequest(req: HirerRequest): { ok: true; sentence: stri
   if (!Array.isArray(regions) || !regions.length || regions.length > MAX_REGIONS || regions.some((r) => typeof r !== 'string' || !REGION.test(r))) {
     return { ok: false, error: 'bad_request', reason: 'regions', calls: [] };
   }
-  if (req.at != null && (typeof req.at !== 'string' || !H3_CELL[6].test(req.at))) return { ok: false, error: 'bad_request', reason: 'at', calls: [] };
+  if (req.at != null && !isH3Cell(req.at, 6)) return { ok: false, error: 'bad_request', reason: 'at', calls: [] };
   if (req.near != null && !checkLegacyRing(req.near)) return { ok: false, error: 'bad_request', reason: 'near', calls: [] };
   if (req.today != null && (typeof req.today !== 'string' || !ISO_DAY.test(req.today))) return { ok: false, error: 'bad_request', reason: 'today', calls: [] };
   return { ok: true, sentence };

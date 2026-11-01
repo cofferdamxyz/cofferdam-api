@@ -13,6 +13,7 @@ import {
   DEFAULT_WORKER_RADIUS_KM,
   H3_CELL,
   h3CenterChildAt,
+  isH3Cell,
   h3ParentAt,
   WORKER_RADIUS_STEPS_KM,
   type ListingDraft,
@@ -89,6 +90,9 @@ describe("an on-site listing's proximity cells and radius (decision 0067, rule 8
     expect(checkCells({ r6: MACAE.r6, r5: RIO.r5 })).toBe(false);
     expect(checkCells({ r6: MACAE.r5, r5: MACAE.r5 })).toBe(false);
     expect(checkCells({ r6: 'not a cell', r5: MACAE.r5 })).toBe(false);
+    // The shape alone is not a cell: H3 has base cells 0 to 121, and an index naming 127 makes h3-js throw.
+    expect(H3_CELL[6].test('86fe00007ffffff')).toBe(true);
+    expect([isH3Cell('86fe00007ffffff', 6), isH3Cell(MACAE.r6, 6), isH3Cell(MACAE.r6, 5), isH3Cell(42, 6)]).toEqual([false, true, false, false]);
   });
 
   it("takes the circle's radius with the cells, as one of the map's steps", () => {
@@ -171,6 +175,7 @@ describe("a hirer's request names the job's cell", () => {
     expect(checkHirerRequest(base)).toMatchObject({ ok: true });
     expect(checkHirerRequest({ ...base, at: MACAE.r5 })).toMatchObject({ ok: false, reason: 'at' });
     expect(checkHirerRequest({ ...base, at: 42 } as never)).toMatchObject({ ok: false, reason: 'at' });
+    expect(checkHirerRequest({ ...base, at: '86fe00007ffffff' })).toMatchObject({ ok: false, reason: 'at' });
   });
 
   it("reads an older app's ring by its centre cell", () => {

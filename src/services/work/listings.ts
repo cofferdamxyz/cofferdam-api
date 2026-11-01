@@ -56,6 +56,14 @@ export const H3_CELL: Readonly<Record<4 | 5 | 6, RegExp>> = {
   6: /^86[0-9a-f]{6}[7f]f{6}$/,
 };
 
+/** The highest base cell H3 has (122 base cells, 0 to 121): a cell whose index names another is out of shape. */
+export const H3_MAX_BASE_CELL = 121;
+
+/** Whether a string is an H3 cell at `res` as h3-js writes it: its shape, and a base cell H3 has (bits 45 to 51). */
+export function isH3Cell(cell: unknown, res: 4 | 5 | 6): cell is string {
+  return typeof cell === 'string' && H3_CELL[res].test(cell) && parseInt(cell.slice(2, 4), 16) >> 1 <= H3_MAX_BASE_CELL;
+}
+
 /** The parent of an H3 cell at a coarser resolution: the resolution set, and each digit past it unused (7). */
 export function h3ParentAt(cell: string, res: number): string {
   let h = BigInt(`0x${cell}`);
@@ -83,7 +91,7 @@ export const DEFAULT_WORKER_RADIUS_KM = 25;
 export function checkCells(c: unknown): c is ListingCells {
   if (!c || typeof c !== 'object') return false;
   const { r6, r5 } = c as Record<string, unknown>;
-  return typeof r6 === 'string' && typeof r5 === 'string' && H3_CELL[6].test(r6) && H3_CELL[5].test(r5) && h3ParentAt(r6, 5) === r5;
+  return isH3Cell(r6, 6) && isH3Cell(r5, 5) && h3ParentAt(r6, 5) === r5;
 }
 
 export function countryOf(region: string): string {
@@ -377,7 +385,17 @@ export interface PublishDeps {
 }
 
 export type PublishOutcome =
-  | { ok: true; listingId: string; namespace: string; tokens: string[]; /** Claims the budget left unsnapped (`SNAP_START_BUDGET_MS`). */ unsnapped: number; calls: WorkCall[] }
+  | {
+      ok: true;
+      listingId: string;
+      namespace: string;
+      tokens: string[];
+      /** Claims the budget left unsnapped (`SNAP_START_BUDGET_MS`). */
+      unsnapped: number;
+      /** The radius stored with an on-site listing's cells (rule 8, as amended), which the phone keeps as the one published. */
+      radius?: number;
+      calls: WorkCall[];
+    }
   | { ok: false; error: 'draft_refused'; reason: DraftRefusal; calls: WorkCall[] }
   | { ok: false; error: 'profile_limit'; limit: number; calls: WorkCall[] }
   | { ok: false; error: 'embedding_failed'; calls: WorkCall[] };
@@ -535,7 +553,8 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
       },
     },
   ]);
-  return { ok: true, listingId, namespace, tokens: list, unsnapped, calls };
+  const radius = draft.scope === 'onsite' && draft.cells ? (draft.radiusKm ?? DEFAULT_WORKER_RADIUS_KM) : undefined;
+  return { ok: true, listingId, namespace, tokens: list, unsnapped, ...(radius !== undefined ? { radius } : {}), calls };
 }
 
 /** Looking for work off: the vector and the record go. */

@@ -212,7 +212,18 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
       }
     }
     workLog({ event: 'work_listing', on: true, scope: draft.scope, tier, tokens: outcome.tokens.length, unsnapped: outcome.unsnapped, calls: outcome.calls.length, ms: deps.now() - t0 });
-    return c.json({ ok: true, listingId: outcome.listingId, profileId: draft.profileId, namespace: outcome.namespace, tier, tokens: outcome.tokens, unsnapped: outcome.unsnapped });
+    // The radius as stored, so a phone records what the plane holds: a plane before rule 8's amendment answers none, and the
+    // phone publishes again once one that stores it is up.
+    return c.json({
+      ok: true,
+      listingId: outcome.listingId,
+      profileId: draft.profileId,
+      namespace: outcome.namespace,
+      tier,
+      tokens: outcome.tokens,
+      unsnapped: outcome.unsnapped,
+      ...(outcome.radius !== undefined ? { radius: outcome.radius } : {}),
+    });
   });
 
   routes.delete('/listing', async (c) => {

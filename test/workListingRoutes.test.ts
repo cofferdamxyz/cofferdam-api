@@ -127,12 +127,14 @@ describe('PUT /v1/work/listing', () => {
     const a = await app();
     const res = await a.put({ account: fxAccount, ...DRAFT, region: 'br', cells, radiusKm: 50 });
     expect(res.status).toBe(200);
+    // The radius as stored comes back, so the phone records what the plane holds.
+    expect(await res.json()).toMatchObject({ ok: true, radius: 50 });
     const vector = [...a.listingIndex.vectors.values()][0]!;
     expect(vector.metadata).toMatchObject({ cell6: cells.r6, cell5: cells.r5, cell4: '84a8b1bffffffff', radius: 50 });
     expect(Object.keys(vector.metadata).sort()).toEqual(['bloom', 'cell4', 'cell5', 'cell6', 'model', 'radius', 'region', 'scope', 'tier', 'v']);
     // An older phone's cells without a radius take the app's default; a radius off the map's steps, or without cells, is refused.
     const older = await app();
-    expect((await older.put({ account: fxAccount, ...DRAFT, region: 'br', cells })).status).toBe(200);
+    expect(await (await older.put({ account: fxAccount, ...DRAFT, region: 'br', cells })).json()).toMatchObject({ ok: true, radius: 25 });
     expect([...older.listingIndex.vectors.values()][0]!.metadata.radius).toBe(25);
     for (const over of [{ cells, radiusKm: 30 }, { radiusKm: 25 }]) {
       const refused = await a.put({ account: fxAccount, ...DRAFT, region: 'br', ...over });

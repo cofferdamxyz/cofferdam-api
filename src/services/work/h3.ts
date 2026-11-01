@@ -5,7 +5,7 @@
  * H3 for the Work routes (workspace decision 0067, rule 8, as amended on the founder's word of 2026-10-31 that the
  * worker's radius decides). A listing and a hirer are known here only by H3 cells: the plane turns them into centres and
  * distances itself, so no position crosses the wire. h3-js 4.5.0, the app's own pin, loads the first time a search needs
- * it: its emscripten module takes 16 MB, which the plane's other routes never pay.
+ * it: its emscripten module takes 32 MB (its browser build's initial memory), which the plane's other routes never pay.
  */
 import type * as H3 from 'h3-js';
 
