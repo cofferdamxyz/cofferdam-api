@@ -87,8 +87,9 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
   { id: 'message', description: 'Write a text message to a friend or a contact (tell someone something), not a payment' },
   { id: 'create_group', description: 'Create a group chat' },
   // The hirer's flow (workspace decision 0065): only the hiring check opens it,
-  // so it never takes probability from the screens above.
-  { id: 'post_job', description: 'Post a job: hire a worker for work the user wants done', planned: true, hiring: true },
+  // so it never takes probability from the screens above. The app opens Find
+  // workers with the user's message (2026-10-31, workspace decision 0073).
+  { id: 'post_job', description: 'Post a job: hire a worker for work the user wants done', hiring: true },
 ];
 
 /**

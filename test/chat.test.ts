@@ -277,13 +277,13 @@ describe('runChat', () => {
     expect(texts(events)).toMatch(/Import your CV is ready/);
   });
 
-  it('opens the hirer’s flow when the hiring check is on, says it is coming, and asks nothing when it is off', async () => {
+  it('opens the hirer’s flow when the hiring check is on, says Find workers is ready, and asks nothing when it is off', async () => {
     const calls: Call[] = [];
     const answers = { answers: { ...clef('none', 0.8).answers, hire: { type: 'noul', noul: 0.94 } } };
     const inference = fakeInference({ 'chat-router': answers, 'chat-answer': () => sse(['x']) }, calls);
     const events = await collect(runChat({ inference, messages: user('Hi, I am looking for a plumber to fix my sink'), hireFloor: 0.5 }));
     expect(events).toContainEqual({ type: 'action', request: { id: 'post_job' } });
-    expect(texts(events)).toMatch(/Posting a job isn't available yet; it's coming/);
+    expect(texts(events)).toMatch(/Find workers is ready\. Check the details and confirm there\./);
     const router = calls.find((c) => c.op === 'chat-router')!;
     expect(router.input).toMatchObject({ questions: { hire: { instructions: HIRE_QUESTION } } });
     expect(calls.some((c) => c.op === 'chat-action')).toBe(false);

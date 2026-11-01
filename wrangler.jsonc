@@ -72,6 +72,12 @@
     // reasoning score (0 to 1) is at or above this; 0.7 is the legend's
     // "conditions to weigh" and above. Remove the line to stay at low effort always.
     "CHAT_THINKING_HIGH_FLOOR": "0.7",
+    // The router's hiring check (workspace decision 0073, the founder's "layer 0"): a
+    // message Clef rates at or above this as asking for a worker opens the hirer's
+    // flow (`post_job`: the app's Find workers, with the message), and 0.7 when the
+    // action question chose a payment or a message (`HIRE_OVER_PAYMENT`). Set on
+    // 2026-10-31, once the app had the action; remove the line to stop asking.
+    "CHAT_HIRE_FLOOR": "0.5",
     // Global brake: the most the plane spends on hosted AI (chat and, once
     // built, cloud document extraction) in a UTC month, in US dollars, as the
     // usage meter estimates it (founder, 2026-10-20). Remove for no brake.
