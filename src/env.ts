@@ -112,8 +112,9 @@ export interface Env {
   /**
    * The router's hiring check (the founder's "layer 0", 2026-10-30): a number
    * in (0, 1] asks Clef whether the message asks for a worker, and at or above
-   * it the turn opens the hirer's flow (`post_job`). Unset: not asked, since
-   * the app opens no post-a-job screen yet.
+   * it the turn opens the hirer's flow (`post_job`, the app's Find workers).
+   * Unset: not asked. 0.5 in `wrangler.jsonc` since 2026-10-31 (workspace
+   * decision 0073).
    */
   CHAT_HIRE_FLOOR?: string;
   /** `off` stops starting the everyday answer alongside the router; anything else keeps it on. */

@@ -9,9 +9,9 @@
  * Pure: `routerQuestions` builds the Clef request, `decideRoute` reads its
  * answers, so both are tested without Workers AI.
  *
- * The action list mirrors `cofferdam-app/src/lib/actions.ts`, apart from
- * `post_job`, which the app adds before `CHAT_HIRE_FLOOR` is set (workspace
- * decision 0073). The chat only proposes an action; the app validates it
+ * The action list mirrors `cofferdam-app/src/lib/actions.ts`; `post_job`, the
+ * app's Find workers, is opened only by the hiring check (workspace decision
+ * 0073). The chat only proposes an action; the app validates it
  * (`parseActionRequest`) and opens the panel, where the user confirms
  * (decision 0024).
  */
@@ -98,8 +98,8 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
  * the safety checks; over a payment or a message the action question chose,
  * only at `HIRE_OVER_PAYMENT`. The rules for every other message are unchanged,
  * though Clef's other answers can shift when it is asked (four of the 97 chat
- * prompts on clef-flash). Asked only when `CHAT_HIRE_FLOOR` sets its floor,
- * since the app opens no post-a-job screen yet.
+ * prompts on clef-flash). Asked only when `CHAT_HIRE_FLOOR` sets its floor
+ * (0.5 since 2026-10-31, when the app's Find workers took `post_job`).
  *
  * Of four wordings measured on 142 prompts in three languages, this one did
  * best on clef-flash (`test/chatRouter.eval.test.ts`,
