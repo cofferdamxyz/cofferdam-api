@@ -46,7 +46,11 @@ export const INTENT_FIELDS = {
     max: 1_000_000,
     instructions: 'What the person will pay, as a whole number, when it is in dollars or written as a bare number. Empty for any other currency, such as reais, pesos or euros.',
   },
-  credential: { type: 'text', instructions: 'The licence or certification the worker must hold, exactly as written, for example "licensed electrician".' },
+  credential: {
+    type: 'text',
+    instructions:
+      'A licence, certificate or registration the sentence says the worker must hold, exactly as written, for example "licensed electrician" or "certified rigger". Null when the sentence names only the kind of worker, such as "a plumber" or "um eletricista": a trade is not a licence.',
+  },
   language: { type: 'text', instructions: 'A language the worker must speak, exactly as written.' },
   recurrence: { type: 'text', instructions: 'How often the job repeats, exactly as written, for example "weekly" or "cada semana".' },
 } satisfies FieldSet;

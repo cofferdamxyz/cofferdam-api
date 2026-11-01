@@ -375,7 +375,7 @@ describe('the Work fixtures', () => {
   });
 
   it('hold the hirer prompt set in three languages, spans exact and text de-identified', () => {
-    const canonical = ['sink', 'ev-charger', 'rigger', 'translation', 'gardener', 'harmful', 'injection'];
+    const canonical = ['sink', 'ev-charger', 'rigger', 'translation', 'gardener', 'harmful', 'injection', 'trade', 'electrician'];
     for (const suffix of ['en', 'pt', 'es']) {
       for (const id of canonical) expect(HIRER_PROMPTS.some((p) => p.id === `${id}-${suffix}`), `${id}-${suffix}`).toBe(true);
     }
