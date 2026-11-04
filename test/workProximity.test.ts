@@ -153,7 +153,8 @@ describe("a search's reach: the widest radius a worker can set, around the job's
       expect(reach.kmTo({ cell6, radius })).toBeCloseTo(km, 6);
     }
     expect(measured).toBeGreaterThan(7_000);
-  });
+    // About 2 s alone; the default 5 s ran out in the full suite on a loaded Mac (2026-11-04).
+  }, 30_000);
 
   it("keeps a listing only when its own circle holds the job's cell, within one cell's edge", async () => {
     const reach = await searchReach(MACAE.r6);
