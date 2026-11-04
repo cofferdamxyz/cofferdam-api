@@ -163,9 +163,12 @@ export const SEPOLIA_DEPLOYMENTS = {
   CofferdamCeremonyAttesterRegistry: {
     address: '0x44A2B59d5D39f773C2e65469e0Dd3217E53823Af',
   },
-  /** Stub paymaster sponsoring every op; owner-only withdrawals (decision 0014). */
+  /**
+   * Sponsors only ops the plane's relayer submits for an account of the factory
+   * above (decision 0071; redeployed 2026-11-04); owner-only withdrawals (decision 0014).
+   */
   CofferdamPaymaster: {
-    address: '0x85657a56b23525047cF67d462c6Bf2B3C6d66B18',
+    address: '0x706eD953bd3172D8B1B2875ccba1F3eAa1eDB548',
   },
   /**
    * High-tier platform-passkey authority (WebAuthn assertion), pinned to the
