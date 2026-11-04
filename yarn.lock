@@ -1208,10 +1208,10 @@ hashery@^1.4.0, hashery@^1.5.1:
   dependencies:
     hookified "^1.15.0"
 
-hono@4.12.23:
-  version "4.12.23"
-  resolved "https://registry.yarnpkg.com/hono/-/hono-4.12.23.tgz#998b91651686149f0e6edbb8564d604da04f3cf8"
-  integrity sha512-eIaZ9qDgu7XV0pxOCrg7/WhnQ6Ivm22UcxhXx/A3dcbqbbYgBEkc6e/J/s7j2tS96zoB0S9VBdLwQNCWwUo4LA==
+hono@4.12.34:
+  version "4.12.34"
+  resolved "https://registry.yarnpkg.com/hono/-/hono-4.12.34.tgz#9d6fb4ff01d6a8fa3a0290b4e120da19ea181b9b"
+  integrity sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==
 
 hookified@^1.15.0, hookified@^1.15.1:
   version "1.15.1"
