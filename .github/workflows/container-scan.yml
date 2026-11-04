@@ -9,8 +9,10 @@ name: Container scan
 # CVEs land on an image that did not change.
 #
 # Trivy runs from its own image pinned by digest, never a third-party action,
-# and reads the built image from a `docker save` tarball, so the scanner gets
-# no Docker socket and no token. CI never deploys (cloudflare-deploys.md).
+# and reads the built image from a `docker save` tarball: the scanner gets no
+# Docker socket, the checkout keeps no token (persist-credentials: false), the
+# repository is mounted read-only, and Trivy writes only to $RUNNER_TEMP. CI
+# never deploys (cloudflare-deploys.md).
 on:
   push:
     branches: [main]
@@ -41,28 +43,38 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Build the image as deployed
         run: |
           docker build -t cofferdam-xmtp-backend:scan xmtp/backend
           docker save cofferdam-xmtp-backend:scan -o "$RUNNER_TEMP/image.tar"
+          mkdir -p "$RUNNER_TEMP/out" "$RUNNER_TEMP/trivy-cache"
 
+      # One vulnerability database download, shared by both runs.
       - name: Scan the image
         run: |
           docker run --rm \
-            -v "$RUNNER_TEMP:/scan" -v "$GITHUB_WORKSPACE:/out" \
+            -v "$RUNNER_TEMP/image.tar:/scan/image.tar:ro" -v "$RUNNER_TEMP/out:/out" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
             "$TRIVY_IMAGE" image --input /scan/image.tar \
             --scanners vuln --severity CRITICAL,HIGH,MEDIUM \
             --format sarif --output /out/trivy-image.sarif --exit-code 0
-          docker run --rm -v "$RUNNER_TEMP:/scan" \
-            "$TRIVY_IMAGE" image --input /scan/image.tar \
+          docker run --rm \
+            -v "$RUNNER_TEMP/image.tar:/scan/image.tar:ro" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --input /scan/image.tar --skip-db-update \
             --scanners vuln --severity CRITICAL,HIGH --format table --exit-code 0
 
+      # The whole repository, read-only, so an alert's path is
+      # xmtp/backend/Dockerfile as code scanning reads it.
       - name: Scan the Dockerfile
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE/xmtp/backend:/src:ro" -v "$GITHUB_WORKSPACE:/out" \
-            "$TRIVY_IMAGE" config /src \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/out:/out" \
+            "$TRIVY_IMAGE" config /src --misconfig-scanners dockerfile \
+            --skip-dirs node_modules \
             --format sarif --output /out/trivy-config.sarif --exit-code 0
 
       # Code scanning keeps main's results; a pull request shows the table above.
@@ -70,12 +82,12 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
-          sarif_file: trivy-image.sarif
+          sarif_file: ${{ runner.temp }}/out/trivy-image.sarif
           category: trivy-xmtp-image
 
       - name: Upload the Dockerfile findings
         if: github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
-          sarif_file: trivy-config.sarif
+          sarif_file: ${{ runner.temp }}/out/trivy-config.sarif
           category: trivy-xmtp-dockerfile
