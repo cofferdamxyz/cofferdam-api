@@ -33,6 +33,10 @@
     // "off" until the Spectrum application for inbound TCP exists and points at
     // this Worker; then "tcp". See docs/runbooks/xmtp-backend.md (workspace).
     "INGRESS": "off",
+    // "on" keeps the container up around the clock; "off" pauses it (src/index.ts).
+    // Paused 2026-11-04 until inbound TCP exists: nothing could reach it, and the
+    // object and container ran 24/7 (docs/runbooks/xmtp-backend.md, workspace).
+    "RUN": "off",
     // Public RPCs for ERC-1271 checks. Swap for keyed endpoints before load.
     "XMTP_RPC_BASE_SEPOLIA": "https://sepolia.base.org",
     "XMTP_RPC_BASE": "https://mainnet.base.org"

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { BACKEND_ENV_NAMES, containerEnv, envFingerprint } from '../../xmtp/backend/src/containerEnv.js';
+import { BACKEND_ENV_NAMES, containerEnv, envFingerprint, running } from '../../xmtp/backend/src/containerEnv.js';
 import { openUpstream } from '../../xmtp/backend/src/socket.js';
 
 const root = join(__dirname, '../../xmtp');
@@ -64,6 +64,15 @@ describe('backend.toml (decisions 0039, 0040, 0042)', () => {
     expect(vars.RETENTION_WELCOME_SECONDS).toBe(r.welcome_seconds);
     expect(vars.RETENTION_KEY_PACKAGE_SECONDS).toBe(r.key_package_seconds);
     expect(table('attachments').retention_seconds).toBe(r.group_message_seconds);
+  });
+
+  it('runs the backend only when RUN is "on"', () => {
+    expect(running({ RUN: 'on' })).toBe(true);
+    expect(running({ RUN: 'off' })).toBe(false);
+    expect(running({})).toBe(false);
+    expect(running({ RUN: 'ON' })).toBe(false);
+    // Paused while inbound TCP does not exist (2026-11-04).
+    expect(jsonc('backend/wrangler.jsonc').vars.RUN).toBe('off');
   });
 
   it('logs nothing from the backend Worker and exposes no URL', () => {

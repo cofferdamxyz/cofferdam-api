@@ -65,3 +65,8 @@ export async function envFingerprint(env: Record<string, string>): Promise<strin
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+/** Whether the backend should run (wrangler.jsonc `RUN`); anything but "on" pauses it. */
+export function running(env: { RUN?: string }): boolean {
+  return env.RUN === 'on';
+}
