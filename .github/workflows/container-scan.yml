@@ -1,0 +1,81 @@
+name: Container scan
+
+# Trivy over the XMTP backend's container image (xmtp/backend/Dockerfile: the
+# published ghcr.io/xmtp/backend plus our backend.toml), the one runtime
+# Dependabot cannot see: it reads lockfiles, not images (workspace
+# docs/runbooks/agentic-loop-completion.md, the security lane). Results go to
+# code scanning, where the Security bot reads them with the other alerts; a
+# finding never fails the job, triage decides. Weekly as well, because new
+# CVEs land on an image that did not change.
+#
+# Trivy runs from its own image pinned by digest, never a third-party action,
+# and reads the built image from a `docker save` tarball, so the scanner gets
+# no Docker socket and no token. CI never deploys (cloudflare-deploys.md).
+on:
+  push:
+    branches: [main]
+    paths:
+      - xmtp/backend/**
+      - .github/workflows/container-scan.yml
+  pull_request:
+    paths:
+      - xmtp/backend/**
+      - .github/workflows/container-scan.yml
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # aquasecurity/trivy 0.76.1 (2026-10-21)
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+
+jobs:
+  trivy:
+    name: trivy (xmtp backend)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image as deployed
+        run: |
+          docker build -t cofferdam-xmtp-backend:scan xmtp/backend
+          docker save cofferdam-xmtp-backend:scan -o "$RUNNER_TEMP/image.tar"
+
+      - name: Scan the image
+        run: |
+          docker run --rm \
+            -v "$RUNNER_TEMP:/scan" -v "$GITHUB_WORKSPACE:/out" \
+            "$TRIVY_IMAGE" image --input /scan/image.tar \
+            --scanners vuln --severity CRITICAL,HIGH,MEDIUM \
+            --format sarif --output /out/trivy-image.sarif --exit-code 0
+          docker run --rm -v "$RUNNER_TEMP:/scan" \
+            "$TRIVY_IMAGE" image --input /scan/image.tar \
+            --scanners vuln --severity CRITICAL,HIGH --format table --exit-code 0
+
+      - name: Scan the Dockerfile
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/xmtp/backend:/src:ro" -v "$GITHUB_WORKSPACE:/out" \
+            "$TRIVY_IMAGE" config /src \
+            --format sarif --output /out/trivy-config.sarif --exit-code 0
+
+      # Code scanning keeps main's results; a pull request shows the table above.
+      - name: Upload the image findings
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-xmtp-image
+
+      - name: Upload the Dockerfile findings
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-xmtp-dockerfile
