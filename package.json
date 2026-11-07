@@ -24,7 +24,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@noble/curves": "1.9.7",
+    "@noble/curves": "2.4.0",
     "h3-js": "4.5.0",
     "hono": "4.13.14",
     "pg": "8.23.1",
