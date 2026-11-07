@@ -36,6 +36,7 @@ Cloudflare Workers API plane for Cofferdam.
 
 - `yarn test`, `yarn typecheck` (the Worker, then the Worker plus tests through `tsconfig.test.json`) and `yarn lint` (typescript-eslint, type-checked; `eslint.config.mjs`) must pass. The Mac lanes (`src/routes/chat.ts`, `src/services/chat/*`, `src/services/inference/*`) are downgraded to warnings in `eslint.config.mjs` until they are cleaned on the Mac; delete that block then.
 - Verify on-chain authority config matches SDK encoding before deploying.
+- `package.json` forces `minimatch` to 11.0.1 with a yarn `resolutions` entry (Dependabot alert 66, GHSA-g3hv-75wg-m249, a denial of service in versions 7.0.0 up to 11.0.1; the 10.x line is vulnerable too, so 11 is the only fix). It reaches the repository only through `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree`, which ask for `^10`: lint tooling, no Worker, test or deploy path. Remove the entry once those three request `minimatch` 11 or later. The lockfile entry of its new dependency `@isaacs/nonrecursive-glob-match` is pinned by hand to 1.0.1, the oldest release the range allows (1.1.0 was two days old when added, inside the seven-day cooldown).
 - Deploys run only from the Mac with the workspace `.envrc` loaded (`direnv exec .. yarn deploy`), never from a cloud session; when a contract pin moves, deploy the attester first. Runbook: `docs/runbooks/cloudflare-deploys.md` in the workspace. `src/chain/deployments.ts` mirrors `base-contracts/deployments/baseSepolia.json`.
 - Design: `docs/architecture/plane.md` in the workspace.
 
