@@ -28,17 +28,17 @@
     "h3-js": "4.5.0",
     "hono": "4.13.14",
     "pg": "8.23.1",
-    "viem": "2.51.3"
+    "viem": "2.57.13"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260530.1",
     "@eslint/js": "10.0.1",
     "@types/node": "22.20.5",
     "@types/pg": "8.23.1",
-    "eslint": "10.13.0",
+    "eslint": "10.14.0",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.72.0",
+    "typescript-eslint": "8.72.1",
     "vitest": "4.1.12",
-    "wrangler": "4.154.0"
+    "wrangler": "4.156.0"
   }
 }
