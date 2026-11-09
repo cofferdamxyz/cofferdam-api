@@ -26,12 +26,12 @@
   "dependencies": {
     "@noble/curves": "1.9.7",
     "h3-js": "4.5.0",
-    "hono": "4.13.14",
+    "hono": "4.13.16",
     "pg": "8.23.1",
-    "viem": "2.57.13"
+    "viem": "2.57.14"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261031.1",
+    "@cloudflare/workers-types": "5.20261102.1",
     "@eslint/js": "10.0.1",
     "@types/node": "22.20.5",
     "@types/pg": "8.23.1",
@@ -39,7 +39,7 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.1",
     "vitest": "4.1.12",
-    "wrangler": "4.156.0"
+    "wrangler": "4.156.1"
   },
   "resolutions": {
     "minimatch": "11.0.1"
