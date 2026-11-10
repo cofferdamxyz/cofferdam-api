@@ -55,12 +55,14 @@ describe('the transparency answer', () => {
     expect(answer.plane.version).toBe('v-123');
     expect(answer.commitments.workersAi.retainsInputsOrOutputs).toBe(false);
     // Each use of the user's data on Cofferdam Cloud, its gateway, kept nowhere: the Work Profile's parts on the strict
-    // gateway (workspace decision 0076).
+    // gateway (workspace decision 0076), the CV's and a Vault document's text on the documents one (decision 0081).
     expect(answer.uses.map((x) => [x.gateway, x.kept])).toEqual([
       ['cofferdam-strict', 'nowhere'],
       ['cofferdam-strict', 'nowhere'],
       ['cofferdam-documents', 'nowhere'],
+      ['cofferdam-documents', 'nowhere'],
     ]);
+    expect(answer.uses[3]!.what).toBe("a document's text when you add it to your Vault, after you choose Cofferdam Cloud to read it");
     expect(answer.uses[1]!.what).toMatch(/^the parts of your Work Profile a question about your own work needs .*structured claims: never your name, email, phone, birth date or where you live, and only when you ask$/);
     expect(read.facts[0]!.carries).toContain('the parts of your Work Profile a question about your own work needs');
   });

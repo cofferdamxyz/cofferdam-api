@@ -157,6 +157,8 @@ export interface Env {
   WORK_JOB_PROFILE_MODEL?: string;
   /** The whole-CV parse (`POST /v1/work/parse`, `services/work/parse.ts`); unset, DeepSeek V4.1 Flash with thinking off, the founder's pin of 2026-10-28 (workspace decision 0021). */
   WORK_PARSE_MODEL?: string;
+  /** A Vault document's reading (`POST /v1/work/document`, `services/work/document.ts`); unset, DeepSeek V4.1 Flash with thinking off, the parse's model (workspace decision 0081, item 3). */
+  WORK_DOCUMENT_MODEL?: string;
   /**
    * The token registry's models (decision 0018): embeddings (set to
    * EmbeddingGemma 2's LiteRT-LM file, the v2 generation, which only the phone

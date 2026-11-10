@@ -77,7 +77,7 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
   },
   // Built in the app's chat on 2026-10-31 (workspace decision 0021): the card reads the CV on the phone's side, never here.
   { id: 'import_cv', description: 'Import or update a CV or resume' },
-  { id: 'add_document', description: 'Add or scan a new document', planned: true },
+  { id: 'add_document', description: 'Add or scan a new document' },
   // A question about work is an answer, not this screen: "What's the average
   // offshore rotation in the Gulf of Mexico" opened Looking for work on the
   // founder's phone (2026-10-20); with this wording the Spanish "¿cuántas

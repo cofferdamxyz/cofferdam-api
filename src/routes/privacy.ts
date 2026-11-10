@@ -10,7 +10,8 @@
  * each accepts only requests authorized in the account. It also
  * names the plane's deployed version, each use of the user's data on
  * Cofferdam Cloud with the gateway it takes and that nothing keeps it
- * (`uses`; the Work Profile's parts by workspace decision 0076), and
+ * (`uses`; the Work Profile's parts by workspace decision 0076, a Vault
+ * document's text by decision 0081), and
  * Cloudflare's own commitments for Workers AI. Public, cached five minutes in the isolate and at the edge;
  * nothing of the request is read beyond the path.
  *
@@ -170,6 +171,7 @@ export function dataUses(env: Pick<Env, 'AI_GATEWAY_ID' | 'AI_GATEWAY_DOCUMENTS_
       kept: 'nowhere',
     },
     { what: "your CV's text, when you choose Cofferdam Cloud to read it", gateway: env.AI_GATEWAY_DOCUMENTS_ID ?? strict, kept: 'nowhere' },
+    { what: "a document's text when you add it to your Vault, after you choose Cofferdam Cloud to read it", gateway: env.AI_GATEWAY_DOCUMENTS_ID ?? strict, kept: 'nowhere' },
   ];
 }
 

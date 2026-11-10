@@ -41,6 +41,7 @@ export type InferenceOp =
   | 'work-pivot'
   | 'work-decide'
   | 'work-parse'
+  | 'work-document'
   | 'work-job-profile';
 
 export type InferenceModelVar =
@@ -57,6 +58,7 @@ export type InferenceModelVar =
   | 'WORK_ADJUDICATE_MODEL'
   | 'WORK_PIVOT_MODEL'
   | 'WORK_PARSE_MODEL'
+  | 'WORK_DOCUMENT_MODEL'
   | 'WORK_DECIDE_MODEL'
   | 'WORK_JOB_PROFILE_MODEL';
 
@@ -120,6 +122,9 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   // The whole-CV parse (`POST /v1/work/parse`, decision 0021): DeepSeek V4.1 Flash alone, the founder's pin of 2026-10-28
   // (evening) after the real-resume benchmark, where it read titles at 98% and every date in about 5 s for $0.0013 a resume.
   'work-parse': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_PARSE_MODEL', timeoutMs: 60_000 },
+  // A Vault document's text read into the generic document schema (`POST /v1/work/document`, workspace decision 0081, item 3):
+  // the parse's model and settings on nine short fields, so a shorter wait (`work/document.ts`, a 40 s budget with its retry).
+  'work-document': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_DOCUMENT_MODEL', timeoutMs: 30_000 },
   // A hirer's request read into a job profile in the work profile's shape (the founder's flow of 2026-10-30,
   // `services/work/jobProfile.ts`): a reasoning model, since the reading translates regional titles with the
   // request as context. DeepSeek V4.1 Flash read all twelve hard regional titles of the locale fixture right when
@@ -202,8 +207,11 @@ export interface InferenceEnv extends Partial<Record<InferenceModelVar, string>>
   AI_GATEWAY_DOCUMENTS_ID?: string;
 }
 
-/** Ops that carry a whole document the user opted to send, which DLP must not read. */
-export const DOCUMENT_OPS: ReadonlySet<InferenceOp> = new Set<InferenceOp>(['work-parse']);
+/**
+ * Ops that carry a whole document the user opted to send, which DLP must not read: the CV's parse, and a Vault
+ * document's reading, whose own number the strict gateway's DLP would block (workspace decision 0081, item 3).
+ */
+export const DOCUMENT_OPS: ReadonlySet<InferenceOp> = new Set<InferenceOp>(['work-parse', 'work-document']);
 
 /** The gateway an op's call goes through, or null for a direct call. */
 export function gatewayFor(env: Pick<InferenceEnv, 'AI_GATEWAY_ID' | 'AI_GATEWAY_DOCUMENTS_ID'>, op: InferenceOp): string | null {

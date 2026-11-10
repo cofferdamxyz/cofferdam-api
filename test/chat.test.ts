@@ -274,12 +274,12 @@ describe('runChat', () => {
     expect(calls[0]!.signal?.aborted).toBe(true);
   });
 
-  it('says a planned screen is coming, never ready, and still opens it', async () => {
+  it('opens Add to Vault, built 2026-11-10 (workspace decision 0081, step 3), as ready', async () => {
     const inference = fakeInference({ 'chat-router': clef('add_document', 0.95), 'chat-answer': () => sse(['x']) });
     const events = await collect(runChat({ inference, messages: user('how do I add my welding certificate?') }));
     expect(events).toContainEqual({ type: 'action', request: { id: 'add_document' } });
-    expect(texts(events)).toMatch(/isn't available yet; it's coming/);
-    expect(texts(events)).not.toMatch(/is ready/);
+    expect(texts(events)).toMatch(/is ready/);
+    expect(texts(events)).not.toMatch(/coming/);
   });
 
   it('opens the CV import, built in the chat since 2026-10-31, as ready', async () => {

@@ -91,6 +91,9 @@ describe('aiOptions', () => {
     expect(gatewayFor({ AI_GATEWAY_ID: 'cofferdam-strict' }, 'work-parse')).toBe('cofferdam-strict');
     expect(gatewayFor({}, 'work-parse')).toBeNull();
     expect(DOCUMENT_OPS.has('work-parse')).toBe(true);
+    // A Vault document's reading carries the document's own number, which the strict gateway's DLP would block.
+    expect(DOCUMENT_OPS.has('work-document')).toBe(true);
+    expect(gatewayFor(env, 'work-document')).toBe('cofferdam-documents');
     expect(DOCUMENT_OPS.has('work-extract')).toBe(false);
     for (const op of Object.keys(OPS) as InferenceOp[]) {
       const options = aiOptions(env, op, signal) as { gateway: { id: string; skipCache: boolean; collectLog: boolean; metadata: Record<string, unknown> } };

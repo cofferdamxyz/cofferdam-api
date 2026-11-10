@@ -91,6 +91,7 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/aa/user-operation' },
       { method: 'POST', path: '/v1/ceremony/first-high' },
       { method: 'POST', path: '/v1/work/parse' },
+      { method: 'POST', path: '/v1/work/document' },
       { method: 'POST', path: '/v1/work/classify' },
       { method: 'POST', path: '/v1/work/extract' },
       { method: 'PUT', path: '/v1/work/listing' },
