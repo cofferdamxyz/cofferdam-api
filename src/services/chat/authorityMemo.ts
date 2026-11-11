@@ -13,9 +13,11 @@
  * toggle) and `/v1/jobs` (the hirer query), which share it through
  * `routes/workGate.ts` (2026-10-24): they spend Workers AI and read or write
  * only the Work plane's own D1 and Vectorize, never funds, so a revoked device
- * can also change its listings for at most five minutes. Nothing else uses
- * it: the bind-bundle pickup, `verify-attestation` and anything that moves
- * funds keep reading Base live.
+ * can also change its listings for at most five minutes. The Vault mirror
+ * (`routes/vault.ts`, workspace decision 0081) uses it too: it moves sealed
+ * bytes the plane cannot read, so a revoked device gains at most five minutes
+ * over objects it already holds. Nothing else uses it: the bind-bundle pickup,
+ * `verify-attestation` and anything that moves funds keep reading Base live.
  *
  * Two levels: this isolate's map, then the data centre's Cache API (shared by
  * the isolates there; a no-op on workers.dev). Keys are hashed, and the cache

@@ -312,8 +312,20 @@ export interface Env {
   /** `/v1/ceremony/*`: a generous per-IP ceiling before the gate. */
   CEREMONY_IP_RL?: RateLimit;
 
-  // ── R2 buckets (provisioned in later sessions) ──────────────────
-  // VAULT: R2Bucket;
+  /** `/v1/vault/*` (workspace decision 0081): the global brake, `vault:global`, first on every route. */
+  VAULT_GLOBAL_RL?: RateLimit;
+  /** `/v1/vault/*`: per account (`vault:<account>`), counted only once the session and the on-chain High check pass. */
+  VAULT_RL?: RateLimit;
+  /** `/v1/vault/*`: a generous per-IP ceiling (`vault-ip:<ip>`) before the gate. */
+  VAULT_IP_RL?: RateLimit;
+
+  // ── R2 buckets ──────────────────────────────────────────────────
+  /**
+   * `cofferdam-vault` (workspace decision 0081): each account's sealed Vault
+   * blobs, database snapshot and key wrap under the lower-cased attested
+   * account address. Unbound, `/v1/vault/*` answers `503 vault_unprovisioned`.
+   */
+  VAULT?: R2Bucket;
   // SRS:   R2Bucket;
 
   // ── D1 databases (provisioned in later sessions) ────────────────

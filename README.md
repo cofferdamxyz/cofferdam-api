@@ -40,6 +40,8 @@ The `xmtp/` Workers share this repository's dependencies and tests but deploy se
 | `POST /v1/attester/test-sign` | rail smoke test (served only under `ENVIRONMENT=development`, so `wrangler dev`; 404 on the deployment): synthetic signals with Celo's current roots, signed by the attester, checked against `SelfAttesterRegistry` on Base |
 | `GET /v1/activity?address=`, `GET /v1/activity/check` | USDC transfers per chain (the webhook-fed record and 200-block RPC scans on Sepolia, SQD Portal on mainnet) and a cheap "anything new" check |
 | `POST /v1/activity/webhooks/cdp` | CDP onchain webhook: verifies `X-Hook0-Signature`, records each MockUSDC transfer in the sender's and recipient's `ActivityDO` |
+| `PUT`, `GET`, `HEAD`, `DELETE /v1/vault/:account/objects/:kind/:id`, `POST /v1/vault/:account/list` | the Vault mirror (decision 0081): the account's sealed blobs and one snapshot object (the sealed database with its key's wrap) in R2 under its lower-cased address, gated by a `csa1:` session and an active High authority on Base; `503 vault_unprovisioned` until the `cofferdam-vault` bucket is bound |
+| `DELETE /v1/vault/:account` | wipes the account's whole Vault prefix; needs a slow (fresh passkey) session |
 | `GET /v1/enterprise/resolve?domain=`, `GET /v1/enterprise/companies/:companyAnchor` | domain → `companyAnchor` with the DNS challenge; on-chain registration status |
 | `POST /v1/enterprise/links`, `GET /v1/enterprise/links`, `GET /v1/enterprise/links/check`, `POST /v1/enterprise/links/:companyAnchor/:consumerId/revoke` | company ↔ consumer-app link grants; `503 link_store_unprovisioned` until the `LINKS` KV namespace exists |
 

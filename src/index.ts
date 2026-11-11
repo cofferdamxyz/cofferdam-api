@@ -37,6 +37,7 @@ import { sessionRoutes } from './routes/session.js';
 import { jobsRoutes } from './routes/jobs.js';
 import { workRoutes } from './routes/work.js';
 import { workListingRoutes } from './routes/workListing.js';
+import { redactVaultPath, vaultRoutes } from './routes/vault.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -59,8 +60,9 @@ app.use('*', cors({
   maxAge: 86400,
 }));
 
-// Request log to Workers Logs. Cheap; very useful in dev.
-app.use('*', logger());
+// Request log to Workers Logs. Cheap; very useful in dev. A Vault path names
+// an account and an object, so its line drops both (routes/vault.ts).
+app.use('*', logger((line) => console.log(redactVaultPath(line))));
 
 // ── Root info ──────────────────────────────────────────────────────
 app.get('/', (c) => {
@@ -98,6 +100,12 @@ app.get('/', (c) => {
       { method: 'DELETE', path: '/v1/work/listing' },
       { method: 'POST', path: '/v1/jobs/intent' },
       { method: 'GET', path: '/v1/privacy/ai' },
+      { method: 'PUT', path: '/v1/vault/:account/objects/:kind/:id' },
+      { method: 'GET', path: '/v1/vault/:account/objects/:kind/:id' },
+      { method: 'HEAD', path: '/v1/vault/:account/objects/:kind/:id' },
+      { method: 'DELETE', path: '/v1/vault/:account/objects/:kind/:id' },
+      { method: 'POST', path: '/v1/vault/:account/list' },
+      { method: 'DELETE', path: '/v1/vault/:account' },
     ],
     docs: 'https://github.com/cofferdamxyz/cofferdam-api/blob/main/README.md',
   });
@@ -119,6 +127,7 @@ app.route('/v1/locale', localeRoutes);
 app.route('/v1/work', workRoutes);
 app.route('/v1/work', workListingRoutes);
 app.route('/v1/jobs', jobsRoutes);
+app.route('/v1/vault', vaultRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ ok: false, error: 'not_found' }, 404));

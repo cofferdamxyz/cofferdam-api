@@ -184,7 +184,17 @@
     // work-off:global and work-off:<account>, so no other traffic blocks it.
     { "name": "WORK_RL", "namespace_id": "1110", "simple": { "limit": 30, "period": 60 } },
     // /v1/work and /v1/jobs before the gate (work-ip:, jobs-ip: and work-off-ip: keys): as generous as chat's.
-    { "name": "WORK_IP_RL", "namespace_id": "1111", "simple": { "limit": 120, "period": 60 } }
+    { "name": "WORK_IP_RL", "namespace_id": "1111", "simple": { "limit": 120, "period": 60 } },
+    // /v1/vault (workspace decision 0081, the mirror): a save puts a blob and the
+    // snapshot object, so 60 a minute per account (vault:<account>), counted
+    // after the gate; the global brake has its own binding, since every key on
+    // one binding shares its ceiling and the per-account one is too low for
+    // every phone together.
+    { "name": "VAULT_RL", "namespace_id": "1112", "simple": { "limit": 60, "period": 60 } },
+    // /v1/vault before the gate (vault-ip:<ip>): as generous as chat's.
+    { "name": "VAULT_IP_RL", "namespace_id": "1113", "simple": { "limit": 120, "period": 60 } },
+    // /v1/vault's global brake (vault:global), first on every route.
+    { "name": "VAULT_GLOBAL_RL", "namespace_id": "1114", "simple": { "limit": 600, "period": 60 } }
   ],
 
   // ─────────────────────────────────────────────────────────────────
@@ -215,6 +225,20 @@
   "vectorize": [
     { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v2", "remote": true },
     { "binding": "JOBS_LISTINGS", "index_name": "jobs-listings-v2", "remote": true }
+  ],
+
+  // ─────────────────────────────────────────────────────────────────
+  // R2 — the Vault mirror (workspace decision 0081; runbook
+  // docs/runbooks/vault-build.md, step 4): sealed blobs and one snapshot
+  // object (the sealed database with its key wrap) under each account's
+  // lower-cased address. The bucket exists since 2026-11-10 (the founder,
+  // docs/runbooks/cloudflare-deploys.md, The Vault bucket). No "remote": true,
+  // unlike D1 and Vectorize: wrangler dev tolerates a missing token under
+  // development, so a local run must write miniflare's local bucket, never the
+  // live one.
+  // ─────────────────────────────────────────────────────────────────
+  "r2_buckets": [
+    { "binding": "VAULT", "bucket_name": "cofferdam-vault" }
   ]
 
   // Bindings below are intentionally COMMENTED until their resources
@@ -239,12 +263,9 @@
   //   { "binding": "AI_PINS",  "id": "<TBD-run-wrangler-kv-namespace-create-AI_PINS>" }
   //
   // ─────────────────────────────────────────────────────────────────
-  // R2 — encrypted blobs (vault docs, attachments, SRS)
+  // R2 — more buckets (the Vault's is bound above)
   // ─────────────────────────────────────────────────────────────────
-  // "r2_buckets": [
-  //   { "binding": "VAULT", "bucket_name": "cofferdam-vault" },
   //   { "binding": "SRS",   "bucket_name": "cofferdam-srs" }
-  // ],
   //
   // ─────────────────────────────────────────────────────────────────
   // D1 — non-sensitive metadata + audit logs
