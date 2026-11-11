@@ -16,9 +16,15 @@
   "compatibility_date": "2026-05-30",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Observability — enable Workers Logs (free tier, 7-day retention).
+  // Observability — Workers Logs on (free tier, 7-day retention) without the
+  // automatic invocation record: that record carries each request's URL, and a
+  // Vault URL names an account beside an object id (workspace decision 0081,
+  // Rulings 12; the founder, 2026-11-11: "Turn it off"). What the plane writes
+  // still reaches Workers Logs: the request line (src/index.ts, Vault paths
+  // redacted), the JSON lines, errors and uncaught exceptions.
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "logs": { "invocation_logs": false }
   },
 
   // The workers.dev hostname serves end-to-end testing from the RN app.
