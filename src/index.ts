@@ -19,6 +19,7 @@ export { BindBundleDO } from './services/bindBundleDO.js';
 export { ActivityDO } from './services/activityDO.js';
 export { ChatUsageDO } from './services/chatUsageDO.js';
 export { PopReplayDO } from './services/popReplayDO.js';
+export { VaultHandoffDO } from './services/vaultHandoffDO.js';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { Env } from './env.js';
@@ -106,6 +107,8 @@ app.get('/', (c) => {
       { method: 'DELETE', path: '/v1/vault/:account/objects/:kind/:id' },
       { method: 'POST', path: '/v1/vault/:account/list' },
       { method: 'DELETE', path: '/v1/vault/:account' },
+      { method: 'PUT', path: '/v1/vault/:account/handover/:keyHash' },
+      { method: 'GET', path: '/v1/vault/:account/handover/:keyHash' },
     ],
     docs: 'https://github.com/cofferdamxyz/cofferdam-api/blob/main/README.md',
   });

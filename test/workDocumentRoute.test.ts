@@ -439,7 +439,7 @@ const ALLOWED = new Set(['WORK_RL.limit', 'WORK_IP_RL.limit', 'AI_PINS.get', 'AI
 const allowedName = (c: BindingCall) => `${c.binding.replace(/^CHAT_USAGE_DO\/.*/, 'CHAT_USAGE_DO/*')}.${c.method}`;
 
 /** Every binding the plane declares that holds data or reaches another service (`workParseRoute.test.ts`'s list, the Vault's bucket and limits included). */
-const STORE_BINDINGS = ['WORK_DB', 'TOKEN_REGISTRY', 'JOBS_LISTINGS', 'LINKS', 'BIND_BUNDLES_DO', 'ACTIVITY_DO', 'POP_REPLAY_DO', 'ATTESTER', 'CHAT_RL', 'CHAT_IP_RL', 'VAULT', 'VAULT_GLOBAL_RL', 'VAULT_RL', 'VAULT_IP_RL'];
+const STORE_BINDINGS = ['WORK_DB', 'TOKEN_REGISTRY', 'JOBS_LISTINGS', 'LINKS', 'BIND_BUNDLES_DO', 'ACTIVITY_DO', 'POP_REPLAY_DO', 'ATTESTER', 'CHAT_RL', 'CHAT_IP_RL', 'VAULT', 'VAULT_GLOBAL_RL', 'VAULT_RL', 'VAULT_IP_RL', 'VAULT_HANDOFF_DO'];
 
 const CONSOLE_METHODS = ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const;
 

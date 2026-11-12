@@ -14,6 +14,8 @@
  *   DELETE /v1/vault/:account/objects/:kind/:id   fast
  *   POST   /v1/vault/:account/list                fast; { cursor? }
  *   DELETE /v1/vault/:account                     slow; wipes the whole prefix
+ *   PUT    /v1/vault/:account/handover/:keyHash   slow; sealed blob ≤ 4 KiB, content-length required, once per account
+ *   GET    /v1/vault/:account/handover/:keyHash   fast; the blob once, 404 handover_pending, 410 handover_taken
  *
  *   Authorization: DPoP csa1:…  + DPoP: <proof>   (or Bearer csa1:… v1 while CSA1_V1_ACCEPTED allows)
  *
@@ -36,6 +38,14 @@
  * path so the proof's `htu` binds it. No log line carries a key beside an
  * account: the store's failures log the operation and the error's name only,
  * and the request logger sees `redactVaultPath`'s path.
+ *
+ * The handover routes are the device-link ceremony's relay (step 5): the old
+ * phone puts the two Vault roots sealed to the new phone's X25519 key, the
+ * new phone takes them once. They pass the same gate, but sit on
+ * `VAULT_HANDOFF_DO`, not on the bucket, so each route checks its own store.
+ * The `keyHash` (the base64url SHA-256 of the new phone's public key) names
+ * the object; it never authorizes the take, which is pinned to the attested
+ * account's own slot, and it never reaches a log.
  */
 
 import { Hono, type Context } from 'hono';
@@ -49,6 +59,7 @@ import { envReplayStore, type ReplayStore } from '../services/popReplayStore.js'
 import type { PasskeySession, SessionTier } from '../services/sessionAttestation.js';
 import { checkSession, isRefusal } from '../services/sessionGate.js';
 import { envVaultStore, isChecksumMismatch, type VaultObjectBody, type VaultStore } from '../services/vault/store.js';
+import { envHandoffStore, type HandoffStore } from '../services/vaultHandoffStore.js';
 
 /** The largest object a put takes. */
 export const VAULT_MAX_OBJECT_BYTES = 64 * 1024 * 1024;
@@ -58,6 +69,12 @@ export type VaultKind = (typeof VAULT_KINDS)[number];
 /** What a key's `<id>` may be: no dot, no slash, so the plane alone appends `.bin`. */
 export const VAULT_ID = /^[A-Za-z0-9_-]{1,96}$/;
 const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
+/** The largest handover blob a put takes; the app's is 125 bytes. */
+export const VAULT_HANDOVER_MAX_BYTES = 4 * 1024;
+/** How long a handover waits for its take: the new phone's poll. */
+export const VAULT_HANDOVER_TTL_MS = 10 * 60 * 1000;
+/** A `keyHash`: the base64url of a SHA-256, 43 characters without padding. */
+export const HANDOVER_KEY_HASH = /^[A-Za-z0-9_-]{43}$/;
 const MAX_CURSOR = 1_024;
 
 const GLOBAL_KEY = 'vault:global';
@@ -78,6 +95,8 @@ export interface VaultRouteDeps {
   store(env: Env): VaultStore | null;
   /** The v2 proof replay cache, or null when `POP_REPLAY_DO` is not bound (default: from the env). */
   replayStore?(env: Env): ReplayStore | null;
+  /** The handover relay, or null when `VAULT_HANDOFF_DO` is not bound (default: from the env). */
+  handoffStore?(env: Env): HandoffStore | null;
 }
 
 export const defaultVaultRouteDeps: VaultRouteDeps = {
@@ -90,7 +109,8 @@ export const defaultVaultRouteDeps: VaultRouteDeps = {
 
 /**
  * A request line with the Vault's account and object id taken out, for the
- * request logger: `/v1/vault/:account/objects/<kind>/:id`, `/v1/vault/:account/list`.
+ * request logger: `/v1/vault/:account/objects/<kind>/:id`, `/v1/vault/:account/list`,
+ * `/v1/vault/:account/handover/:keyHash`.
  * Each word is matched as decoded, since the router matches the decoded path: a
  * percent-encoded `/v1/%76ault/…` reaches the routes and is redacted the same.
  */
@@ -115,6 +135,8 @@ function redactPath(path: string): string {
       out.push('objects', (VAULT_KINDS as readonly string[]).includes(parts[2] ?? '') ? parts[2]! : ':kind', ':id');
     } else if (parts[1] === 'list') {
       out.push('list');
+    } else if (parts[1] === 'handover') {
+      out.push('handover', ':keyHash');
     } else if (parts.length > 1) {
       out.push('…');
     }
@@ -136,7 +158,6 @@ type VaultContext = Context<{ Bindings: Env }>;
 
 /** What the gate hands a route that may go on. */
 interface Admitted {
-  store: VaultStore;
   /** The lower-cased attested account address; every key starts with it and a slash. */
   prefix: string;
 }
@@ -173,12 +194,10 @@ export function createVaultRoutes(deps: VaultRouteDeps = defaultVaultRouteDeps) 
 
   /**
    * The gate every Vault route shares, in its order. Answers the refusal, or
-   * the store and the attested prefix.
+   * the attested prefix. The caller checks its own store first: the bucket for
+   * the mirror, the relay for the handover.
    */
   async function admit(c: VaultContext, requiredTier: SessionTier): Promise<Admitted | Response> {
-    const store = deps.store(c.env);
-    if (!store) return c.json({ ok: false, error: 'vault_unprovisioned' }, 503);
-
     const raw = c.req.param('account') ?? '';
     if (!isAddress(raw)) {
       return c.json({ ok: false, error: 'bad_account', hint: 'expected 0x-prefixed address' }, 400);
@@ -236,7 +255,12 @@ export function createVaultRoutes(deps: VaultRouteDeps = defaultVaultRouteDeps) 
 
     // Counted only now: account addresses are public on Base.
     if (await overLimit(c.env.VAULT_RL, `vault:${prefix}`)) return rateLimited(c);
-    return { store, prefix };
+    return { prefix };
+  }
+
+  /** The bucket behind the mirror routes, or the 503 when `VAULT` is not bound. */
+  function vaultStore(c: VaultContext): VaultStore | Response {
+    return deps.store(c.env) ?? c.json({ ok: false, error: 'vault_unprovisioned' }, 503);
   }
 
   /** The object's `<kind>/<id>.bin` from the path, or the 400 to answer. */
@@ -256,9 +280,11 @@ export function createVaultRoutes(deps: VaultRouteDeps = defaultVaultRouteDeps) 
   async function objectGate(c: VaultContext): Promise<{ store: VaultStore; key: string } | Response> {
     const path = objectPath(c);
     if (typeof path !== 'string') return path;
+    const store = vaultStore(c);
+    if (store instanceof Response) return store;
     const admitted = await admit(c, 'fast');
     if (admitted instanceof Response) return admitted;
-    return { store: admitted.store, key: `${admitted.prefix}/${path}` };
+    return { store, key: `${admitted.prefix}/${path}` };
   }
 
   routes.put('/:account/objects/:kind/:id', async (c) => {
@@ -327,6 +353,8 @@ export function createVaultRoutes(deps: VaultRouteDeps = defaultVaultRouteDeps) 
   });
 
   routes.post('/:account/list', async (c) => {
+    const store = vaultStore(c);
+    if (store instanceof Response) return store;
     const admitted = await admit(c, 'fast');
     if (admitted instanceof Response) return admitted;
 
@@ -350,7 +378,7 @@ export function createVaultRoutes(deps: VaultRouteDeps = defaultVaultRouteDeps) 
     }
 
     try {
-      const page = await admitted.store.list({ prefix: `${admitted.prefix}/`, cursor });
+      const page = await store.list({ prefix: `${admitted.prefix}/`, cursor });
       return c.json({
         ok: true,
         objects: page.objects.map((o) => ({ key: o.key, size: o.size, uploaded: o.uploaded.toISOString() })),
@@ -364,15 +392,17 @@ export function createVaultRoutes(deps: VaultRouteDeps = defaultVaultRouteDeps) 
   // Deleting the account wipes the prefix (decision 0081): a slow route, one
   // fresh passkey confirmation.
   routes.delete('/:account', async (c) => {
+    const store = vaultStore(c);
+    if (store instanceof Response) return store;
     const admitted = await admit(c, 'slow');
     if (admitted instanceof Response) return admitted;
     let deleted = 0;
     try {
       let cursor: string | undefined;
       do {
-        const page = await admitted.store.list({ prefix: `${admitted.prefix}/`, cursor });
+        const page = await store.list({ prefix: `${admitted.prefix}/`, cursor });
         const keys = page.objects.map((o) => o.key);
-        await admitted.store.delete(keys);
+        await store.delete(keys);
         deleted += keys.length;
         cursor = page.cursor;
       } while (cursor);
@@ -380,6 +410,92 @@ export function createVaultRoutes(deps: VaultRouteDeps = defaultVaultRouteDeps) 
       return unavailable(c, 'wipe', err);
     }
     return c.json({ ok: true, deleted });
+  });
+
+  /**
+   * The handover's checks, then the gate: the key hash's format before any
+   * limiter is spent, then the relay's binding, then the shared gate. Answers
+   * the refusal, or the relay, the key hash and the attested prefix.
+   */
+  async function handoverGate(
+    c: VaultContext,
+    requiredTier: SessionTier,
+  ): Promise<{ store: HandoffStore; keyHash: string; prefix: string } | Response> {
+    const keyHash = c.req.param('keyHash') ?? '';
+    if (!HANDOVER_KEY_HASH.test(keyHash)) {
+      return c.json({ ok: false, error: 'bad_key_hash', hint: 'the base64url SHA-256 of the handover key, 43 characters' }, 400);
+    }
+    const store = (deps.handoffStore ?? envHandoffStore)(c.env);
+    if (!store) return c.json({ ok: false, error: 'handover_unprovisioned' }, 503);
+    const admitted = await admit(c, requiredTier);
+    if (admitted instanceof Response) return admitted;
+    return { store, keyHash, prefix: admitted.prefix };
+  }
+
+  // The old phone's put: a slow route, since it hands over the keys to every
+  // sealed object, so Base is read live and a revoked device cannot use a
+  // remembered check.
+  routes.put('/:account/handover/:keyHash', async (c) => {
+    const gate = await handoverGate(c, 'slow');
+    if (gate instanceof Response) return gate;
+
+    const length = c.req.header('content-length');
+    if (length === undefined || !/^\d+$/.test(length)) {
+      return c.json({ ok: false, error: 'length_required', hint: 'send the sealed blob with a content-length' }, 411);
+    }
+    if (Number(length) > VAULT_HANDOVER_MAX_BYTES) {
+      return c.json({ ok: false, error: 'object_too_large', maxBytes: VAULT_HANDOVER_MAX_BYTES }, 413);
+    }
+    const sha256 = c.req.header('x-cofferdam-sha256');
+    if (sha256 !== undefined && !SHA256_HEX.test(sha256)) {
+      return c.json({ ok: false, error: 'bad_checksum', hint: 'x-cofferdam-sha256 is the bytes\' SHA-256 in hex' }, 400);
+    }
+
+    // Small enough to read whole once the header passed the cap.
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength !== Number(length)) {
+      return c.json({ ok: false, error: 'bad_length', hint: 'the body is not the content-length it announced' }, 400);
+    }
+    if (sha256 !== undefined) {
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      const hex = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+      if (hex !== sha256.toLowerCase()) {
+        return c.json({ ok: false, error: 'checksum_mismatch', hint: 'the bytes received do not match x-cofferdam-sha256' }, 400);
+      }
+    }
+
+    try {
+      const now = deps.now();
+      const answer = await gate.store.put(gate.keyHash, gate.prefix, bytes, now + VAULT_HANDOVER_TTL_MS, now);
+      // A second put by the same account: the app reads it as already sent.
+      if (answer === 'exists') return c.json({ ok: false, error: 'handover_exists' }, 409);
+      return c.json({ ok: true });
+    } catch (err) {
+      return unavailable(c, 'handover_put', err);
+    }
+  });
+
+  // The new phone's take, polled on its fast session. Hono serves HEAD through
+  // this route, and a HEAD must not spend the one take, so it is refused first.
+  routes.get('/:account/handover/:keyHash', async (c) => {
+    if (c.req.method === 'HEAD') return c.json({ ok: false, error: 'method_not_allowed' }, 405);
+    const gate = await handoverGate(c, 'fast');
+    if (gate instanceof Response) return gate;
+    try {
+      const answer = await gate.store.take(gate.keyHash, gate.prefix, deps.now());
+      if (answer.status === 'pending') return c.json({ ok: false, error: 'handover_pending' }, 404);
+      if (answer.status === 'taken') return c.json({ ok: false, error: 'handover_taken' }, 410);
+      return new Response(answer.blob, {
+        status: 200,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String(answer.blob.byteLength),
+          'cache-control': 'no-store',
+        },
+      });
+    } catch (err) {
+      return unavailable(c, 'handover_take', err);
+    }
   });
 
   return routes;

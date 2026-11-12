@@ -692,7 +692,7 @@ describe('the logs', () => {
     expect(lines).toContain('<-- PUT /v1/vault/:account/objects/documents/:id');
   });
 
-  it('lists the six Vault routes in the GET / inventory', async () => {
+  it('lists the eight Vault routes in the GET / inventory', async () => {
     const res = await app.fetch(new Request('https://plane.test/'), { ENVIRONMENT: 'staging' }, {});
     const body = (await res.json()) as { routes: { method: string; path: string }[] };
     const vault = body.routes.filter((r) => r.path.startsWith('/v1/vault/')).map((r) => `${r.method} ${r.path}`);
@@ -703,6 +703,8 @@ describe('the logs', () => {
       'DELETE /v1/vault/:account/objects/:kind/:id',
       'POST /v1/vault/:account/list',
       'DELETE /v1/vault/:account',
+      'PUT /v1/vault/:account/handover/:keyHash',
+      'GET /v1/vault/:account/handover/:keyHash',
     ]);
   });
 });

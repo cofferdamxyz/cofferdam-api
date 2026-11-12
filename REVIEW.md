@@ -10,6 +10,7 @@ Read with `AGENTS.md` and the workspace `docs/architecture/plane.md`. Here failu
 - A wallet or treasury address, or a nullifier, handed to a consumer app or stored where a consumer surface can read it (wallet isolation, decision 0025).
 - Chat text, a prompt or a model answer reaching a log; `env.AI` used outside `src/services/inference`; a hosted AI call that does not record to the meter (`plane:global` included) or runs before the caps are checked.
 - A refused or failed upstream call read as an empty result (the activity scan's rule).
+- The Vault (`routes/vault.ts`, `services/vault/**`, `services/vaultHandoffDO.ts`, `services/vaultHandoffStore.ts`; decision 0081): a key, a plaintext or a wrap the plane could open held anywhere; a prefix taken from the path outside `ENVIRONMENT === 'development'` with no token; a Vault or handover path logged with its account, object id or key hash; the wipe answered from the five-minute authority memory instead of a live read; a handover blob taken twice, by another account, or kept past its alarm.
 - `wrangler.jsonc`: a hardcoded `account_id`, a secret value, a binding or Durable Object migration without its `src/env.ts` type, a migration that renames or deletes a class. Migrations cannot be rolled back: high risk.
 - `src/chain/deployments.ts` drifting from `base-contracts/deployments/baseSepolia.json`.
 - `facts.generated.ts` edited by hand or out of date with the workspace `skills/`.

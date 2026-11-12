@@ -15,6 +15,7 @@ import type { ActivityDO } from './services/activityDO.js';
 import type { BindBundleDO } from './services/bindBundleDO.js';
 import type { ChatUsageDO } from './services/chatUsageDO.js';
 import type { PopReplayDO } from './services/popReplayDO.js';
+import type { VaultHandoffDO } from './services/vaultHandoffDO.js';
 
 export interface Env {
   // ── vars ────────────────────────────────────────────────────────
@@ -288,6 +289,13 @@ export interface Env {
    * answers 503 `replay_store_unavailable`, never an unchecked proof.
    */
   POP_REPLAY_DO?: DurableObjectNamespace<PopReplayDO>;
+
+  /**
+   * The device-link ceremony's one-shot relay, one object per `keyHash` and account (`<keyHash>:<account>`)
+   * (services/vaultHandoffDO.ts, workspace decision 0081, step 5). Unbound:
+   * the handover routes answer 503 `handover_unprovisioned`.
+   */
+  VAULT_HANDOFF_DO?: DurableObjectNamespace<VaultHandoffDO>;
 
   /**
    * `"false"` refuses `csa1:` v1 bearer tokens on every gated route (workspace

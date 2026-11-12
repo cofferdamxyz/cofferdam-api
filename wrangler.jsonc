@@ -139,12 +139,19 @@
   // POP_REPLAY_DO (workspace decision 0055): one SQLite-backed object per
   // csa1 v2 device key, remembering each proof jti for two minutes and each
   // slow token until it expires, so neither works twice.
+  //
+  // VAULT_HANDOFF_DO (workspace decision 0081, step 5): one SQLite-backed
+  // object per keyHash and account, the device-link ceremony's relay. It holds the old
+  // phone's sealed Vault roots for ten minutes, one slot per account, and
+  // hands them to the new phone once. Its migration, v5-vault-handoff, is
+  // the founder's to deploy.
   "durable_objects": {
     "bindings": [
       { "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" },
       { "name": "ACTIVITY_DO", "class_name": "ActivityDO" },
       { "name": "CHAT_USAGE_DO", "class_name": "ChatUsageDO" },
-      { "name": "POP_REPLAY_DO", "class_name": "PopReplayDO" }
+      { "name": "POP_REPLAY_DO", "class_name": "PopReplayDO" },
+      { "name": "VAULT_HANDOFF_DO", "class_name": "VaultHandoffDO" }
     ]
   },
   // Workers AI, reached only through src/services/inference (decision 0037).
@@ -158,7 +165,8 @@
     { "tag": "v1-bind-bundles", "new_sqlite_classes": ["BindBundleDO"] },
     { "tag": "v2-activity", "new_sqlite_classes": ["ActivityDO"] },
     { "tag": "v3-chat-usage", "new_sqlite_classes": ["ChatUsageDO"] },
-    { "tag": "v4-pop-replay", "new_sqlite_classes": ["PopReplayDO"] }
+    { "tag": "v4-pop-replay", "new_sqlite_classes": ["PopReplayDO"] },
+    { "tag": "v5-vault-handoff", "new_sqlite_classes": ["VaultHandoffDO"] }
   ],
 
   // ─────────────────────────────────────────────────────────────────

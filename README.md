@@ -10,11 +10,11 @@ src/
   env.ts             typed bindings (keep in sync with wrangler.jsonc)
   routes/            one sub-router per surface (self, aa, ceremony, session, attester,
                      enterprise, activity, sepolia, health)
-  services/          the logic behind them: selfBind, bindBundleDO, userOp, ceremony,
+  services/          the logic behind them: selfBind, bindBundleDO, vaultHandoffDO, userOp, ceremony,
                      sessionAttestation, activity, company, companyLinks, attester (RPC types)
   chain/             viem client, Celo reads, deployments.ts (SEPOLIA_DEPLOYMENTS)
 test/                Vitest suites and fixtures (test/xmtp/ for the operator Workers)
-wrangler.jsonc       vars, zone route, service binding, Durable Object, rate limits
+wrangler.jsonc       vars, zone route, service binding, Durable Objects, rate limits
 xmtp/                the XMTP operator, three Workers deployed on their own (not the plane):
   backend/           cofferdam-xmtp-backend: the XMTP 8 backend as a Container (Dockerfile,
                      backend.toml), a keep-alive cron, the inbound-TCP ingress slot, fly.toml fallback
@@ -42,6 +42,8 @@ The `xmtp/` Workers share this repository's dependencies and tests but deploy se
 | `POST /v1/activity/webhooks/cdp` | CDP onchain webhook: verifies `X-Hook0-Signature`, records each MockUSDC transfer in the sender's and recipient's `ActivityDO` |
 | `PUT`, `GET`, `HEAD`, `DELETE /v1/vault/:account/objects/:kind/:id`, `POST /v1/vault/:account/list` | the Vault mirror (decision 0081): the account's sealed blobs and one snapshot object (the sealed database with its key's wrap) in R2 under its lower-cased address, gated by a `csa1:` session and an active High authority on Base; `503 vault_unprovisioned` until the `cofferdam-vault` bucket is bound |
 | `DELETE /v1/vault/:account` | wipes the account's whole Vault prefix; needs a slow (fresh passkey) session |
+| `PUT /v1/vault/:account/handover/:keyHash` | the device-link ceremony's relay (decision 0081, step 5): the old phone puts the two Vault roots sealed to the new phone's handover key, at most 4 KiB with `content-length`, on a slow session; held ten minutes in a `VaultHandoffDO` named by the `keyHash` and the account, one slot per account (`409 handover_exists` on a second put); `503 handover_unprovisioned` until `VAULT_HANDOFF_DO` is bound |
+| `GET /v1/vault/:account/handover/:keyHash` | the new phone takes the blob once on its fast session: `404 handover_pending` before the put or for another account, `410 handover_taken` after; `HEAD` answers `405` so it never spends the take |
 | `GET /v1/enterprise/resolve?domain=`, `GET /v1/enterprise/companies/:companyAnchor` | domain → `companyAnchor` with the DNS challenge; on-chain registration status |
 | `POST /v1/enterprise/links`, `GET /v1/enterprise/links`, `GET /v1/enterprise/links/check`, `POST /v1/enterprise/links/:companyAnchor/:consumerId/revoke` | company ↔ consumer-app link grants; `503 link_store_unprovisioned` until the `LINKS` KV namespace exists |
 

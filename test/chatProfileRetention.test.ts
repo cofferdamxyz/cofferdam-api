@@ -86,7 +86,7 @@ function answerStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-const STORE_BINDINGS = ['WORK_DB', 'TOKEN_REGISTRY', 'JOBS_LISTINGS', 'LINKS', 'BIND_BUNDLES_DO', 'ACTIVITY_DO', 'POP_REPLAY_DO', 'ATTESTER', 'WORK_RL', 'WORK_IP_RL', 'VAULT', 'VAULT_GLOBAL_RL', 'VAULT_RL', 'VAULT_IP_RL'];
+const STORE_BINDINGS = ['WORK_DB', 'TOKEN_REGISTRY', 'JOBS_LISTINGS', 'LINKS', 'BIND_BUNDLES_DO', 'ACTIVITY_DO', 'POP_REPLAY_DO', 'ATTESTER', 'WORK_RL', 'WORK_IP_RL', 'VAULT', 'VAULT_GLOBAL_RL', 'VAULT_RL', 'VAULT_IP_RL', 'VAULT_HANDOFF_DO'];
 const ALLOWED = new Set(['CHAT_RL.limit', 'CHAT_IP_RL.limit', 'AI_PINS.get', 'AI.run', 'CHAT_USAGE_DO.getByName', 'CHAT_USAGE_DO/*.read', 'CHAT_USAGE_DO/*.record']);
 const allowedName = (c: BindingCall) => `${c.binding.replace(/^CHAT_USAGE_DO\/.*/, 'CHAT_USAGE_DO/*')}.${c.method}`;
 const CONSOLE_METHODS = ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const;
