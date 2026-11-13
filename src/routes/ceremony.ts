@@ -22,8 +22,13 @@
 import { Hono } from 'hono';
 import { getAddress, type Address, type Hex } from 'viem';
 
-import { getBaseSepoliaClient } from '../chain/client.js';
-import { BASE_SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENTS } from '../chain/deployments.js';
+import { chainContext, type ChainContext } from '../chain/chains.js';
+import {
+  BASE_SEPOLIA_CHAIN_ID,
+  SEPOLIA_DEPLOYMENTS,
+  type ChainDeployments,
+  type PlaneChainId,
+} from '../chain/deployments.js';
 import type { Env } from '../env.js';
 import {
   AUTHORITY_MODULE_ABI,
@@ -51,7 +56,14 @@ export interface CeremonyRouteDeps {
    * Run the gate and the co-sign. `admit` must be awaited once the gate has
    * passed and before the attester signs; it throws `rate_limited` to refuse.
    */
-  issue: (env: Env, req: FirstHighCeremonyRequest, admit: () => Promise<void>) => Promise<FirstHighAttestation>;
+  issue: (
+    env: Env,
+    req: FirstHighCeremonyRequest,
+    admit: () => Promise<void>,
+    chain: ChainContext,
+  ) => Promise<FirstHighAttestation>;
+  /** The chain a request names, or null to refuse it (default: `chainContext` on the env). */
+  chain?: (env: Env, chainId: number) => ChainContext | null;
   /** Unix milliseconds for the session token's freshness; tests inject one. */
   now?: () => number;
   /** The v2 proof replay cache, or null when `POP_REPLAY_DO` is not bound (default: from the env). */
@@ -79,7 +91,7 @@ async function overLimit(rl: RateLimit | undefined, key: string): Promise<boolea
   }
 }
 
-/** The pinned Sepolia account layer every co-sign is checked against. */
+/** The pinned Sepolia account layer every Sepolia co-sign is checked against. */
 export const CEREMONY_PINS = {
   chainId: BigInt(BASE_SEPOLIA_CHAIN_ID),
   moduleRegistry: SEPOLIA_DEPLOYMENTS.CofferdamModuleRegistry.address,
@@ -87,15 +99,42 @@ export const CEREMONY_PINS = {
   highModule: SEPOLIA_DEPLOYMENTS.WebAuthnPasskeyAuthority.address,
 } as const;
 
-/** Chain-backed deps: every read goes through the public client, the signature through the binding. */
-export function baseCeremonyDeps(env: Env): CeremonyDeps {
-  const client = getBaseSepoliaClient(env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org');
+/**
+ * The account layer a chain's co-signs are pinned to, or null where the chain
+ * lacks one of its three contracts: Base mainnet, whose table is empty, and
+ * whose co-sign needs a mainnet attester of its own (decision 0080, P7).
+ */
+export function ceremonyPinsFor(chainId: PlaneChainId, deployments: ChainDeployments): CeremonyDeps['pins'] | null {
+  const moduleRegistry = deployments.CofferdamModuleRegistry?.address;
+  const ceremonyRegistry = deployments.CofferdamCeremonyAttesterRegistry?.address;
+  const highModule = deployments.WebAuthnPasskeyAuthority?.address;
+  if (!moduleRegistry || !ceremonyRegistry || !highModule) return null;
+  return { chainId: BigInt(chainId), moduleRegistry, ceremonyRegistry, highModule };
+}
+
+/**
+ * The body's optional `chainId` (Base Sepolia when absent, so every app that
+ * sends none keeps today's ceremony), or null when it is not a safe integer.
+ */
+export function ceremonyChainId(body: unknown): number | null {
+  const raw = body && typeof body === 'object' ? (body as Record<string, unknown>).chainId : undefined;
+  if (raw === undefined) return BASE_SEPOLIA_CHAIN_ID;
+  const n = typeof raw === 'string' && /^\d{1,16}$/.test(raw) ? Number(raw) : raw;
+  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+/** Chain-backed deps: every read goes through the chain's public client, the signature through the binding. */
+export function baseCeremonyDeps(env: Env, chain: ChainContext | null = chainContext(env, BASE_SEPOLIA_CHAIN_ID)): CeremonyDeps {
+  const pins = chain && ceremonyPinsFor(chain.chainId, chain.deployments);
+  if (!chain || !pins) throw new CeremonyRequestError('chain_unsupported', 'no ceremony on this chain', 400);
+  const client = chain.client;
+  const chainName = chain.chainId === BASE_SEPOLIA_CHAIN_ID ? 'Base Sepolia' : 'Base';
   return {
-    pins: CEREMONY_PINS,
+    pins,
     async readAccount(account: Address, signerId: bigint) {
       const code = await client.getCode({ address: account });
       if (!code || code === '0x') {
-        throw new CeremonyRequestError('account_not_deployed', `${account} has no code on Base Sepolia`, 404);
+        throw new CeremonyRequestError('account_not_deployed', `${account} has no code on ${chainName}`, 404);
       }
       const read = <T>(functionName: string, args: readonly unknown[] = []) =>
         client.readContract({ address: account, abi: CEREMONY_ACCOUNT_ABI, functionName, args } as never) as Promise<T>;
@@ -150,8 +189,20 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
       return c.json({ error: 'rate_limited', message: 'too many ceremony requests; retry shortly' }, 429);
     }
     let req: FirstHighRequest;
+    let chain: ChainContext;
     try {
-      req = parseFirstHighBody(await c.req.json().catch(() => null), CEREMONY_PINS.highModule);
+      const body: unknown = await c.req.json().catch(() => null);
+      // The chain the body names (Base Sepolia when it names none): a chain
+      // that is unknown, switched off or without its account layer is refused
+      // before any limiter or chain read (decision 0080).
+      const chainId = ceremonyChainId(body);
+      const found = chainId === null ? null : (deps.chain ?? chainContext)(c.env, chainId);
+      const pins = found && ceremonyPinsFor(found.chainId, found.deployments);
+      if (!found || !pins) {
+        return c.json({ error: 'chain_unsupported', message: 'no ceremony on this chain' }, 400);
+      }
+      chain = found;
+      req = parseFirstHighBody(body, pins.highModule);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: 'bad_request', message }, 400);
@@ -214,7 +265,7 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
           throw new CeremonyRequestError('rate_limited', 'too many ceremony requests for this account', 429);
         }
       };
-      const issued = await deps.issue(c.env, { ...req, session }, admit);
+      const issued = await deps.issue(c.env, { ...req, session }, admit, chain);
       return c.json({ ok: true, ...issued }, 200);
     } catch (err) {
       if (err instanceof CeremonyRequestError) {
@@ -231,5 +282,5 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
 }
 
 export const ceremonyRoutes = createCeremonyRoutes({
-  issue: (env, req, admit) => issueFirstHighAttestation(baseCeremonyDeps(env), req, admit),
+  issue: (env, req, admit, chain) => issueFirstHighAttestation(baseCeremonyDeps(env, chain), req, admit),
 });

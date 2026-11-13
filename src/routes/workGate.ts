@@ -69,7 +69,7 @@ export function envUsageStore(env: Env): ChatUsageStore | null {
 export const defaultWorkRouteDeps: WorkRouteDeps = {
   attestationMaxAgeMs: 60 * 60 * 1000,
   now: () => Date.now(),
-  authorityCheck: (env, att) => checkOnChainAuthority(att, env.BASE_SEPOLIA_RPC_URL),
+  authorityCheck: (env, att) => checkOnChainAuthority(att, env),
   authorityMemo: createAuthorityMemo(),
   inference: (env) => createInference(env),
   usageStore: envUsageStore,

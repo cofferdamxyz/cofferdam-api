@@ -293,6 +293,19 @@ describe('POST /v1/ceremony/first-high', () => {
     },
   });
 
+  it('refuses a chain with no ceremony before any limiter (decision 0080)', async () => {
+    let called = false;
+    const h = app(async () => ((called = true), {}));
+    for (const chainId of [8453, 1, 'base']) {
+      const rl = limiters();
+      const res = await post(h, { ...body, chainId }, 'csa1:x', { ...rl.env, BASE_MAINNET_ENABLED: 'true', BASE_RPC_URL: 'http://127.0.0.1:8546' } as Env, IP);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: 'chain_unsupported' });
+      expect(rl.keys).toEqual(['ceremony:global']);
+    }
+    expect(called).toBe(false);
+  });
+
   it('answers 200 with the attestation when the csa1 session is the Partner passkey', async () => {
     const seen: FirstHighCeremonyRequest[] = [];
     const h = app(async (_e, req) => {

@@ -56,6 +56,7 @@ import {
   parseSelfVerifyBody,
 } from '../services/selfBind.js';
 import { checkOnChainAuthority, type AuthorityCheck } from '../services/authorityCheck.js';
+import { identityLogLine } from '../services/identityLog.js';
 import { TIER } from '../services/ceremony.js';
 import { envReplayStore, type ReplayStore } from '../services/popReplayStore.js';
 import { type PasskeySession } from '../services/sessionAttestation.js';
@@ -287,15 +288,9 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     } catch (err) {
       const code = attesterErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
-      console.log(
-        JSON.stringify({
-          kind: 'self.verify.rejected',
-          account: req.account,
-          nullifier: req.nullifier,
-          code,
-          message,
-        }),
-      );
+      // The identity log policy (`services/identityLog.ts`): the account and
+      // the attester's code, never the nullifier or the attester's message.
+      console.log(identityLogLine({ kind: 'self.verify.rejected', account: req.account, code }));
       const retryable = code === 'CELO_RPC_UNAVAILABLE' || code === 'attester_rpc_failed';
       const operator = /_VAR$|^BAD_ATTESTER_KEY$|^BAD_CELO/.test(code);
       return c.json(
@@ -307,14 +302,14 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     const bundle = buildBindBundle(req, signed, deps.now(), rebind ? { epoch: (epoch as bigint).toString() } : undefined);
     await store.put(bundle);
 
+    // The identity log policy (`services/identityLog.ts`): never the
+    // nullifier, and never the account a rebind moves from, beside the account.
     console.log(
-      JSON.stringify({
+      identityLogLine({
         kind: 'self.verify',
         bundle: bundle.kind,
         epoch: bundle.epoch,
-        previousAccount: status.kind === 'nullifier_already_bound' ? status.boundAccount : undefined,
         account: bundle.account,
-        nullifier: bundle.nullifier,
         merkleRoot: signed.celo.merkleRoot,
         proofDate: signed.celo.proofDate,
         preflight: status.kind,
