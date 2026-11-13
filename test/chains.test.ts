@@ -20,6 +20,8 @@ import {
   passkeyModuleFor,
   type ChainDeployments,
 } from '../src/chain/deployments.js';
+import type { Env } from '../src/env.js';
+import { activityOptions } from '../src/routes/activity.js';
 import { CEREMONY_PINS, ceremonyChainId, ceremonyPinsFor } from '../src/routes/ceremony.js';
 import { checkOnChainAuthority } from '../src/services/authorityCheck.js';
 import { authorityKey } from '../src/services/chat/authorityMemo.js';
@@ -152,5 +154,15 @@ describe('ceremony pins per chain', () => {
     expect(ceremonyChainId({ chainId: '8453' })).toBe(8453);
     expect(ceremonyChainId({ chainId: -1 })).toBeNull();
     expect(ceremonyChainId({ chainId: 'base' })).toBeNull();
+  });
+});
+
+describe('activity per chain', () => {
+  it('reads Sepolia as before and mainnet through BASE_RPC_URL only while the switch is on', () => {
+    expect(activityOptions({ ...OFF, ACTIVITY_RPC_URL: 'https://cdp.example' } as unknown as Env, 84532).rpcUrl).toBe('https://cdp.example');
+    expect(activityOptions(OFF as unknown as Env, 84532).rpcUrl).toBe('https://sepolia.example');
+    expect(activityOptions(OFF as unknown as Env, 8453).rpcUrl).toBeUndefined();
+    expect(activityOptions(ON as unknown as Env, 8453).rpcUrl).toBe('http://127.0.0.1:8546');
+    expect(activityOptions(ON as unknown as Env, 1).rpcUrl).toBeUndefined();
   });
 });

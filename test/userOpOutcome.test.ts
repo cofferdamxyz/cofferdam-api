@@ -80,6 +80,18 @@ describe('opOutcome', () => {
     expect(opOutcome([event('UserOperationEvent', SENDER, 26n, { success: false })], ENTRY_POINT_V07, SENDER, 26n)).toEqual({ status: 'reverted', reason: 'reverted' });
   });
 
+  it('names a failed op whose gas outran its prefund', () => {
+    const tooLow = {
+      address: ENTRY_POINT_V07,
+      topics: encodeEventTopics({ abi: ENTRY_POINT_EVENTS_ABI, eventName: 'UserOperationPrefundTooLow', args: { userOpHash: HASH, sender: SENDER } }) as Hex[],
+      data: encodeAbiParameters([{ type: 'uint256' }], [26n]),
+    };
+    expect(opOutcome([tooLow, event('UserOperationEvent', SENDER, 26n, { success: false })], ENTRY_POINT_V07, SENDER, 26n)).toEqual({
+      status: 'reverted',
+      reason: 'prefund_too_low',
+    });
+  });
+
   it('is missing when the EntryPoint executed no such op', () => {
     expect(opOutcome([], ENTRY_POINT_V07, SENDER, 26n)).toEqual({ status: 'missing' });
     expect(opOutcome([{ address: ENTRY_POINT_V07, topics: [HASH], data: '0x' }], ENTRY_POINT_V07, SENDER, 26n)).toEqual({ status: 'missing' });
