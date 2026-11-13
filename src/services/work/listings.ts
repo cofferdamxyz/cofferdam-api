@@ -30,7 +30,7 @@ import { BLOCK_LANGS, scanText, type BlockLang } from './blocks.js';
 import { bloomOf } from './bloom.js';
 import type { ExecutorOptions } from './executor.js';
 import { withCalls, WorkCallsError, type WorkCall } from './fields.js';
-import { embedTexts, snap, type RegistryDeps, type SnapInput, type SnapResult, type TokenKind, type VectorIndex } from './registry.js';
+import { CLIENT_EMBED_MODELS, embedTexts, snap, type RegistryDeps, type SnapInput, type SnapResult, type TokenKind, type VectorIndex } from './registry.js';
 
 export const SCOPES = ['onsite', 'remote'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -488,15 +488,19 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
   for (const code of draft.languages) tokens.add(`lang:${code}`);
   const list = [...tokens].sort();
 
-  // The listing's vector: the client's, for its own listing text, when it sent one; else the plane embeds the claims
-  // and the registry's English names for them.
+  // The listing's vector: the client's, for its own listing text, when it sent one; else the plane embeds it. Under a
+  // client-only pin (v2) the plane's stand-in embeds the text the phone would, without the English names (workspace
+  // decision 0084), so a Cofferdam Cloud listing compares with a Local one like with like; a model the plane runs
+  // embeds the claims and the registry's English names for them, as under v1.
   let values: number[];
   let embedModel: string;
+  const pinned = await deps.inference.model('work-embed');
   if (client.listing) {
     values = client.listing;
-    embedModel = await deps.inference.model('work-embed');
+    embedModel = pinned;
   } else {
-    const embedding = await embedTexts(deps.inference, [listingText(draft, english)], { role: 'document', now, log: deps.log });
+    const text = CLIENT_EMBED_MODELS.has(pinned) ? listingText(draft, []) : listingText(draft, english);
+    const embedding = await embedTexts(deps.inference, [text], { role: 'document', now, log: deps.log });
     calls.push(embedding.call);
     if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
     values = embedding.vectors[0]!;

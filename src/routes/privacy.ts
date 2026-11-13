@@ -87,7 +87,7 @@ export function configuredGateways(env: Pick<Env, 'AI_GATEWAY_ID' | 'AI_GATEWAY_
       carries: 'text you type in the app, after your phone has removed personal details, and the parts of your Work Profile a question about your own work needs',
     });
   }
-  if (env.AI_GATEWAY_DOCUMENTS_ID && env.AI_GATEWAY_DOCUMENTS_ID !== env.AI_GATEWAY_ID) out.push({ id: env.AI_GATEWAY_DOCUMENTS_ID, carries: 'a document you chose to send for reading, such as your CV' });
+  if (env.AI_GATEWAY_DOCUMENTS_ID && env.AI_GATEWAY_DOCUMENTS_ID !== env.AI_GATEWAY_ID) out.push({ id: env.AI_GATEWAY_DOCUMENTS_ID, carries: 'a document you chose to send for reading, such as your CV, and on Cofferdam Cloud the job titles, skills and certificates you list for work and a hirer\'s request, to match them' });
   return out;
 }
 
@@ -172,6 +172,12 @@ export function dataUses(env: Pick<Env, 'AI_GATEWAY_ID' | 'AI_GATEWAY_DOCUMENTS_
     },
     { what: "your CV's text, when you choose Cofferdam Cloud to read it", gateway: env.AI_GATEWAY_DOCUMENTS_ID ?? strict, kept: 'nowhere' },
     { what: "a document's text when you add it to your Vault, after you choose Cofferdam Cloud to read it", gateway: env.AI_GATEWAY_DOCUMENTS_ID ?? strict, kept: 'nowhere' },
+    // Workspace decision 0084: the strings a listing or a search already sends, embedded on Cofferdam Cloud's choice.
+    {
+      what: "the job titles, skills and certificates you list when you look for work, and a hirer's request when they search, turned into numbers that matching compares, when you use Cofferdam Cloud",
+      gateway: env.AI_GATEWAY_DOCUMENTS_ID ?? strict,
+      kept: 'nowhere',
+    },
   ];
 }
 

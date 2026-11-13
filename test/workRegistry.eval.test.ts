@@ -37,7 +37,11 @@
  * embeds it (EmbeddingGemma 2's LiteRT-LM file on the Mac, `macEmbed`), in
  * three arms: the hosted requests as they were before the locale, the
  * language alone, and with the listing's market. It writes
- * `test/work-eval/registry-locale-v2-<date>.md`. With the same four, a fourth
+ * `test/work-eval/registry-locale-v2-<date>.md`; with WORK_REPLICA_EMBED=cloud the
+ * strings are embedded as the plane embeds a Cofferdam Cloud user's instead
+ * (its own `embedTexts` under the v2 pin, Workers AI's EmbeddingGemma 2 as the
+ * stand-in, workspace decision 0084), into `registry-locale-v2-<date>-cloud.md`.
+ * With the same four, a fourth
  * run measures the English pivot in the band (workspace decision 0018,
  * amendment proposed 2026-10-30) on that replica in two arms, production's
  * requests with the listing's market and the same with the pivot in the
@@ -75,6 +79,7 @@ import {
   D1RegistryStore,
   EMBEDDINGGEMMA_2_LITERT,
   embedTexts,
+  PLANE_STAND_INS,
   labelIdOf,
   labelNorm,
   parseTau,
@@ -88,7 +93,7 @@ import {
   type TokenKind,
 } from '../src/services/work/registry.js';
 import { createRestAi } from './chat-eval/restAi.js';
-import { restEmbedModel } from './fixtures/work/registryTools.js';
+import { embedText, restEmbedModel } from './fixtures/work/registryTools.js';
 import { sqliteD1 } from './fixtures/work/d1.js';
 import { cosine, memoryIndex } from './fixtures/work/fakes.js';
 import localeCases from './fixtures/work/locale-cases.json';
@@ -564,11 +569,35 @@ async function v2Replica(texts: readonly string[]) {
     for (const table of ['registry_decisions', 'registry_labels', 'registry_tokens']) replica.db.sqlite.prepare(`DELETE FROM ${table} WHERE created_at >= ?`).run(loadedAt);
     return { store: replica.store, index };
   };
-  const queries = embedAll(texts, 'query', V2_MODEL, LITERT_FILE);
-  const documents = embedAll(texts, 'document', V2_MODEL, LITERT_FILE);
   const key = (t: string) => t.replace(/\s+/g, ' ').trim();
+  // WORK_REPLICA_EMBED=cloud: each string embedded as the plane embeds a Cofferdam Cloud user's (workspace decision
+  // 0084), through the plane's own `embedTexts` under the v2 pin, which runs Workers AI's stand-in; else as the phone does.
+  const cloud = process.env.WORK_REPLICA_EMBED === 'cloud';
+  const [queries, documents] = cloud ? [await planeEmbedAll(texts, 'query'), await planeEmbedAll(texts, 'document')] : [embedAll(texts, 'query', V2_MODEL, LITERT_FILE), embedAll(texts, 'document', V2_MODEL, LITERT_FILE)];
   const vectorsOf = (raw: string) => ({ query: queries.get(key(raw))!, document: documents.get(key(raw))! });
   return { replica, index, fresh, vectorsOf };
+}
+
+/** Every distinct text embedded by the plane's own path under the v2 pin (Workers AI's stand-in), 20 a call, retried. */
+async function planeEmbedAll(texts: readonly string[], role: 'query' | 'document'): Promise<Map<string, number[]>> {
+  const seam = v2Inference();
+  const all = [...new Set(texts.map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  const out = new Map<string, number[]>();
+  for (let i = 0; i < all.length; i += 20) {
+    const batch = all.slice(i, i + 20);
+    for (let attempt = 0; ; attempt++) {
+      const e = await embedTexts(seam, batch.map(embedText), { role });
+      if (e.ok) {
+        if (e.call.model !== PLANE_STAND_INS[V2_MODEL]) throw new Error(`the plane embedded with ${e.call.model}`);
+        e.vectors.forEach((v, j) => out.set(batch[j]!, v));
+        break;
+      }
+      if (attempt >= 5) throw new Error(`the plane's embedder failed on ${batch.length} texts`);
+      await new Promise((r) => setTimeout(r, 1_000 * 2 ** attempt));
+    }
+  }
+  process.stdout.write(`plane ${role}: ${all.length} texts\n`);
+  return out;
 }
 
 /**
@@ -681,7 +710,7 @@ describe.skipIf(!REPLICA)('regional words and false friends in three locale arms
     const md = [
       `# Regional words and false friends on the v2 replica, ${date}`,
       '',
-      `${cases.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped against the v2 generation's registry, the one the plane runs (\`test/work-eval/replica.ts\`: the ESCO import's and the US layer's SQL, ${replica.tokens} tokens and ${replica.labels} labels, no certificate token; ${index.size} ${index.generation} vectors of EmbeddingGemma 2's LiteRT-LM file at 768, a national label's region kept), each string embedded as the phone embeds it (\`${V2_MODEL}\` through LiteRT-LM on the Mac, a query and a document), with \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Three arms on the same registry and vectors: **before**, the hosted requests as they were before the locale (cofferdam-api 16ab6a8: Clef told the language's code, no language beside a matched label, the pivot given the bare string); **language**, production's requests with no market; **market**, production's with the listing's market. The English pivot in the band is off, as on the plane today. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word, or the one a generic English name holds as a label (workspace OD-28).`,
+      `${cases.length} synthetic strings (\`test/fixtures/work/locale-cases.json\`), each with the market of the worker who wrote it, snapped against the v2 generation's registry, the one the plane runs (\`test/work-eval/replica.ts\`: the ESCO import's and the US layer's SQL, ${replica.tokens} tokens and ${replica.labels} labels, no certificate token; ${index.size} ${index.generation} vectors of EmbeddingGemma 2's LiteRT-LM file at 768, a national label's region kept), ${process.env.WORK_REPLICA_EMBED === 'cloud' ? "each string embedded as the plane embeds a Cofferdam Cloud user's (the plane's `embedTexts` under the v2 pin, Workers AI's `@cf/google/embeddinggemma-2` as its stand-in, workspace decision 0084, a query and a document)" : `each string embedded as the phone embeds it (\`${V2_MODEL}\` through LiteRT-LM on the Mac, a query and a document)`}, with \`${await inference.model('work-adjudicate')}\` and \`${await inference.model('work-pivot')}\` over the Workers AI REST API from the Mac. τ_auto ${tau.auto}, τ_low ${tau.low}. Three arms on the same registry and vectors: **before**, the hosted requests as they were before the locale (cofferdam-api 16ab6a8: Clef told the language's code, no language beside a matched label, the pivot given the bare string); **language**, production's requests with no market; **market**, production's with the listing's market. The English pivot in the band is off, as on the plane today. Right: one of the expected tokens, or, where no token fits, none or a new one; a false friend is the token ESCO's Spanish or Portuguese gives the word, or the one a generic English name holds as a label (workspace OD-28).`,
       '',
       '| Group | Before | Language | Market (production) |',
       '|---|---|---|---|',
@@ -694,7 +723,7 @@ describe.skipIf(!REPLICA)('regional words and false friends in three locale arms
       }),
       `| all | ${of('before').filter((r) => r.verdict === 'right').length} of ${cases.length} | ${of('language').filter((r) => r.verdict === 'right').length} of ${cases.length} | ${of('market').filter((r) => r.verdict === 'right').length} of ${cases.length} |`,
       '',
-      `Cost per snap ${(rows.reduce((s, r) => s + r.costMicroUsd, 0) / rows.length / 1e6).toFixed(6)} USD (the embeddings are the Mac's). ${retried} snaps ran again after a hosted call threw; ${failed.length ? `${failed.length} still failed: ${failed.join('; ')}` : 'none still failed'}.`,
+      `Cost per snap ${(rows.reduce((s, r) => s + r.costMicroUsd, 0) / rows.length / 1e6).toFixed(6)} USD (${process.env.WORK_REPLICA_EMBED === 'cloud' ? 'the embeddings made before the snaps, through the plane\'s stand-in' : 'the embeddings are the Mac\'s'}). ${retried} snaps ran again after a hosted call threw; ${failed.length ? `${failed.length} still failed: ${failed.join('; ')}` : 'none still failed'}.`,
       '',
       'Clef\'s band answers, read again at other floors (the shipped floor is 0.5), per arm:',
       '',
@@ -724,7 +753,7 @@ describe.skipIf(!REPLICA)('regional words and false friends in three locale arms
         return told ? ['```', told, '```', ''] : [];
       }),
     ].join('\n');
-    writeFileSync(join(__dirname, 'work-eval', `registry-locale-v2-${date}${tauSuffix(tau)}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
+    writeFileSync(join(__dirname, 'work-eval', `registry-locale-v2-${date}${process.env.WORK_REPLICA_EMBED === 'cloud' ? '-cloud' : ''}${tauSuffix(tau)}${process.env.WORK_EVAL_SUFFIX ?? ''}.md`), md);
     expect(rows).toHaveLength(cases.length * ARMS.length);
   }, 3_600_000);
 });

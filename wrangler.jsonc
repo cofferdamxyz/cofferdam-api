@@ -98,10 +98,14 @@
     "AI_GATEWAY_DOCUMENTS_ID": "cofferdam-documents",
     // The embedding generation of the token registry and the listings: v2,
     // EmbeddingGemma 2's LiteRT-LM file (workspace decision 0068, the entry
-    // "The removal"; switched 2026-10-30). Only the phone runs it, so the plane
-    // embeds no text: every Work route takes the phone's vectors (plane.md,
-    // Client vectors), and the indexes below hold the same file's vectors.
-    "WORK_EMBED_MODEL": "litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm"
+    // "The removal"; switched 2026-10-30). The phone runs it, and the indexes
+    // below hold the same file's vectors; a Cofferdam Local phone sends its
+    // vectors, which every Work route takes (plane.md, Client vectors).
+    "WORK_EMBED_MODEL": "litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm",
+    // Cofferdam Cloud's embedder for a request that carries no vector (workspace
+    // decision 0084): Workers AI's EmbeddingGemma 2, the one stand-in the v2 pin
+    // takes (`PLANE_STAND_INS`), through the documents gateway.
+    "WORK_EMBED_CLOUD_MODEL": "@cf/google/embeddinggemma-2"
   },
 
   // The deployed version id, shown by GET /v1/privacy/ai beside the live gateway settings.

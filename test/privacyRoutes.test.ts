@@ -61,7 +61,10 @@ describe('the transparency answer', () => {
       ['cofferdam-strict', 'nowhere'],
       ['cofferdam-documents', 'nowhere'],
       ['cofferdam-documents', 'nowhere'],
+      ['cofferdam-documents', 'nowhere'],
     ]);
+    // Cofferdam Cloud's embeddings of a listing's claims and a hirer's request (workspace decision 0084).
+    expect(answer.uses[4]!.what).toMatch(/^the job titles, skills and certificates you list when you look for work, and a hirer's request when they search/);
     expect(answer.uses[3]!.what).toBe("a document's text when you add it to your Vault, after you choose Cofferdam Cloud to read it");
     expect(answer.uses[1]!.what).toMatch(/^the parts of your Work Profile a question about your own work needs .*structured claims: never your name, email, phone, birth date or where you live, and only when you ask$/);
     expect(read.facts[0]!.carries).toContain('the parts of your Work Profile a question about your own work needs');

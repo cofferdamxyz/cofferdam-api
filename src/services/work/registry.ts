@@ -11,8 +11,9 @@
  *     language and in English only (`labelLangs`): another language may use
  *     the word for something else, as ESCO's Spanish gives "instructor" to
  *     the air force officer and "coach" to the life coach.
- *  2. Otherwise the string's query vector (`work-embed`: the phone's under
- *     the v2 pin, else the plane's) asks `token-registry-v2`, on exact
+ *  2. Otherwise the string's query vector (`work-embed`: under the v2 pin the
+ *     phone's when it sent one, else the plane's through Workers AI's stand-in,
+ *     workspace decision 0084) asks `token-registry-v2`, on exact
  *     scores, for the nearest labels of the same kind, in
  *     every language. The best token is taken when one of its labels in
  *     those two languages is at or above τ_auto; in the band down to τ_low,
@@ -441,7 +442,8 @@ export const EMBEDDINGGEMMA_2_GGUF = 'gguf:ggml-org/embeddinggemma-2-GGUF:Q8_0';
  * pins: the artefact itself, Google's text-only file in its repository
  * (`litertlm:<repo>:<file>`), since Workers AI does not run it. Its vectors
  * come from the client and from a Mac script (`scripts/work/embed-registry.mjs
- * --litert`), never from the plane, and only the v2 index generation holds
+ * --litert`), never from the plane (which embeds through its stand-in,
+ * `PLANE_STAND_INS`, workspace decision 0084), and the v2 index generation holds
  * them (`token-registry-v2`, `jobs-listings-v2`): the founder's ruling of
  * 2026-10-30 (workspace decision 0068), since its int4 vectors are not the
  * GGUF's (cosine 0.990 at the median, `test/work-eval/embedder-litert-2026-10-30.md`)
@@ -466,12 +468,38 @@ export const EMBED_DIMS_BY_MODEL: Readonly<Record<string, number>> = {
 };
 
 /**
- * The models the plane cannot run: under such a pin `embedTexts` never calls
- * Workers AI and fails closed, so a text is embedded only where the client
- * sent its vector (`readClientVector`), and a snap without one meets the
- * registry by exact label only.
+ * The models the plane cannot run itself: under such a pin a client's vector
+ * is taken when sent (`readClientVector`, that model's only), and the plane
+ * embeds a text the client sent none for only through the pin's stand-in
+ * (`PLANE_STAND_INS`); a pin without one fails closed, and a snap without a
+ * client vector meets the registry by exact label only.
  */
 export const CLIENT_EMBED_MODELS: ReadonlySet<string> = new Set([EMBEDDINGGEMMA_2_GGUF, EMBEDDINGGEMMA_2_LITERT]);
+
+/** Workers AI's EmbeddingGemma 2 (live 2026-11-12): Cofferdam Cloud's embedder under the v2 pin. */
+export const WORKERS_AI_EMBEDDINGGEMMA_2 = '@cf/google/embeddinggemma-2';
+
+/**
+ * The hosted model that stands in for a client-only pin on the plane, the one
+ * pair whose vectors may share an index (workspace decision 0084): Workers
+ * AI's EmbeddingGemma 2 for the phone's LiteRT-LM file, measured against the
+ * v2 index's own vectors before it was wired (`test/work-eval/cloud-embed-2026-11-13.md`,
+ * `test/workCloudEmbed.eval.test.ts`). Under the v2 pin a request without a
+ * vector (a Cofferdam Cloud user's) is embedded by it through `work-embed-cloud`,
+ * with the same role prompts, at the pin's size; a phone's vector is still
+ * taken when sent. A vector it makes is named by its own model where the plane
+ * records one (a listing's `model`, a minted label's `model`), so the index can
+ * tell the two apart, and τ and the tier-2 floor stay the pin's. Any other
+ * model on `work-embed-cloud` fails closed (`stand_in_mismatch`).
+ */
+export const PLANE_STAND_INS: Readonly<Record<string, string>> = {
+  [EMBEDDINGGEMMA_2_LITERT]: WORKERS_AI_EMBEDDINGGEMMA_2,
+};
+
+/** Whether the plane can embed a text under the pinned `work-embed`: a model it runs, or a client-only pin with a stand-in. */
+export function planeEmbeds(model: string): boolean {
+  return !CLIENT_EMBED_MODELS.has(model) || PLANE_STAND_INS[model] !== undefined;
+}
 
 /** How far a client vector's length may be from 1. */
 export const UNIT_NORM_TOLERANCE = 1e-3;
@@ -521,39 +549,83 @@ export interface EmbedOptions extends ExecutorOptions {
   role: EmbedRole;
 }
 
-/** Embed texts with `work-embed`, in their role; fails closed on a missing or misshapen answer. */
+/**
+ * The hosted embedders that take OpenAI's request (`{ input, dimensions }`) and
+ * answer `data: [{ index, embedding }]`; the others take `{ text }` and answer
+ * `data` as the vectors themselves (bge-m3, EmbeddingGemma 300M).
+ */
+const OPENAI_SHAPED_EMBEDDERS: ReadonlySet<string> = new Set([WORKERS_AI_EMBEDDINGGEMMA_2]);
+
+/** An answer's vectors in the texts' order, or null when it is not `count` vectors of `dims` finite values. */
+function embeddingsOf(result: unknown, count: number, dims: number | undefined): number[][] | null {
+  const data = (result as { data?: unknown } | null)?.data;
+  if (dims === undefined || !Array.isArray(data) || data.length !== count) return null;
+  const out: (number[] | undefined)[] = new Array<number[] | undefined>(count);
+  for (const [i, d] of (data as unknown[]).entries()) {
+    const item = d as { index?: unknown; embedding?: unknown } | null;
+    const at = Array.isArray(d) ? i : typeof item?.index === 'number' ? item.index : -1;
+    const v = Array.isArray(d) ? d : item?.embedding;
+    if (!Number.isInteger(at) || at < 0 || at >= count || out[at] || !Array.isArray(v) || v.length !== dims) return null;
+    if (!(v as unknown[]).every((x) => typeof x === 'number' && Number.isFinite(x))) return null;
+    out[at] = v as number[];
+  }
+  return out as number[][];
+}
+
+/** A vector scaled to unit length, as the phone's are and as `readClientVector` requires of them. */
+function unitLength(v: number[]): number[] {
+  let n = 0;
+  for (const x of v) n += x * x;
+  n = Math.sqrt(n);
+  return n > 0 ? v.map((x) => x / n) : v;
+}
+
+/**
+ * Embed texts in their role with the pinned `work-embed`: on its own model when
+ * the plane runs it, else through the pin's stand-in on `work-embed-cloud`
+ * (`PLANE_STAND_INS`), at the pin's size and with its prompts, the answer's
+ * vectors at unit length; the call is named by the model that ran. Fails
+ * closed on a pin without a stand-in, on another model pinned to
+ * `work-embed-cloud`, and on a missing or misshapen answer.
+ */
 export async function embedTexts(inference: Inference, texts: string[], opts: EmbedOptions): Promise<Embedding> {
   const now = opts.now ?? Date.now;
-  const model = await inference.model('work-embed');
+  const pinned = await inference.model('work-embed');
   const t0 = now();
-  const prompt = EMBED_PROMPTS_BY_MODEL[model]?.[opts.role] ?? '';
-  const request = { text: prompt ? texts.map((t) => prompt + t) : texts };
-  if (CLIENT_EMBED_MODELS.has(model)) {
-    // No hosted call: the plane does not run this model, and the call is not metered.
-    opts.log?.({ event: 'work_embed_failed', model, reason: 'no_plane_embedder' });
-    return { ok: false, call: { op: 'work-embed', model, ok: false, ms: 0, usage: { tokensIn: 0, tokensOut: 0, neurons: null } } };
+  const prompt = EMBED_PROMPTS_BY_MODEL[pinned]?.[opts.role] ?? '';
+  const prompted = prompt ? texts.map((t) => prompt + t) : texts;
+  const dims = EMBED_DIMS_BY_MODEL[pinned];
+  let op: 'work-embed' | 'work-embed-cloud' = 'work-embed';
+  let model = pinned;
+  if (CLIENT_EMBED_MODELS.has(pinned)) {
+    const standIn = PLANE_STAND_INS[pinned];
+    const hosted = standIn ? await inference.model('work-embed-cloud') : undefined;
+    if (!standIn || hosted !== standIn) {
+      // No hosted call: the plane does not run this model and no measured stand-in is pinned; the call is not metered.
+      opts.log?.({ event: 'work_embed_failed', model: pinned, reason: standIn ? 'stand_in_mismatch' : 'no_plane_embedder' });
+      return { ok: false, call: { op: standIn ? 'work-embed-cloud' : 'work-embed', model: hosted ?? pinned, ok: false, ms: 0, usage: { tokensIn: 0, tokensOut: 0, neurons: null } } };
+    }
+    op = 'work-embed-cloud';
+    model = hosted;
   }
+  // The stand-in reads each text as the phone writes it (NFC, each run of white space one space; the app's `embeddingInput`).
+  const asPhone = op === 'work-embed-cloud' ? prompted.map((t) => t.normalize('NFC').replace(/\s+/g, ' ').trim()) : prompted;
+  const request = OPENAI_SHAPED_EMBEDDERS.has(model) ? { input: asPhone, dimensions: dims } : { text: asPhone };
   let result: unknown;
   try {
-    result = await inference.run('work-embed', request, { signal: opts.signal });
+    result = await inference.run(op, request, { signal: opts.signal });
   } catch (err) {
     opts.log?.({ event: 'work_embed_failed', model, reason: failureCode(err) });
-    return { ok: false, call: { op: 'work-embed', model, ok: false, ms: now() - t0, usage: estimatedUsage(request) } };
+    return { ok: false, call: { op, model, ok: false, ms: now() - t0, usage: estimatedUsage(request) } };
   }
   const usage = usageOrEstimate(result, request);
-  const data = (result as { data?: unknown } | null)?.data;
-  const dims = EMBED_DIMS_BY_MODEL[model];
-  const ok =
-    dims !== undefined &&
-    Array.isArray(data) &&
-    data.length === texts.length &&
-    data.every((v) => Array.isArray(v) && v.length === dims && v.every((x) => typeof x === 'number' && Number.isFinite(x)));
-  const call: WorkCall = { op: 'work-embed', model, ok, ms: now() - t0, usage };
-  if (!ok) {
+  const vectors = embeddingsOf(result, texts.length, dims);
+  const call: WorkCall = { op, model, ok: vectors !== null, ms: now() - t0, usage };
+  if (!vectors) {
     opts.log?.({ event: 'work_embed_failed', model, reason: 'bad_shape' });
     return { ok: false, call };
   }
-  return { ok: true, vectors: data as number[][], call };
+  return { ok: true, vectors: op === 'work-embed-cloud' ? vectors.map(unitLength) : vectors, call };
 }
 
 // ── Retrieve, then choose ───────────────────────────────────────────────────
@@ -1101,7 +1173,7 @@ async function askPivot(
  * a reasoning model, the English title's own token, through a preferred English label of one token or the token of
  * its slug, never an alternative label alone ("teacher" is one of the politics lecturer's, OD-28); else the English
  * labels that share the title's words, shown in a second call that may choose one ("gas station attendant" finds
- * ESCO's "gas station salesperson", since the plane embeds no text under v2), asked only while `deadline` leaves it
+ * ESCO's "gas station salesperson", which no embedding of the title was made to find), asked only while `deadline` leaves it
  * time. On any other model the title goes through any English label, as before. Nothing here mints or keeps an
  * alias: the caller does.
  */
@@ -1290,20 +1362,23 @@ async function snapSteps(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]
     return result({ decision: 'label', token: t.token, labelEn: t.labelEn, specialization: false, score: 1, probability: null, candidates: [] });
   }
 
-  // 2. The nearest labels, in every language: through the client's query vector when it sent one, else the plane's,
-  // and under a model the plane cannot run, without one, no further than the exact label.
+  // 2. The nearest labels, in every language: through the client's query vector when it sent one, else the plane's
+  // (under a client-only pin, its stand-in's, decision 0084), and where the plane cannot embed, no further than the
+  // exact label.
   const embedModel = await deps.inference.model('work-embed');
-  if (!input.vectors?.query && CLIENT_EMBED_MODELS.has(embedModel)) return result({ decision: 'unmatched', ...none });
+  if (!input.vectors?.query && !planeEmbeds(embedModel)) return result({ decision: 'unmatched', ...none });
   // The English pivot in the band: a worker's Portuguese or Spanish occupation or skill asks for its English name now,
   // so the call runs while the string is embedded and the index searched (a certificate and a hirer's words never ask).
   if (deps.pivotBand && (input.lang === 'pt' || input.lang === 'es') && kind !== 'cert' && input.mint !== false) await pivot.start(kind, adjudicationState(kind, raw, locale), raw);
   let vector: number[];
+  let queryModel = embedModel;
   if (input.vectors?.query) vector = input.vectors.query;
   else {
     const embedding = await embedTexts(deps.inference, [raw], { role: 'query', now, log: deps.log });
     calls.push(embedding.call);
     if (!embedding.ok) return result({ decision: 'unmatched', ...none });
     vector = embedding.vectors[0]!;
+    queryModel = embedding.call.model;
   }
   const candidates = (await candidatesFor(deps, input.kind, vector, langs)).slice(0, ADJUDICATION_CANDIDATES);
   const top = candidates[0];
@@ -1315,7 +1390,8 @@ async function snapSteps(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]
   // languages is at τ_auto; when only another language's is, Clef decides, as in the band.
   if (top && top.scoped != null && top.scoped >= tau.auto) {
     await observe(top.token);
-    return record({ decision: 'auto', token: top.token, labelEn: top.labelEn, specialization: false, score: top.score, probability: null, candidates }, embedModel);
+    // Named by the model that made the query vector: the pin for a phone's, the stand-in for the plane's (decision 0084).
+    return record({ decision: 'auto', token: top.token, labelEn: top.labelEn, specialization: false, score: top.score, probability: null, candidates }, queryModel);
   }
 
   let clefModel: string | null = null;
@@ -1411,25 +1487,27 @@ async function snapSteps(deps: RegistryDeps, input: SnapInput, calls: WorkCall[]
   // The new token's own labels join the index, so the next snap finds it by vector too. They are documents:
   // - a model with role prompts embeds them again as such, and one without reuses the query's vector;
   // - the string's own label takes the client's document vector when it sent one;
-  // - under a model the plane cannot run, the rest (the English name) waits at embedded = 0 (no backfill is built yet).
-  const planeEmbeds = !CLIENT_EMBED_MODELS.has(embedModel);
+  // - where the plane cannot embed, the rest (the English name) waits at embedded = 0 (no backfill is built yet).
+  // Each vector names the model that made it (`model`): the pin for the client's, the call's for the plane's, which
+  // under the v2 pin is Workers AI's stand-in (decision 0084), so a re-index can tell them apart.
+  const canEmbed = planeEmbeds(embedModel);
   const prompted = Boolean(EMBED_PROMPTS_BY_MODEL[embedModel]);
   const clientDoc = input.vectors?.document;
   const own = labels.length === 1 ? 0 : 1;
-  const planned = !planeEmbeds ? [] : prompted ? labels.map((_, i) => i).filter((i) => !(clientDoc && i === own)) : labels.length > 1 ? [0] : [];
+  const planned = !canEmbed ? [] : prompted ? labels.map((_, i) => i).filter((i) => !(clientDoc && i === own)) : labels.length > 1 ? [0] : [];
   const docEmbedding = planned.length ? await embedTexts(deps.inference, planned.map((i) => labels[i]!.label), { role: 'document', now, log: deps.log }) : null;
   if (docEmbedding) calls.push(docEmbedding.call);
-  const docVector = (i: number): number[] | undefined => {
+  const docVector = (i: number): { values: number[]; model: string } | undefined => {
     const j = planned.indexOf(i);
-    if (j >= 0) return docEmbedding?.ok ? docEmbedding.vectors[j] : undefined;
-    if (i === own && clientDoc) return clientDoc;
-    return !prompted && planeEmbeds ? vector : undefined;
+    if (j >= 0) return docEmbedding?.ok ? { values: docEmbedding.vectors[j]!, model: docEmbedding.call.model } : undefined;
+    if (i === own && clientDoc) return { values: clientDoc, model: embedModel };
+    return !prompted && canEmbed ? { values: vector, model: queryModel } : undefined;
   };
   const vectors: IndexVector[] = [];
   const pivotVector = docVector(0);
-  if (pivotVector) vectors.push({ id: labels[0]!.labelId, values: pivotVector, metadata: { token, kind: input.kind, lang: 'en', label: english, source: 'emergent' } });
+  if (pivotVector) vectors.push({ id: labels[0]!.labelId, values: pivotVector.values, metadata: { token, kind: input.kind, lang: 'en', label: english, source: 'emergent', model: pivotVector.model } });
   const rawVector = labels[1] ? docVector(1) : undefined;
-  if (labels[1] && rawVector) vectors.push({ id: labels[1].labelId, values: rawVector, metadata: { token, kind: input.kind, lang: input.lang, label: raw, source: 'emergent' } });
+  if (labels[1] && rawVector) vectors.push({ id: labels[1].labelId, values: rawVector.values, metadata: { token, kind: input.kind, lang: input.lang, label: raw, source: 'emergent', model: rawVector.model } });
   // A label is marked embedded only once its vector is in: one whose document
   // call failed stays at embedded = 0, where the exact-label shortcut still
   // finds it and no vector holds it (nothing embeds it later yet).

@@ -67,7 +67,7 @@ import { INTENT_MAX_CHARS, parseIntent, type IntentFields } from './intent.js';
 import { h3CenterChildAt, isH3Cell, REGION, type Scope } from './listings.js';
 import { ISO_DAY, readStart, type JobStart } from './start.js';
 import { MAX_REGIONS, recall, type RecallDeps, type RecallIntent, type RecallOutcome } from './recall.js';
-import { candidatesFor, embedTexts, requestFallback, snap, type Candidate, type RegistryDeps } from './registry.js';
+import { candidatesFor, CLIENT_EMBED_MODELS, embedTexts, requestFallback, snap, type Candidate, type RegistryDeps } from './registry.js';
 
 /** The smallest contract (work-wallet.md, Fees): a $1 fee is 2 % of it. */
 export const MIN_BUDGET_USD = 50;
@@ -238,8 +238,18 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
 
   // 3. The registry's nearest occupations and skills to the task, and which of them the job needs.
   const task = fields.task ?? sentence;
+  // Under a client-only pin with no client vector (a Cofferdam Cloud hirer's), the plane's stand-in embeds what a
+  // Cofferdam Local phone embeds, the whole sentence as a query, once, and the needs step and recall both read it, as
+  // they read the phone's (workspace decision 0084); a model the plane runs embeds the task and the needs' labels, as before.
+  let vector = req.vector;
+  if (!vector && CLIENT_EMBED_MODELS.has(await inference.model('work-embed'))) {
+    const embedding = await embedTexts(inference, [sentence], { role: 'query', now, log: deps.log });
+    calls.push(embedding.call);
+    if (!embedding.ok) return { ok: false, error: 'embedding_failed', calls };
+    vector = embedding.vectors[0]!;
+  }
   let taskVector: number[];
-  if (req.vector) taskVector = req.vector;
+  if (vector) taskVector = vector;
   else {
     const embedding = await embedTexts(inference, [task], { role: 'query', now, log: deps.log });
     calls.push(embedding.call);
@@ -313,7 +323,7 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
     scope,
     regions: [...new Set(req.regions)],
     queryText: [task, ...passed.map((n) => n.label)].join('; '),
-    ...(req.vector ? { vector: req.vector } : {}),
+    ...(vector ? { vector } : {}),
     task,
     needLabels: passed.map((n) => n.label),
     ...(kept ? { keptOccupation: kept.token } : {}),

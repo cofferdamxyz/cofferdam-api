@@ -162,13 +162,17 @@ export interface Env {
   WORK_DOCUMENT_MODEL?: string;
   /**
    * The token registry's models (decision 0018): embeddings (set to
-   * EmbeddingGemma 2's LiteRT-LM file, the v2 generation, which only the phone
+   * EmbeddingGemma 2's LiteRT-LM file, the v2 generation, which the phone
    * runs, and the seam's default is the same id; changing it is a re-embed
-   * migration into indexes of its own, never a quiet swap), Clef's choice in
+   * migration into indexes of its own, never a quiet swap), Cofferdam Cloud's
+   * stand-in for it when a request carries no vector (`WORK_EMBED_CLOUD_MODEL`;
+   * unset, Workers AI's EmbeddingGemma 2, the only model the v2 pin takes there,
+   * workspace decision 0084), Clef's choice in
    * the τ band (unset, `clef-flash`), and a new token's English pivot (unset,
    * `llama-3.3-70b` in JSON mode).
    */
   WORK_EMBED_MODEL?: string;
+  WORK_EMBED_CLOUD_MODEL?: string;
   WORK_ADJUDICATE_MODEL?: string;
   WORK_PIVOT_MODEL?: string;
   WORK_DECIDE_MODEL?: string;

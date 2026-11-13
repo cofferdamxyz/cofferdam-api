@@ -18,7 +18,7 @@ import {
   type InferenceEnv,
   type InferenceOp,
 } from '../src/services/inference/index.js';
-import { CLIENT_EMBED_MODELS, EMBED_DIMS_BY_MODEL, EMBEDDINGGEMMA_2_LITERT } from '../src/services/work/registry.js';
+import { CLIENT_EMBED_MODELS, EMBED_DIMS_BY_MODEL, EMBEDDINGGEMMA_2_LITERT, PLANE_STAND_INS } from '../src/services/work/registry.js';
 
 function kv(values: Record<string, string>, reads: string[] = []): KVNamespace {
   return {
@@ -166,6 +166,9 @@ describe("the v2 generation's pin (workspace decision 0068)", () => {
     const config = JSON.parse(text) as { vars: Record<string, string>; vectorize: { binding: string; index_name: string }[] };
     expect(config.vars.WORK_EMBED_MODEL).toBe(EMBEDDINGGEMMA_2_LITERT);
     expect(OPS['work-embed'].model).toBe(EMBEDDINGGEMMA_2_LITERT);
+    // Cofferdam Cloud's stand-in (workspace decision 0084): the var, the seam's default and the pin's stand-in agree.
+    expect(config.vars.WORK_EMBED_CLOUD_MODEL).toBe(PLANE_STAND_INS[EMBEDDINGGEMMA_2_LITERT]);
+    expect(OPS['work-embed-cloud'].model).toBe(PLANE_STAND_INS[EMBEDDINGGEMMA_2_LITERT]);
     expect(CLIENT_EMBED_MODELS.has(EMBEDDINGGEMMA_2_LITERT)).toBe(true);
     expect(EMBED_DIMS_BY_MODEL[EMBEDDINGGEMMA_2_LITERT]).toBe(768);
     expect(Object.fromEntries(config.vectorize.map((v) => [v.binding, v.index_name]))).toEqual({ TOKEN_REGISTRY: 'token-registry-v2', JOBS_LISTINGS: 'jobs-listings-v2' });

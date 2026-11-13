@@ -3,7 +3,8 @@
 
 /**
  * The vectors a client embeds for the Work routes: EmbeddingGemma 2 on the
- * phone through LiteRT-LM, the app's embedder since 2026-10-30 (its text-only
+ * phone through LiteRT-LM, the app's embedder since 2026-10-30 and Cofferdam
+ * Local's since 2026-11-12 (workspace decision 0084; its text-only
  * file, `EMBEDDINGGEMMA_2_LITERT`; workspace decision 0068), when the plane's
  * index generation is that model's: v2 (`token-registry-v2`,
  * `jobs-listings-v2`). The phone sends each text with the role's prompt, in
@@ -24,14 +25,19 @@
  *   embedding, or under a pin it cannot run, by exact label only.
  * - `POST /v1/jobs/intent`: `vector`, the sentence's query vector.
  *
- * Under a pin the plane cannot run (`CLIENT_EMBED_MODELS`), the listing's and
- * the sentence's vectors are required; under any other they are optional and
- * must still be the pinned model's.
+ * Under a pin the plane cannot embed for (`planeEmbeds`: a client-only model
+ * with no stand-in), the listing's and the sentence's vectors are required.
+ * Under any other they are optional and must still be the pinned model's: under
+ * the v2 pin, a Cofferdam Cloud user's phone sends none and the plane embeds
+ * the same texts with Workers AI's EmbeddingGemma 2 (`PLANE_STAND_INS`,
+ * workspace decision 0084), while a Cofferdam Local user's phone still sends
+ * the LiteRT-LM file's, which is taken. A vector is never taken under another
+ * model's name: the stand-in's are made on the plane only.
  */
 
 import type { ClaimVectors, ClientEmbeddings, ListingDraft } from './listings.js';
 import { claimKey } from './listings.js';
-import { CLIENT_EMBED_MODELS, readClientVector, type ClientVectorRefusal, type TokenKind } from './registry.js';
+import { planeEmbeds, readClientVector, type ClientVectorRefusal, type TokenKind } from './registry.js';
 
 export type VectorRefusal =
   | { error: 'vector_required'; field: string; model: string }
@@ -42,10 +48,10 @@ export type Read<T> = { ok: true; value: T } | { ok: false; refusal: VectorRefus
 
 const KINDS: ReadonlySet<string> = new Set(['pos', 'skill', 'cert']);
 
-/** The sentence's query vector, or none; required under a pin the plane cannot run. */
+/** The sentence's query vector, or none; required only under a pin the plane cannot embed for. */
 export function readSentenceVector(raw: unknown, model: string): Read<number[] | undefined> {
   if (raw === undefined || raw === null) {
-    return CLIENT_EMBED_MODELS.has(model) ? { ok: false, refusal: { error: 'vector_required', field: 'vector', model } } : { ok: true, value: undefined };
+    return planeEmbeds(model) ? { ok: true, value: undefined } : { ok: false, refusal: { error: 'vector_required', field: 'vector', model } };
   }
   const v = readClientVector(raw, model);
   return v.ok ? { ok: true, value: v.values } : { ok: false, refusal: { error: 'vector_rejected', field: 'vector', reason: v.reason, model } };

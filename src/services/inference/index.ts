@@ -37,6 +37,7 @@ export type InferenceOp =
   | 'work-extract-fallback'
   | 'work-intent'
   | 'work-embed'
+  | 'work-embed-cloud'
   | 'work-adjudicate'
   | 'work-pivot'
   | 'work-decide'
@@ -55,6 +56,7 @@ export type InferenceModelVar =
   | 'WORK_EXTRACT_FALLBACK_MODEL'
   | 'WORK_INTENT_MODEL'
   | 'WORK_EMBED_MODEL'
+  | 'WORK_EMBED_CLOUD_MODEL'
   | 'WORK_ADJUDICATE_MODEL'
   | 'WORK_PIVOT_MODEL'
   | 'WORK_PARSE_MODEL'
@@ -112,9 +114,15 @@ export const OPS: Record<InferenceOp, OpSpec> = {
   // low and high reasoning read no better and timed out more (`work/registry.ts` `PIVOT_EFFORT`, `fallbackFind`).
   // WORK_PIVOT_MODEL set to llama-3.3-70b gives back the JSON-mode naming without candidates.
   // Since the v2 switch (2026-10-30, workspace decision 0068): EmbeddingGemma 2's LiteRT-LM file, the indexes' generation,
-  // which only the phone runs (`work/registry.ts` EMBEDDINGGEMMA_2_LITERT, `CLIENT_EMBED_MODELS`). The default matches
+  // which the phone runs (`work/registry.ts` EMBEDDINGGEMMA_2_LITERT, `CLIENT_EMBED_MODELS`) and the plane embeds for
+  // through `work-embed-cloud` below (decision 0084); τ and the tier-2 floor follow this pin. The default matches
   // the var, so a dropped WORK_EMBED_MODEL never sends bge-m3's 1,024 dimensions at a 768-dimension index.
   'work-embed': { model: 'litertlm:litert-community/embeddinggemma-2-text-270m-litert-lm:embeddinggemma-2-text-270m.litertlm', envVar: 'WORK_EMBED_MODEL', timeoutMs: 10_000 },
+  // Cofferdam Cloud's embedder under the v2 pin (workspace decision 0084): Workers AI's EmbeddingGemma 2, which stands in
+  // for the phone's LiteRT-LM file when a request carries no vector (`work/registry.ts` PLANE_STAND_INS, measured in
+  // `test/work-eval/cloud-embed-2026-11-13.md`). `embedTexts` runs it only when this pin is the stand-in the pinned
+  // generation names, so pinning another model here fails closed instead of mixing an unmeasured model into the index.
+  'work-embed-cloud': { model: '@cf/google/embeddinggemma-2', envVar: 'WORK_EMBED_CLOUD_MODEL', timeoutMs: 10_000 },
   'work-adjudicate': { model: '@cf/cloudflare/clef-flash', envVar: 'WORK_ADJUDICATE_MODEL', timeoutMs: 6_000 },
   'work-pivot': { model: '@cf/deepseek-ai/deepseek-v4.1-flash-1017', envVar: 'WORK_PIVOT_MODEL', timeoutMs: 20_000 },
   // The finalist decision (S8, workspace decision 0069): Clef, not flash, as the founder ruled on 2026-10-28.
@@ -166,6 +174,9 @@ export const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   // EmbeddingGemma (decision 0067, rule 7) reports neither usage nor neurons, so every call is priced
   // here; Cloudflare's pricing page did not list it on 2026-10-26, so this is bge-m3's rate as a stand-in.
   '@cf/google/embeddinggemma-300m': { input: 0.012, output: 0 },
+  // Cofferdam Cloud's embedder under the v2 pin (workspace decision 0084), read 2026-11-12: $0.0017 per million input
+  // tokens (154 neurons a million). It reports neurons, which the Work meter prefers; this row prices a call that did not.
+  '@cf/google/embeddinggemma-2': { input: 0.0017, output: 0 },
 };
 
 const unpriced = new Set<string>();
@@ -209,9 +220,11 @@ export interface InferenceEnv extends Partial<Record<InferenceModelVar, string>>
 
 /**
  * Ops that carry a whole document the user opted to send, which DLP must not read: the CV's parse, and a Vault
- * document's reading, whose own number the strict gateway's DLP would block (workspace decision 0081, item 3).
+ * document's reading, whose own number the strict gateway's DLP would block (workspace decision 0081, item 3); and
+ * Cofferdam Cloud's embeddings of a listing's claims and text or a hirer's task (workspace decision 0084), the same
+ * strings the request already carries, which a licence number in a certificate's name must not make DLP refuse.
  */
-export const DOCUMENT_OPS: ReadonlySet<InferenceOp> = new Set<InferenceOp>(['work-parse', 'work-document']);
+export const DOCUMENT_OPS: ReadonlySet<InferenceOp> = new Set<InferenceOp>(['work-parse', 'work-document', 'work-embed-cloud']);
 
 /** The gateway an op's call goes through, or null for a direct call. */
 export function gatewayFor(env: Pick<InferenceEnv, 'AI_GATEWAY_ID' | 'AI_GATEWAY_DOCUMENTS_ID'>, op: InferenceOp): string | null {
