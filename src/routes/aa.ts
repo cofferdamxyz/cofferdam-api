@@ -17,9 +17,10 @@
  *     `services/userOpOutcome.ts`). It then submits with
  *     `RELAYER_PRIVATE_KEY`, waits up to `RECEIPT_WAIT_MS` for the receipt,
  *     reads the op's `UserOperationEvent`, and answers
- *       202 { ok: true, txHash, entryPoint, receipt: 'success' | 'pending' }
- *     `pending` when the receipt has not come in time: the client still waits
- *     for it and checks the op's own success. A not-yet-deployed account's
+ *       202 { ok: true, txHash, entryPoint, receipt: 'success' | 'pending' | 'unknown' }
+ *     `pending` when the receipt has not come in time, `unknown` when
+ *     `handleOps` itself reverted (the op may have run in an earlier send):
+ *     the client still waits for the receipt and checks the op's own success. A not-yet-deployed account's
  *     first op carries `initCode`, so this is also how accounts get deployed:
  *     no app ever holds a funded key.
  *
@@ -45,7 +46,15 @@
  */
 
 import { Hono } from 'hono';
-import { BaseError, ContractFunctionRevertedError, createWalletClient, encodeFunctionData, http, type Hex } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  createWalletClient,
+  decodeErrorResult,
+  encodeFunctionData,
+  http,
+  type Hex,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
 
@@ -85,10 +94,15 @@ export class UserOpSubmitError extends Error {
   }
 }
 
-/** A sent op: its transaction, and whether its receipt showed the op's own success in time. */
+/**
+ * A sent op: its transaction, and what its receipt showed in time: the op's
+ * own success, no receipt yet (`pending`), or a `handleOps` that reverted
+ * (`unknown`: the op did not run in this transaction, but a resend after a
+ * nonce clash means it may have run in the first one).
+ */
 export interface RelayOutcome {
   txHash: Hex;
-  receipt: 'success' | 'pending';
+  receipt: 'success' | 'pending' | 'unknown';
 }
 
 export interface AaRouteDeps {
@@ -104,6 +118,9 @@ export interface AaRouteDeps {
 
 /** How long the relay waits for the receipt before answering `pending` (Base mines every 2 s; iOS gives up at 60 s). */
 export const RECEIPT_WAIT_MS = 20_000;
+
+/** The receipt poll's interval: Base's block time, so the wait costs about one node call per block. */
+const RECEIPT_POLL_MS = 2_000;
 
 const GLOBAL_KEY = 'aa:global';
 
@@ -144,10 +161,24 @@ function logRelay(event: string, op: PackedUserOperationWire, fields: Record<str
   console.warn(identityLogLine({ event, sender: op.sender, nonce: op.nonce, ...fields }));
 }
 
-/** A node that cannot run `eth_simulateV1` (method missing or refused as unsupported). */
+/** A node that cannot run `eth_simulateV1`: JSON-RPC's method-not-found, or the method named as missing. */
 function simulateUnsupported(err: unknown): boolean {
   const text = err instanceof BaseError ? `${err.shortMessage} ${err.details}` : String(err);
-  return /method not found|not supported|unsupported|does not exist|-32601/i.test(text);
+  return /-32601|method not found|eth_simulateV1[^]*(does not exist|not available|not supported|unsupported)/i.test(text);
+}
+
+/** `handleOps`' own revert in the pre-flight, decoded as the simulation decodes it (`FailedOp: AAxx …`). */
+function handleOpsRevert(data: Hex | undefined, err: unknown): string {
+  if (data && data !== '0x') {
+    try {
+      const decoded = decodeErrorResult({ abi: ENTRY_POINT_ABI, data });
+      const args = decoded.args as readonly unknown[] | undefined;
+      return args && args.length >= 2 ? `${decoded.errorName}: ${String(args[1])}` : decoded.errorName;
+    } catch {
+      // not an EntryPoint error: fall through to the node's message
+    }
+  }
+  return revertReason(err);
 }
 
 /**
@@ -181,7 +212,7 @@ async function preflightExecution(
   if (call.status !== 'success') {
     // `handleOps` itself reverted here although `eth_call` passed: a state
     // change between the two reads. Nothing is sent.
-    const reason = revertReason(call.error);
+    const reason = handleOpsRevert(call.data, call.error);
     logRelay('aa_simulation_failed', op, { reason, preflight: true });
     throw new UserOpSubmitError('simulation_failed', reason);
   }
@@ -239,15 +270,19 @@ export async function submitUserOperation(
   // reads the receipt itself.
   let receipt;
   try {
-    receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: receiptWaitMs, pollingInterval: 1_000 });
+    receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: receiptWaitMs, pollingInterval: RECEIPT_POLL_MS });
   } catch (err) {
     logRelay('aa_receipt_pending', op, { txHash, reason: revertReason(err) });
     return { txHash, receipt: 'pending' };
   }
-  const outcome =
-    receipt.status === 'success'
-      ? opOutcome(receipt.logs as OutcomeLog[], ENTRY_POINT_V07, op.sender, op.nonce)
-      : ({ status: 'reverted', reason: 'handleOps reverted' } as const);
+  if (receipt.status !== 'success') {
+    // `handleOps` itself reverted: the op did not run in this transaction. A
+    // resend after a nonce clash (`relaySend.ts`) may mean it ran in the
+    // first, so its fate is not ours to call reverted.
+    logRelay('aa_handle_ops_reverted', op, { txHash });
+    return { txHash, receipt: 'unknown' };
+  }
+  const outcome = opOutcome(receipt.logs as OutcomeLog[], ENTRY_POINT_V07, op.sender, op.nonce);
   if (outcome.status === 'success') return { txHash, receipt: 'success' };
   const reason = outcome.status === 'reverted' ? outcome.reason : 'not_executed';
   logRelay('aa_user_op_reverted', op, { txHash, reason });

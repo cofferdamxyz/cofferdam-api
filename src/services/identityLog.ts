@@ -23,7 +23,20 @@
 
 /** Keys a line of an identity route may not hold, at any depth. */
 export const IDENTITY_LOG_FORBIDDEN_KEY =
-  /nullifier|identifier|proof|evidence|custom_?data|user_?context|pub(lic)?_?signals|call_?data|init_?code|signature|previous_?account|bound_?account/i;
+  /nullifier|identifier|proof(?!_?date)|evidence|custom_?data|user_?context|pub(lic)?_?signals|call_?data|init_?code|signature|previous_?account|bound_?account/i;
+
+/**
+ * Free text (a revert string, an attester's error message) with every long hex
+ * or digit run cut, since it may be built from an identifier or an address: a
+ * nullifier is a long decimal, a ZKPassport identifier and an account are hex.
+ */
+export function scrubIdentifiers(text: string, max = 160): string {
+  return text
+    .replace(/0x[0-9a-fA-F]{16,}/g, '0x…')
+    .replace(/[0-9a-fA-F]{32,}/g, '…')
+    .replace(/\d{16,}/g, '…')
+    .slice(0, max);
+}
 
 function bigintAsString(_key: string, value: unknown): unknown {
   return typeof value === 'bigint' ? value.toString() : value;

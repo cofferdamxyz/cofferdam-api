@@ -115,8 +115,15 @@ describe('identityLogLine', () => {
       nullifier: NULLIFIER,
       nested: { customData: '0x01', userContextData: CTX, ok: 1, list: [{ proof: PROOF, keep: true }] },
       previousAccount: PREVIOUS,
+      proofDate: '2026-10-10',
     });
-    expect(JSON.parse(line)).toEqual({ kind: 'x', account: ACCOUNT, nonce: '26', nested: { ok: 1, list: [{ keep: true }] } });
+    expect(JSON.parse(line)).toEqual({
+      kind: 'x',
+      account: ACCOUNT,
+      nonce: '26',
+      nested: { ok: 1, list: [{ keep: true }] },
+      proofDate: '2026-10-10',
+    });
   });
 });
 
@@ -185,6 +192,12 @@ describe('/v1/self/* logs (Self, Base Sepolia until the cut-over)', () => {
     expect((await h.pickup()).status).toBe(200);
     expect(lines.length).toBeGreaterThan(0);
     expectPolicyKept();
+    // What the line keeps: the account, the bundle and the Celo receipt's date.
+    expect(lines.map((l) => (l.startsWith('{') ? (JSON.parse(l) as Record<string, unknown>) : null)).find((l) => l?.kind === 'self.verify')).toMatchObject({
+      account: ACCOUNT,
+      bundle: 'bind',
+      proofDate: '2026-10-10',
+    });
   });
 
   it('a rebind never logs the account the passport moves from', async () => {
@@ -194,13 +207,14 @@ describe('/v1/self/* logs (Self, Base Sepolia until the cut-over)', () => {
     expectPolicyKept();
   });
 
-  it("an attester refusal logs its code, never the nullifier or the attester's message", async () => {
+  it("an attester refusal logs its code and its message with the nullifier and the account cut", async () => {
     const h = harness({ kind: 'unbound' }, async () => {
       throw new Error(`CELO_ROOT_UNKNOWN: nullifier ${NULLIFIER} for ${ACCOUNT}`);
     });
     expect((await h.post()).status).toBe(400);
     expect(lines.length).toBeGreaterThan(0);
     expectPolicyKept();
+    expect(lines.join('\n')).toContain('"detail":"CELO_ROOT_UNKNOWN: nullifier … for 0x…"');
   });
 });
 

@@ -23,6 +23,8 @@
 
 import { decodeAbiParameters, decodeEventLog, getAddress, slice, toFunctionSelector, type Address, type Hex } from 'viem';
 
+import { scrubIdentifiers } from './identityLog.js';
+
 /** EntryPoint v0.7's per-op outcome events. */
 export const ENTRY_POINT_EVENTS_ABI = [
   {
@@ -144,13 +146,6 @@ const ERROR_NAMES: ReadonlyMap<string, string> = new Map(
 const ERROR_STRING = '0x08c379a0';
 const PANIC = '0x4e487b71';
 
-/** A revert string with every long hex or digit run cut, since a contract may build one from an identifier. */
-function scrub(text: string): string {
-  return text
-    .replace(/0x[0-9a-fA-F]{16,}/g, '0x…')
-    .replace(/\d{16,}/g, '…')
-    .slice(0, 96);
-}
 
 /**
  * A revert's name, safe to log beside the account: a known custom error's
@@ -164,7 +159,7 @@ export function revertName(data: Hex | undefined): string {
   if (selector === ERROR_STRING) {
     try {
       const [message] = decodeAbiParameters([{ type: 'string' }], slice(data, 4));
-      return `Error: ${scrub(message)}`;
+      return `Error: ${scrubIdentifiers(message, 96)}`;
     } catch {
       return 'Error';
     }

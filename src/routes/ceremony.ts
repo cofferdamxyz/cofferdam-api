@@ -100,11 +100,14 @@ export const CEREMONY_PINS = {
 } as const;
 
 /**
- * The account layer a chain's co-signs are pinned to, or null where the chain
- * lacks one of its three contracts: Base mainnet, whose table is empty, and
- * whose co-sign needs a mainnet attester of its own (decision 0080, P7).
+ * The account layer a chain's co-signs are pinned to, or null where the plane
+ * may not co-sign: a chain lacking one of the three contracts, and any chain
+ * but Base Sepolia, since the one `ATTESTER` binding is the Sepolia attester
+ * and a mainnet co-sign needs a mainnet attester of its own (decision 0080,
+ * P7). That binding, per chain, lifts the second rule.
  */
 export function ceremonyPinsFor(chainId: PlaneChainId, deployments: ChainDeployments): CeremonyDeps['pins'] | null {
+  if (chainId !== BASE_SEPOLIA_CHAIN_ID) return null;
   const moduleRegistry = deployments.CofferdamModuleRegistry?.address;
   const ceremonyRegistry = deployments.CofferdamCeremonyAttesterRegistry?.address;
   const highModule = deployments.WebAuthnPasskeyAuthority?.address;

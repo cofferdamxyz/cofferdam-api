@@ -175,6 +175,24 @@ describe('submitUserOperation: the execution pre-flight and the op\'s own outcom
     ]);
   });
 
+  it("gives a handleOps the pre-flight sees revert its EntryPoint reason", async () => {
+    const data = encodeErrorResult({ abi: ENTRY_POINT_ABI, errorName: 'FailedOp', args: [0n, 'AA31 paymaster deposit too low'] });
+    chain.simulateBlocks.mockResolvedValue([{ calls: [{ status: 'failure', logs: [], data, gasUsed: 1n, error: new BaseError('Execution reverted') }] }]);
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'simulation_failed', message: 'FailedOp: AA31 paymaster deposit too low' });
+  });
+
+  it('answers unknown, never reverted, when handleOps itself reverted on chain', async () => {
+    chain.sendRawTransaction.mockResolvedValue(keccak256(RAW));
+    chain.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', logs: [] });
+    await expect(submitUserOperation(env, op)).resolves.toEqual({ txHash: keccak256(RAW), receipt: 'unknown' });
+    expect(logged()).toEqual([{ event: 'aa_handle_ops_reverted', sender: SENDER, nonce: '26', txHash: keccak256(RAW) }]);
+  });
+
+  it('labels only a missing method as eth_simulateV1 unsupported', async () => {
+    chain.simulateBlocks.mockRejectedValue(Object.assign(new BaseError('RPC error'), { details: 'transaction type not supported' }));
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'preflight_unavailable', message: 'RPC error' });
+  });
+
   it('answers pending when the receipt does not come in time', async () => {
     chain.sendRawTransaction.mockResolvedValue(keccak256(RAW));
     chain.waitForTransactionReceipt.mockRejectedValue(new BaseError('Timed out while waiting for transaction'));

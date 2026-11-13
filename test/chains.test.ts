@@ -141,6 +141,8 @@ describe('ceremony pins per chain', () => {
     expect(ceremonyPinsFor(84532, SEPOLIA_DEPLOYMENTS)).toEqual(CEREMONY_PINS);
     expect(ceremonyPinsFor(8453, BASE_MAINNET_DEPLOYMENTS)).toBeNull();
     expect(ceremonyPinsFor(8453, TEST_TABLES[8453])).toBeNull();
+    // Even a full mainnet layer gets no co-sign: the one attester binding is Sepolia's (P7).
+    expect(ceremonyPinsFor(8453, SEPOLIA_DEPLOYMENTS)).toBeNull();
   });
 
   it('reads the body\'s chain, Sepolia when it names none', () => {
