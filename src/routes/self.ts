@@ -56,7 +56,7 @@ import {
   parseSelfVerifyBody,
 } from '../services/selfBind.js';
 import { checkOnChainAuthority, type AuthorityCheck } from '../services/authorityCheck.js';
-import { identityLogLine } from '../services/identityLog.js';
+import { identityLogLine, scrubIdentifiers } from '../services/identityLog.js';
 import { TIER } from '../services/ceremony.js';
 import { envReplayStore, type ReplayStore } from '../services/popReplayStore.js';
 import { type PasskeySession } from '../services/sessionAttestation.js';
@@ -288,9 +288,10 @@ export function createSelfRoutes(deps: SelfRouteDeps = defaultSelfRouteDeps) {
     } catch (err) {
       const code = attesterErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
-      // The identity log policy (`services/identityLog.ts`): the account and
-      // the attester's code, never the nullifier or the attester's message.
-      console.log(identityLogLine({ kind: 'self.verify.rejected', account: req.account, code }));
+      // The identity log policy (`services/identityLog.ts`): the account, the
+      // attester's code and its message with every long number or hex run cut,
+      // never the nullifier.
+      console.log(identityLogLine({ kind: 'self.verify.rejected', account: req.account, code, detail: scrubIdentifiers(message) }));
       const retryable = code === 'CELO_RPC_UNAVAILABLE' || code === 'attester_rpc_failed';
       const operator = /_VAR$|^BAD_ATTESTER_KEY$|^BAD_CELO/.test(code);
       return c.json(
