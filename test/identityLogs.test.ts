@@ -35,6 +35,7 @@ import { generatePrivateKey } from 'viem/accounts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Env } from '../src/env.js';
+import plane from '../src/index.js';
 import { createAaRoutes, submitUserOperation } from '../src/routes/aa.js';
 import { createSelfRoutes, type BindStatus } from '../src/routes/self.js';
 import type { SignBindRequest, SignBindResponse } from '../src/services/attester.js';
@@ -50,6 +51,7 @@ const chain = vi.hoisted(() => ({
   waitForTransactionReceipt: vi.fn(),
 }));
 const wallet = vi.hoisted(() => ({ prepareTransactionRequest: vi.fn(), signTransaction: vi.fn() }));
+vi.mock('cloudflare:workers', () => ({ DurableObject: class {} }));
 vi.mock('../src/chain/client.js', () => ({ getBaseSepoliaClient: () => chain, getBaseClient: () => chain }));
 vi.mock('viem', async (importOriginal) => ({ ...(await importOriginal<typeof Viem>()), createWalletClient: () => wallet }));
 
@@ -310,5 +312,60 @@ describe('/v1/aa/user-operation logs (a bind is an op of the account itself)', (
     expect((await post()).status).toBe(503);
     expect(lines.length).toBeGreaterThan(2);
     expectPolicyKept([callData.slice(10, 80)]);
+  });
+});
+
+describe("the plane's unhandled-error log on an identity route", () => {
+  it('logs the error by name and cut message, never the request or the nullifier', async () => {
+    const signals = new Array<string>(21).fill('0');
+    signals[7] = NULLIFIER;
+    signals[8] = '1';
+    signals[9] = '1028250853844545477525675497463046671568825934242895532070630707193360198082';
+    signals[20] = BigInt(ripemd160(sha256(CTX))).toString();
+    const body = {
+      attestationId: 1,
+      proof: { a: [PROOF[0], PROOF[1]], b: [[PROOF[2], PROOF[0]], [PROOF[1], PROOF[2]]], c: [PROOF[0], PROOF[1]] },
+      publicSignals: signals,
+      userContextData: CTX.slice(2),
+    };
+    const env = {
+      ENVIRONMENT: 'development',
+      BASE_SEPOLIA_RPC_URL: 'http://127.0.0.1:9',
+      ATTESTER: {
+        signBind: async (req: SignBindRequest) => ({
+          attesterAddress: '0x2dFDdE621680A270cC01E8D9D729f25a46Bdae59',
+          messageHash: `0x${'ab'.repeat(32)}`,
+          signature: `0x${'cd'.repeat(65)}`,
+          chainId: '84532',
+          registry: req.registry,
+          account: req.account,
+          userContextData: req.userContextData,
+          gate: 'celo',
+          celo: { chainId: '42220', registry: '0x37F5CB8cB1f6B00aa768D8aA99F1A9289802A968', merkleRoot: '1', proofDate: '2026-10-10' },
+        }),
+      },
+      // The bundle store fails with the nullifier in its message: an unhandled error.
+      BIND_BUNDLES_DO: {
+        getByName: () => ({
+          put: async () => {
+            throw new Error(`put refused for nullifier ${NULLIFIER} and ${CTX}`);
+          },
+        }),
+      },
+    } as unknown as Env;
+    const res = await plane.request(
+      '/v1/self/verify',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      env,
+    );
+    expect(res.status).toBe(500);
+    expectPolicyKept();
+    const unhandled = lines.find((l) => l.includes('"unhandled"'));
+    expect(unhandled && JSON.parse(unhandled)).toEqual({
+      event: 'unhandled',
+      route: '/v1/self/verify',
+      name: 'Error',
+      message: 'put refused for nullifier … and 0x…',
+    });
   });
 });

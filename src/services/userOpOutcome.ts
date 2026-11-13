@@ -25,7 +25,7 @@ import { decodeAbiParameters, decodeEventLog, getAddress, slice, toFunctionSelec
 
 import { scrubIdentifiers } from './identityLog.js';
 
-/** EntryPoint v0.7's per-op outcome events. */
+/** EntryPoint v0.7's per-op outcome events (`UserOperationPrefundTooLow` precedes a failed op whose gas outran its prefund). */
 export const ENTRY_POINT_EVENTS_ABI = [
   {
     type: 'event',
@@ -48,6 +48,15 @@ export const ENTRY_POINT_EVENTS_ABI = [
       { name: 'sender', type: 'address', indexed: true },
       { name: 'nonce', type: 'uint256', indexed: false },
       { name: 'revertReason', type: 'bytes', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'UserOperationPrefundTooLow',
+    inputs: [
+      { name: 'userOpHash', type: 'bytes32', indexed: true },
+      { name: 'sender', type: 'address', indexed: true },
+      { name: 'nonce', type: 'uint256', indexed: false },
     ],
   },
   {
@@ -211,6 +220,8 @@ export function opOutcome(logs: readonly OutcomeLog[], entryPoint: Address, send
     if (getAddress(args.sender) !== who || args.nonce !== nonce) continue;
     if (decoded.eventName === 'UserOperationEvent') {
       success = (decoded.args as { success: boolean }).success;
+    } else if (decoded.eventName === 'UserOperationPrefundTooLow') {
+      reason = 'prefund_too_low';
     } else if (reason === null) {
       const name = revertName((decoded.args as { revertReason: Hex }).revertReason);
       reason = decoded.eventName === 'PostOpRevertReason' ? `postOp: ${name}` : name;
