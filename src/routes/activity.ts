@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Hono, type Context } from 'hono';
+import { chainRpcUrl } from '../chain/chains.js';
+import { BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 import type { Env } from '../env.js';
 import { ActivityRpcError } from '../services/activityScan.js';
 import {
@@ -21,15 +23,25 @@ import {
 export const activityRoutes = new Hono<{ Bindings: Env }>();
 
 /** Default chainId (Base Sepolia). Overridable via query param. */
-const DEFAULT_CHAIN_ID = 84532;
+const DEFAULT_CHAIN_ID = BASE_SEPOLIA_CHAIN_ID;
 
-/** Read options for a chain: the activity RPC, the log span and, on Sepolia, the store. */
+/**
+ * Read options for a chain: the activity RPC, the log span and, on Sepolia, the
+ * store. Mainnet's RPC fallback reads `BASE_RPC_URL` only while the mainnet
+ * switch is on (decision 0080, `chain/chains.ts`); off, it keeps viem's public
+ * Base endpoint, as before. Its first source stays SQD Portal either way.
+ */
 export function activityOptions(env: Env, chainId: number): ActivityOptions {
   const range = Number(env.ACTIVITY_LOG_RANGE);
   const indexFrom = Number(env.ACTIVITY_INDEX_FROM_BLOCK);
   const storeOn = STORE_CHAINS.has(chainId) && env.ACTIVITY_DO != null && Number.isSafeInteger(indexFrom) && indexFrom > 0;
   return {
-    rpcUrl: chainId === 84532 ? env.ACTIVITY_RPC_URL || env.BASE_SEPOLIA_RPC_URL : undefined,
+    rpcUrl:
+      chainId === BASE_SEPOLIA_CHAIN_ID
+        ? env.ACTIVITY_RPC_URL || env.BASE_SEPOLIA_RPC_URL
+        : chainId === BASE_MAINNET_CHAIN_ID
+          ? (chainRpcUrl(env, chainId) ?? undefined)
+          : undefined,
     logRange: Number.isSafeInteger(range) && range > 0 ? range : undefined,
     store: storeOn ? new DurableActivityStore(env.ACTIVITY_DO!) : undefined,
     indexFromBlock: storeOn ? indexFrom : undefined,

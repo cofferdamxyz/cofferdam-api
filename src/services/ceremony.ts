@@ -121,7 +121,8 @@ export class CeremonyRequestError extends Error {
       | 'assertion_invalid'
       | 'session_not_signer'
       | 'ceremony_hash_mismatch'
-      | 'rate_limited',
+      | 'rate_limited'
+      | 'chain_unsupported',
     message: string,
     readonly status: number,
   ) {

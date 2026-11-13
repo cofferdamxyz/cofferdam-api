@@ -87,7 +87,8 @@ describe('checkUserOperationPolicy', () => {
 
 describe('POST /v1/aa/user-operation', () => {
   const env = (overrides: Partial<Env> = {}) => ({ RELAYER_PRIVATE_KEY: '0x' + '11'.repeat(32), ...overrides }) as unknown as Env;
-  type Submit = (env: Env, op: unknown, admit: () => Promise<void>) => Promise<Hex>;
+  type Submit = (env: Env, op: unknown, admit: () => Promise<void>) => Promise<{ txHash: Hex; receipt: 'success' | 'pending' }>;
+  const sentOk = { txHash: '0xbeef' as Hex, receipt: 'success' as const };
   const app = (submit: Submit) => {
     const h = new Hono();
     h.route('/v1/aa', createAaRoutes({ policy, submit: submit as never }));
@@ -107,14 +108,14 @@ describe('POST /v1/aa/user-operation', () => {
     if (simulation === 'fail') throw new UserOpSubmitError('simulation_failed', 'FailedOp: AA24 signature error');
     await admit();
     sent.push(op);
-    return '0xbeef';
+    return sentOk;
   };
 
   it('relays a good op and answers 202 with the tx hash', async () => {
     const seen: unknown[] = [];
-    const res = await post(app(async (_e, op) => { seen.push(op); return '0xbeef'; }), { userOp: wireOp() });
+    const res = await post(app(async (_e, op) => { seen.push(op); return sentOk; }), { userOp: wireOp() });
     expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({ ok: true, txHash: '0xbeef', entryPoint: ENTRY_POINT_V07 });
+    expect(await res.json()).toMatchObject({ ok: true, txHash: '0xbeef', entryPoint: ENTRY_POINT_V07, receipt: 'success' });
     expect((seen[0] as { sender: string }).sender).toBe(SENDER);
   });
   it('counts the per-sender bucket only after policy and the simulation pass', async () => {
@@ -142,7 +143,7 @@ describe('POST /v1/aa/user-operation', () => {
   it('turns a busy network away before policy and the simulation', async () => {
     let called = false;
     const rl = limiters((key) => key.startsWith('aa-ip:'));
-    const res = await post(app(async () => ((called = true), '0xbeef')), { userOp: wireOp() }, rl.env, IP);
+    const res = await post(app(async () => ((called = true), sentOk)), { userOp: wireOp() }, rl.env, IP);
     expect(res.status).toBe(429);
     expect(rl.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7']);
     expect(called).toBe(false);
@@ -158,5 +159,26 @@ describe('POST /v1/aa/user-operation', () => {
     expect((await post(relay, { userOp: wireOp() })).status).toBe(502);
     expect((await post(h, { userOp: wireOp() }, env({ RELAYER_PRIVATE_KEY: undefined }))).status).toBe(503);
     expect((await post(h, 'not json' as unknown)).status).toBe(400);
+  });
+
+  it('answers the execution pre-flight and the op\'s own outcome honestly (decision 0080)', async () => {
+    const reverted = await post(app(async () => { throw new UserOpSubmitError('execution_reverted', 'WrongBoundDigest'); }), { userOp: wireOp() });
+    expect(reverted.status).toBe(400);
+    expect(await reverted.json()).toEqual({ ok: false, error: 'execution_reverted', message: 'WrongBoundDigest' });
+
+    const mined = await post(
+      app(async () => { throw new UserOpSubmitError('user_op_reverted', 'IdentifierAlreadyBound', '0xfeed'); }),
+      { userOp: wireOp() },
+    );
+    expect(mined.status).toBe(422);
+    expect(await mined.json()).toEqual({ ok: false, error: 'user_op_reverted', message: 'IdentifierAlreadyBound', txHash: '0xfeed' });
+
+    const unavailable = await post(app(async () => { throw new UserOpSubmitError('preflight_unavailable', 'eth_simulateV1 unsupported'); }), { userOp: wireOp() });
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toMatchObject({ ok: false, error: 'preflight_unavailable' });
+
+    const pending = await post(app(async () => ({ txHash: '0xbeef' as Hex, receipt: 'pending' as const })), { userOp: wireOp() });
+    expect(pending.status).toBe(202);
+    expect(await pending.json()).toMatchObject({ ok: true, txHash: '0xbeef', receipt: 'pending' });
   });
 });

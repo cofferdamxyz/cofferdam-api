@@ -26,7 +26,8 @@
  */
 
 import { keccak256, toBytes, type Address, type Hex } from 'viem';
-import type { BaseSepoliaClient } from '../chain/client.js';
+import type { ChainClient } from '../chain/client.js';
+import { BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // companyAnchor derivation
@@ -133,6 +134,13 @@ export function formatChallengeValue(token: string): string {
 // so no route can hand it to a caller.
 // ─────────────────────────────────────────────────
 
+/**
+ * The chain the two registries are read on: Base Sepolia, by name, since the
+ * plane reads more than one chain (workspace decision 0080). They join the
+ * per-chain table (`DEPLOYMENTS_BY_CHAIN`) when they deploy; mainnet has none.
+ */
+export const COMPANY_REGISTRY_CHAIN_ID = BASE_SEPOLIA_CHAIN_ID;
+
 export const COMPANY_REGISTRY_ADDRESS: Address | null = null;
 export const CORPORATE_REGISTRY_ADDRESS: Address | null = null;
 
@@ -178,7 +186,7 @@ export interface CompanyRegistration {
  * this into a response (wallet isolation, `docs/architecture/system.md`).
  */
 export async function readCompanyWallet(
-  client: BaseSepoliaClient,
+  client: ChainClient,
   companyAnchor: CompanyAnchor,
 ): Promise<Address | null> {
   if (!COMPANY_REGISTRY_ADDRESS) return null;
@@ -197,7 +205,7 @@ export async function readCompanyWallet(
  * should surface `registry_not_deployed`).
  */
 export async function readCompanyRegistration(
-  client: BaseSepoliaClient,
+  client: ChainClient,
   companyAnchor: CompanyAnchor,
 ): Promise<CompanyRegistration | null> {
   if (!COMPANY_REGISTRY_ADDRESS || !CORPORATE_REGISTRY_ADDRESS) return null;

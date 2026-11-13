@@ -28,6 +28,24 @@ export interface Env {
   BASE_SEPOLIA_RPC_URL: string;
 
   /**
+   * Base mainnet (8453) on or off for the plane's reads (workspace decision
+   * 0080, milestone M1): on only when exactly `"true"` and `BASE_RPC_URL` is
+   * set (`chain/chains.ts`). Off by default and in `wrangler.jsonc`. On, a
+   * path still answers `chain_unsupported` on mainnet until its contracts are
+   * in `DEPLOYMENTS_BY_CHAIN`, whose mainnet table is empty. The relay never
+   * submits on mainnet (its 8453 test relay is designed in the workspace
+   * `plane.md`, not built).
+   */
+  BASE_MAINNET_ENABLED?: string;
+
+  /**
+   * Base mainnet JSON-RPC, read only when `BASE_MAINNET_ENABLED` is `"true"`.
+   * In development the Base-mainnet fork (anvil on :8546, chain id 8453); a
+   * keyed provider's URL is a secret. No default.
+   */
+  BASE_RPC_URL?: string;
+
+  /**
    * Celo mainnet JSON-RPC, where Self.xyz anchors its identity registry.
    * Read-only; used to build gate-passing synthetic signals for
    * `/v1/attester/test-sign` and to pre-flight real proofs. Defaults to the

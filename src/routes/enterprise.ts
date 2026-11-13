@@ -28,11 +28,11 @@
 
 import { Hono, type Context } from 'hono';
 import type { Env } from '../env.js';
-import { getBaseSepoliaClient } from '../chain/client.js';
-import { BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
+import { chainContext } from '../chain/chains.js';
 import {
   COMPANY_REGISTRY_ADDRESS,
   CORPORATE_REGISTRY_ADDRESS,
+  COMPANY_REGISTRY_CHAIN_ID,
   DNS_CHALLENGE_VALUE_PREFIX,
   canonicalizeDomain,
   deriveCompanyAnchor,
@@ -65,8 +65,9 @@ async function registrationFor(
 ): Promise<RegistrationResult> {
   if (!COMPANY_REGISTRY_ADDRESS || !CORPORATE_REGISTRY_ADDRESS) return { status: 'registry_not_deployed' };
   try {
-    const client = getBaseSepoliaClient(c.env.BASE_SEPOLIA_RPC_URL);
-    return await readCompanyRegistration(client, companyAnchor);
+    const chain = chainContext(c.env, COMPANY_REGISTRY_CHAIN_ID);
+    if (!chain) return { status: 'registry_not_deployed' };
+    return await readCompanyRegistration(chain.client, companyAnchor);
   } catch (err) {
     return { status: 'rpc_error', message: err instanceof Error ? err.message : String(err) };
   }
@@ -134,7 +135,7 @@ enterpriseRoutes.get('/companies/:companyAnchor', async (c) => {
   const registration = await registrationFor(c, companyAnchor.toLowerCase() as CompanyAnchor);
   return c.json({
     ok: true,
-    chainId: BASE_SEPOLIA_CHAIN_ID,
+    chainId: COMPANY_REGISTRY_CHAIN_ID,
     companyAnchor: companyAnchor.toLowerCase(),
     registration,
   });

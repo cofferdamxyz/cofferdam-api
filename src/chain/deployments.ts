@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Base Sepolia contract deployments.
+ * Contract deployments per chain: Base Sepolia's in full, Base mainnet's empty
+ * (workspace decision 0080; `DEPLOYMENTS_BY_CHAIN` at the end).
  *
  * **Source of truth.** Vendored from
  * `base-contracts/deployments/baseSepolia.json` (this workspace),
@@ -208,12 +209,44 @@ export const SEPOLIA_DEPLOYMENTS = {
 
 export type ContractName = keyof typeof SEPOLIA_DEPLOYMENTS;
 
+/** Base mainnet chain id. */
+export const BASE_MAINNET_CHAIN_ID = 8453 as const;
+
+/** The chains the plane knows (workspace decision 0080): Base Sepolia, and Base mainnet behind a var. */
+export type PlaneChainId = typeof BASE_SEPOLIA_CHAIN_ID | typeof BASE_MAINNET_CHAIN_ID;
+
 /**
- * The authority-module address a session attestation's signature scheme must
- * resolve to on-chain. `webauthn` assertions are verified by
- * `WebAuthnPasskeyAuthority`; raw `p256` signatures by `PasskeyAuthority`.
+ * A contract the plane may read on some chain: today's Sepolia names, plus the
+ * decision 0080 identity registry (`CofferdamIdentityRegistry`, base-contracts
+ * PR #21), which takes the place of `NullifierRegistry` on mainnet.
  */
-export const PASSKEY_AUTHORITY_MODULE_BY_SCHEME = {
-  webauthn: SEPOLIA_DEPLOYMENTS.WebAuthnPasskeyAuthority.address,
-  p256: SEPOLIA_DEPLOYMENTS.PasskeyAuthority.address,
-} as const satisfies Record<'webauthn' | 'p256', Address>;
+export type DeploymentName = ContractName | 'CofferdamIdentityRegistry';
+
+/** One chain's deployments. A name a chain lacks is a path the plane refuses on that chain. */
+export type ChainDeployments = Readonly<Partial<Record<DeploymentName, ContractDeployment>>>;
+
+/**
+ * Base mainnet: empty on purpose (workspace decision 0080 (2)). Today's
+ * contracts never go to mainnet, the throwaway test generation (M2) does not
+ * exist yet and its addresses never enter the plane's defaults, and the
+ * production generation (M5) is deployed once, by the Safe. Until a chain has
+ * the contract a path needs, that path answers `chain_unsupported` there, with
+ * the mainnet switch on or off.
+ */
+export const BASE_MAINNET_DEPLOYMENTS: ChainDeployments = {};
+
+/** Every chain's deployments, by chain id. */
+export const DEPLOYMENTS_BY_CHAIN: Readonly<Record<PlaneChainId, ChainDeployments>> = {
+  [BASE_SEPOLIA_CHAIN_ID]: SEPOLIA_DEPLOYMENTS,
+  [BASE_MAINNET_CHAIN_ID]: BASE_MAINNET_DEPLOYMENTS,
+};
+
+/**
+ * The authority module a session attestation's signature scheme must resolve
+ * to on a chain: `webauthn` assertions are verified by
+ * `WebAuthnPasskeyAuthority`, raw `p256` signatures by the test-only
+ * `PasskeyAuthority`. Null where the chain has none (mainnet has no `p256`).
+ */
+export function passkeyModuleFor(deployments: ChainDeployments, alg: 'webauthn' | 'p256'): Address | null {
+  return deployments[alg === 'webauthn' ? 'WebAuthnPasskeyAuthority' : 'PasskeyAuthority']?.address ?? null;
+}
