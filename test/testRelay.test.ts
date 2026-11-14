@@ -259,9 +259,14 @@ describe('submitUserOperation on the mainnet test lane', () => {
     expect(base.sendRawTransaction).not.toHaveBeenCalled();
   });
 
-  it('refuses a price under the base fee and a quarter', async () => {
-    base.getBlock.mockResolvedValue({ baseFeePerGas: 20_000_000n });
+  it('refuses a price under the base fee, and takes the SDK-shaped price of 1.2 times it', async () => {
+    base.getBlock.mockResolvedValue({ baseFeePerGas: 20_000_001n });
     await expect(submitUserOperation(env, op(), undefined, 10, lane)).rejects.toMatchObject({ code: 'fee_too_low' });
+    // The SDK packs eth_gasPrice as both fees: Base mainnet read 6,000,000 against a 5,000,000 base fee (2026-11-13).
+    base.getBlock.mockResolvedValue({ baseFeePerGas: 5_000_000n });
+    const sdkShaped = op({ gasFees: pack(6_000_000n, 6_000_000n), preVerificationGas: '20000000' });
+    await expect(submitUserOperation(env, sdkShaped, undefined, 10, lane)).resolves.toMatchObject({ receipt: 'success' });
+    expect(effectiveGasPrice(sdkShaped, 5_000_000n)).toBe(6_000_000n);
   });
 
   it('skips the check for a call with no evidence (a deployment)', async () => {

@@ -328,12 +328,13 @@ async function registryPreflight(client: Pick<ChainClient, 'readContract'>, regi
 }
 
 /**
- * The mainnet test lane's fee check: the op's price must clear the base fee
- * with a margin (the relayer signs at that price), and its
- * `preVerificationGas` must repay the L1 data fee the relayer's transaction
- * pays (`requiredPreVerificationGas`). The SDK sends 0 today, so until it
- * estimates the value every op meets `pre_verification_gas_too_low`, whose
- * message names the least value.
+ * The mainnet test lane's fee check: the op's price must reach the base fee
+ * (the relayer signs at that price, so the EntryPoint repays it at what it
+ * pays), and its `preVerificationGas` must repay the L1 data fee the
+ * relayer's transaction pays (`requiredPreVerificationGas`). An op the SDK
+ * builds with `preVerificationGas: 'l1-fee'` clears it; one sent with the
+ * default 0 meets `pre_verification_gas_too_low`, whose message names the
+ * least value.
  */
 async function l1FeePreflight(client: Pick<ChainClient, 'getBlock' | 'readContract'>, op: PackedUserOperationWire, data: Hex): Promise<void> {
   let baseFee: bigint;
@@ -351,8 +352,8 @@ async function l1FeePreflight(client: Pick<ChainClient, 'getBlock' | 'readContra
     throw new UserOpSubmitError('preflight_unavailable', reason);
   }
   const { maxFeePerGas } = unpackGasFees(op.gasFees);
-  if (maxFeePerGas * 4n < baseFee * 5n) {
-    throw new UserOpSubmitError('fee_too_low', `maxFeePerGas must be at least ${(baseFee * 5n + 3n) / 4n} (the base fee and a quarter)`);
+  if (maxFeePerGas < baseFee) {
+    throw new UserOpSubmitError('fee_too_low', `maxFeePerGas must be at least the base fee, ${baseFee}`);
   }
   const required = requiredPreVerificationGas(l1Fee, effectiveGasPrice(op, baseFee), data);
   if (required === null || op.preVerificationGas < required) {

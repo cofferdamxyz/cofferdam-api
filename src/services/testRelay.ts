@@ -17,7 +17,8 @@
  * The ops are unsponsored: the account prefunds the EntryPoint, which repays
  * the relayer for execution and for `preVerificationGas`. Base's L1 data fee
  * falls on the relayer's transaction, so the op's `preVerificationGas` must
- * cover it (`requiredPreVerificationGas`); the SDK hard-codes 0 today.
+ * cover it (`requiredPreVerificationGas`); the SDK's
+ * `preVerificationGas: 'l1-fee'` estimates it, and its default 0 is refused.
  */
 
 import { decodeFunctionData, getAddress, isAddress, keccak256, serializeTransaction, toBytes, type Address, type Hex } from 'viem';
