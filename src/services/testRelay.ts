@@ -20,10 +20,10 @@
  * cover it (`requiredPreVerificationGas`); the SDK hard-codes 0 today.
  */
 
-import { decodeFunctionData, getAddress, isAddress, keccak256, size, toBytes, type Address, type Hex } from 'viem';
+import { decodeFunctionData, getAddress, isAddress, keccak256, serializeTransaction, toBytes, type Address, type Hex } from 'viem';
 
 import { mainnetEnabled, type ChainEnv } from '../chain/chains.js';
-import { UserOpRequestError, unpackGasFees, unpackGasLimits, type PackedUserOperationWire } from './userOp.js';
+import { ENTRY_POINT_V07, UserOpRequestError, unpackGasFees, unpackGasLimits, type PackedUserOperationWire } from './userOp.js';
 
 /** The vars the test relay reads (a subset of `Env`). */
 export interface TestRelayEnv extends ChainEnv {
@@ -233,31 +233,47 @@ function callsRegistry(data: Hex): boolean {
   }
 }
 
-/** OP Stack's GasPriceOracle predeploy, with Fjord's size-based upper bound on the L1 fee. */
+/** OP Stack's GasPriceOracle predeploy: `getL1Fee` of an unsigned transaction, the fee Base charges its sender. */
 export const GAS_PRICE_ORACLE: Address = '0x420000000000000000000000000000000000000F';
 export const GAS_PRICE_ORACLE_ABI = [
   {
     type: 'function',
-    name: 'getL1FeeUpperBound',
+    name: 'getL1Fee',
     stateMutability: 'view',
-    inputs: [{ name: '_unsignedTxSize', type: 'uint256' }],
+    inputs: [{ name: '_data', type: 'bytes' }],
     outputs: [{ type: 'uint256' }],
   },
 ] as const;
 
-/** RLP fields of an unsigned EIP-1559 `handleOps` transaction beside its data (chain id, nonce, fees, gas, to, value, lists). */
-const UNSIGNED_TX_OVERHEAD_BYTES = 120;
-
-/** The unsigned transaction size `getL1FeeUpperBound` takes for `data` (the oracle adds the signature's 68 bytes). */
-export function unsignedTxSize(data: Hex): bigint {
-  return BigInt(size(data) + UNSIGNED_TX_OVERHEAD_BYTES);
+/**
+ * The unsigned `handleOps` transaction `getL1Fee` prices: EIP-1559 on Base
+ * mainnet to the EntryPoint at the op's own fees, as the relayer signs it. The
+ * nonce and the gas limit are stand-ins; they move the size by a byte or two.
+ */
+export function unsignedHandleOpsTx(data: Hex, op: PackedUserOperationWire): Hex {
+  const { maxFeePerGas, maxPriorityFeePerGas } = unpackGasFees(op.gasFees);
+  return serializeTransaction({
+    type: 'eip1559',
+    chainId: 8453,
+    nonce: 0,
+    to: ENTRY_POINT_V07,
+    data,
+    gas: 5_000_000n,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+  });
 }
 
-/** Margin on the L1 fee: the L1 base fee may move between the check and the block. */
+/**
+ * Margin on the L1 fee: the L1 base fee may move between the check and the
+ * block. The SDK's `preVerificationGas: 'l1-fee'` estimates at 137.5% of the
+ * same `getL1Fee` (branch `zkp-sdk`), so its ops clear this check with 10% to
+ * spare.
+ */
 const L1_FEE_MARGIN_PERCENT = 125n;
 
-/** Gas the `handleOps` transaction spends outside any op's accounting: the intrinsic 21,000 and the EntryPoint's own loop. */
-const HANDLE_OPS_OVERHEAD_GAS = 50_000n;
+/** The transaction's intrinsic gas, which no op accounts for (the SDK adds the same). */
+const INTRINSIC_GAS = 21_000n;
 
 /** Calldata gas (EIP-2028): 4 per zero byte, 16 per other byte. */
 export function calldataGas(data: Hex): bigint {
@@ -276,11 +292,12 @@ export function effectiveGasPrice(op: PackedUserOperationWire, baseFee: bigint):
 /**
  * The least `preVerificationGas` that repays the relayer what no op accounts
  * for: the L1 data fee with its margin, at the op's own price, plus the
- * transaction's calldata gas and the EntryPoint's overhead. Null when the op's
- * price is zero (nothing would repay the relayer).
+ * transaction's calldata gas and its intrinsic 21,000, the SDK's own sum. The
+ * EntryPoint's few thousand gas of loop outside any op stay the relayer's.
+ * Null when the op's price is zero (nothing would repay the relayer).
  */
 export function requiredPreVerificationGas(l1FeeWei: bigint, price: bigint, handleOpsData: Hex): bigint | null {
   if (price <= 0n) return null;
   const l1 = (l1FeeWei * L1_FEE_MARGIN_PERCENT + 99n) / 100n;
-  return (l1 + price - 1n) / price + calldataGas(handleOpsData) + HANDLE_OPS_OVERHEAD_GAS;
+  return (l1 + price - 1n) / price + calldataGas(handleOpsData) + INTRINSIC_GAS;
 }
