@@ -243,7 +243,7 @@ describe('/v1/aa/user-operation logs (a bind is an op of the account itself)', (
   const env = { RELAYER_PRIVATE_KEY: generatePrivateKey(), BASE_SEPOLIA_RPC_URL: 'http://127.0.0.1:9' } as unknown as Env;
   const app = () => {
     const h = new Hono<{ Bindings: Env }>();
-    h.route('/v1/aa', createAaRoutes({ policy: { ...DEFAULT_USER_OP_POLICY, paymaster: PAYMASTER, factory: REGISTRY }, submit: submitUserOperation }));
+    h.route('/v1/aa', createAaRoutes({ policy: { ...DEFAULT_USER_OP_POLICY, paymaster: PAYMASTER, factory: REGISTRY }, submit: (e, o, a, l) => submitUserOperation(e, o, a, undefined, l) }));
     return h;
   };
   const post = () =>

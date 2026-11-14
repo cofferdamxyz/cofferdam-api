@@ -35,7 +35,8 @@
  * Work traffic keeps a worker from taking a listing down.
  *
  * The tier is the phone's claim, and the plane publishes no more of it than
- * it can read: 1 or 2 needs `NullifierRegistry.isAccountBound` on Base, and 2
+ * it can read: 1 or 2 needs `isAccountBound` on the identity registry of the
+ * session's chain (`readAccountBound`; Base Sepolia's `NullifierRegistry`), and 2
  * (bound, with verified experience) needs attestation records the plane does
  * not hold yet. So a bound account publishes at most 1 and an unbound one 0,
  * and the answer names the tier published; Base unreadable is `503
@@ -45,8 +46,7 @@
 import { Hono } from 'hono';
 import type { Address } from 'viem';
 
-import { getBaseSepoliaClient } from '../chain/client.js';
-import { SEPOLIA_DEPLOYMENTS } from '../chain/deployments.js';
+import { chainContext } from '../chain/chains.js';
 import type { Env } from '../env.js';
 import { readListingVectors } from '../services/work/clientVectors.js';
 import { WorkCallsError } from '../services/work/fields.js';
@@ -59,8 +59,8 @@ import { createWorkGate, defaultWorkRouteDeps, WORK_KEYS, WORK_OFF_KEYS, workLog
 export interface ListingRouteDeps extends WorkRouteDeps {
   /** The Work stores (default: from the env's bindings). */
   stores?(env: Env): WorkStores;
-  /** `NullifierRegistry.isAccountBound(account)` on Base; throws when Base cannot be read. */
-  accountBound?(env: Env, account: Address): Promise<boolean>;
+  /** `isAccountBound(account)` on the session's chain's identity registry; throws when it cannot be read. */
+  accountBound?(env: Env, account: Address, chainId: number): Promise<boolean>;
 }
 
 const IS_ACCOUNT_BOUND_ABI = [
@@ -73,10 +73,19 @@ const IS_ACCOUNT_BOUND_ABI = [
   },
 ] as const;
 
-async function readAccountBound(env: Env, account: Address): Promise<boolean> {
-  const client = getBaseSepoliaClient(env.BASE_SEPOLIA_RPC_URL);
-  return client.readContract({
-    address: SEPOLIA_DEPLOYMENTS.NullifierRegistry.address,
+/**
+ * The binding on the chain the session names (workspace decision 0080): that
+ * chain's `CofferdamIdentityRegistry`, else its `NullifierRegistry` (Base
+ * Sepolia's Self registry, as before), both with `isAccountBound`. A chain
+ * that is off or has neither throws, so the listing answers
+ * `binding_check_unavailable`, never a guess.
+ */
+export async function readAccountBound(env: Env, account: Address, chainId: number): Promise<boolean> {
+  const chain = chainContext(env, chainId);
+  const registry = chain?.deployments.CofferdamIdentityRegistry ?? chain?.deployments.NullifierRegistry;
+  if (!chain || !registry) throw new Error(`no identity registry on chain ${chainId}`);
+  return chain.client.readContract({
+    address: registry.address,
     abi: IS_ACCOUNT_BOUND_ABI,
     functionName: 'isAccountBound',
     args: [account],
@@ -170,7 +179,7 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
     let tier: 0 | 1 = 0;
     if (input.tier > 0) {
       try {
-        tier = publishedTier(input.tier, await (deps.accountBound ?? readAccountBound)(c.env, account));
+        tier = publishedTier(input.tier, await (deps.accountBound ?? readAccountBound)(c.env, account, admitted.chainId));
       } catch (err) {
         workLog({ event: 'work_listing_binding_unreadable', reason: failureOf(err) });
         return c.json({ ok: false, error: 'binding_check_unavailable', message: 'the personhood binding could not be read on Base; retry shortly' }, 503);

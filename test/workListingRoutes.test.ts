@@ -152,8 +152,11 @@ describe('PUT /v1/work/listing', () => {
   });
 
   it('publishes the tier Base shows, and refuses rather than guess when Base cannot be read', async () => {
-    const unbound = await app(STAGING, { accountBound: async () => false });
+    const asked: unknown[][] = [];
+    const unbound = await app(STAGING, { accountBound: async (...args) => (asked.push(args.slice(1)), false) });
     expect(await (await unbound.put({ account: fxAccount, ...DRAFT, tier: 2 })).json()).toMatchObject({ ok: true, tier: 0 });
+    // The binding is read on the chain the session names (decision 0080), here the fixture token's.
+    expect(asked).toEqual([[getAddress(fxAccount), fixtures.fields.chainId]]);
     const bound = await app();
     expect(await (await bound.put({ account: fxAccount, ...DRAFT, tier: 2 })).json()).toMatchObject({ ok: true, tier: 1 });
     expect(bound.listingIndex.vectors.values().next().value!.metadata.tier).toBe(1);

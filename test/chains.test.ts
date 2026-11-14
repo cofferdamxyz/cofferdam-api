@@ -22,6 +22,7 @@ import {
 } from '../src/chain/deployments.js';
 import type { Env } from '../src/env.js';
 import { activityOptions } from '../src/routes/activity.js';
+import { readAccountBound } from '../src/routes/workListing.js';
 import { CEREMONY_PINS, ceremonyChainId, ceremonyPinsFor } from '../src/routes/ceremony.js';
 import { checkOnChainAuthority } from '../src/services/authorityCheck.js';
 import { authorityKey } from '../src/services/chat/authorityMemo.js';
@@ -164,5 +165,23 @@ describe('activity per chain', () => {
     expect(activityOptions(OFF as unknown as Env, 8453).rpcUrl).toBeUndefined();
     expect(activityOptions(ON as unknown as Env, 8453).rpcUrl).toBe('http://127.0.0.1:8546');
     expect(activityOptions(ON as unknown as Env, 1).rpcUrl).toBeUndefined();
+  });
+});
+
+describe('the listing binding read per chain', () => {
+  it("reads Base Sepolia's NullifierRegistry as before", async () => {
+    clients.sepolia.readContract.mockResolvedValue(true);
+    expect(await readAccountBound(OFF as unknown as Env, ACCOUNT, 84532)).toBe(true);
+    expect(clients.sepolia.readContract).toHaveBeenCalledWith(
+      expect.objectContaining({ address: SEPOLIA_DEPLOYMENTS.NullifierRegistry.address, functionName: 'isAccountBound', args: [ACCOUNT] }),
+    );
+  });
+
+  it('throws on mainnet while it is off or has no identity registry, and never reads another chain', async () => {
+    await expect(readAccountBound(OFF as unknown as Env, ACCOUNT, 8453)).rejects.toThrow(/no identity registry on chain 8453/);
+    await expect(readAccountBound(ON as unknown as Env, ACCOUNT, 8453)).rejects.toThrow(/no identity registry on chain 8453/);
+    await expect(readAccountBound(ON as unknown as Env, ACCOUNT, 1)).rejects.toThrow();
+    expect(clients.sepolia.readContract).not.toHaveBeenCalled();
+    expect(clients.base.readContract).not.toHaveBeenCalled();
   });
 });

@@ -53,14 +53,16 @@ import {
   decodeErrorResult,
   encodeFunctionData,
   http,
+  type Address,
+  type Chain,
   type Hex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { baseSepolia } from 'viem/chains';
+import { base, baseSepolia } from 'viem/chains';
 
-import { getBaseSepoliaClient } from '../chain/client.js';
-import { DEFAULT_BASE_SEPOLIA_RPC_URL } from '../chain/chains.js';
-import { SEPOLIA_DEPLOYMENTS } from '../chain/deployments.js';
+import { getBaseClient, getBaseSepoliaClient, type ChainClient } from '../chain/client.js';
+import { DEFAULT_BASE_SEPOLIA_RPC_URL, chainRpcUrl } from '../chain/chains.js';
+import { BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENTS } from '../chain/deployments.js';
 import type { Env } from '../env.js';
 import {
   DEFAULT_USER_OP_POLICY,
@@ -74,13 +76,29 @@ import {
 } from '../services/userOp.js';
 import { identityLogLine } from '../services/identityLog.js';
 import { sendWithRetry } from '../services/relaySend.js';
-import { opOutcome, type OutcomeLog } from '../services/userOpOutcome.js';
+import {
+  GAS_PRICE_ORACLE,
+  GAS_PRICE_ORACLE_ABI,
+  IDENTITY_REGISTRY_CHECK_ABI,
+  checkTestRelayPolicy,
+  effectiveGasPrice,
+  registryCheckCall,
+  requiredPreVerificationGas,
+  testRelayConfig,
+  unsignedTxSize,
+  type TestRelayConfig,
+} from '../services/testRelay.js';
+import { unpackGasFees } from '../services/userOp.js';
+import { opOutcome, revertName, type OutcomeLog } from '../services/userOpOutcome.js';
 
 export class UserOpSubmitError extends Error {
   constructor(
     readonly code:
       | 'simulation_failed'
       | 'execution_reverted'
+      | 'identity_check_failed'
+      | 'fee_too_low'
+      | 'pre_verification_gas_too_low'
       | 'preflight_unavailable'
       | 'relay_failed'
       | 'rate_limited'
@@ -113,7 +131,44 @@ export interface AaRouteDeps {
    * simulation and the pre-flight pass and before the send; it throws
    * `rate_limited` to refuse. A reverted op throws `user_op_reverted`.
    */
-  submit: (env: Env, op: PackedUserOperationWire, admit: () => Promise<void>) => Promise<RelayOutcome>;
+  submit: (env: Env, op: PackedUserOperationWire, admit: () => Promise<void>, lane: RelayLane) => Promise<RelayOutcome>;
+}
+
+/**
+ * Where an op is relayed. Base Sepolia's lane is the relay as it always was;
+ * the Base mainnet test lane (decision 0080, M2) adds the registry's `check`
+ * pre-flight and makes the op pay the L1 data fee.
+ */
+export interface RelayLane {
+  readonly chainId: typeof BASE_SEPOLIA_CHAIN_ID | typeof BASE_MAINNET_CHAIN_ID;
+  readonly rpcUrl: string;
+  readonly privateKey: Hex;
+  /** The identity registry whose `check` view pre-flights a bind, relink or rebind (none on Sepolia). */
+  readonly identityRegistry?: Address;
+  /** The op repays the L1 data fee through `preVerificationGas`, and the relayer signs at the op's own price. */
+  readonly opPaysL1?: boolean;
+}
+
+/** Base Sepolia's lane: `BASE_SEPOLIA_RPC_URL` and `RELAYER_PRIVATE_KEY`, nothing added. */
+export function sepoliaLane(env: Env): RelayLane {
+  return {
+    chainId: BASE_SEPOLIA_CHAIN_ID,
+    rpcUrl: env.BASE_SEPOLIA_RPC_URL ?? DEFAULT_BASE_SEPOLIA_RPC_URL,
+    privateKey: env.RELAYER_PRIVATE_KEY as Hex,
+  };
+}
+
+/** The Base mainnet test lane, or null while the key or the mainnet switch is off. */
+export function testLane(env: Env, config: TestRelayConfig): RelayLane | null {
+  const rpcUrl = chainRpcUrl(env, BASE_MAINNET_CHAIN_ID);
+  if (!rpcUrl || !env.RELAYER_MAINNET_TEST_PRIVATE_KEY) return null;
+  return {
+    chainId: BASE_MAINNET_CHAIN_ID,
+    rpcUrl,
+    privateKey: env.RELAYER_MAINNET_TEST_PRIVATE_KEY as Hex,
+    identityRegistry: config.registry,
+    opPaysL1: true,
+  };
 }
 
 /** How long the relay waits for the receipt before answering `pending` (Base mines every 2 s; iOS gives up at 60 s). */
@@ -123,6 +178,18 @@ export const RECEIPT_WAIT_MS = 20_000;
 const RECEIPT_POLL_MS = 2_000;
 
 const GLOBAL_KEY = 'aa:global';
+
+/**
+ * The chain the body names (`chainId`, Base Sepolia when absent, so every op
+ * the SDK sends today keeps its path), or null when it is not a positive
+ * safe integer.
+ */
+export function relayChainId(body: unknown): number | null {
+  const raw = body && typeof body === 'object' ? (body as Record<string, unknown>).chainId : undefined;
+  if (raw === undefined) return BASE_SEPOLIA_CHAIN_ID;
+  const n = typeof raw === 'string' && /^\d{1,16}$/.test(raw) ? Number(raw) : raw;
+  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? n : null;
+}
 
 async function overLimit(rl: RateLimit | undefined, key: string): Promise<boolean> {
   if (!rl) return false;
@@ -189,7 +256,7 @@ function handleOpsRevert(data: Hex | undefined, err: unknown): string {
  * nothing it could not pre-flight.
  */
 async function preflightExecution(
-  client: Pick<ReturnType<typeof getBaseSepoliaClient>, 'simulateBlocks'>,
+  client: Pick<ChainClient, 'simulateBlocks'>,
   from: Hex,
   data: Hex,
   op: PackedUserOperationWire,
@@ -223,16 +290,99 @@ async function preflightExecution(
   throw new UserOpSubmitError('execution_reverted', reason);
 }
 
-/** Simulate and pre-flight from the relayer, admit, submit (signed once, one retry), then read the op's own outcome. */
+/** The revert data of a failed `eth_call`, if the node returned any. */
+function revertData(err: unknown): Hex | undefined {
+  if (!(err instanceof BaseError)) return undefined;
+  const revert = err.walk((e) => e instanceof ContractFunctionRevertedError);
+  return revert instanceof ContractFunctionRevertedError ? revert.raw : undefined;
+}
+
+/**
+ * The registry's own pre-flight (`CofferdamIdentityRegistry.check`, base-contracts
+ * PR #21) for an op that binds, relinks or rebinds: the same checks the call
+ * will run, with no simulation of the account. A refusal answers
+ * `identity_check_failed` with the error's name; the identifier `check`
+ * returns, or carries in its errors, is never read, logged or answered.
+ */
+async function registryPreflight(client: Pick<ChainClient, 'readContract'>, registry: Address, op: PackedUserOperationWire): Promise<void> {
+  const call = registryCheckCall(op.callData, registry);
+  if (!call) return;
+  try {
+    await client.readContract({
+      address: registry,
+      abi: IDENTITY_REGISTRY_CHECK_ABI,
+      functionName: 'check',
+      args: [call.action, op.sender, call.adapter, call.evidence],
+    });
+  } catch (err) {
+    const data = revertData(err);
+    if (data !== undefined || (err instanceof BaseError && err.walk((e) => e instanceof ContractFunctionRevertedError))) {
+      const reason = revertName(data);
+      logRelay('aa_identity_check_failed', op, { reason });
+      throw new UserOpSubmitError('identity_check_failed', reason);
+    }
+    const reason = revertReason(err);
+    logRelay('aa_preflight_unavailable', op, { reason });
+    throw new UserOpSubmitError('preflight_unavailable', reason);
+  }
+}
+
+/**
+ * The mainnet test lane's fee check: the op's price must clear the base fee
+ * with a margin (the relayer signs at that price), and its
+ * `preVerificationGas` must repay the L1 data fee the relayer's transaction
+ * pays (`requiredPreVerificationGas`). The SDK sends 0 today, so until it
+ * estimates the value every op meets `pre_verification_gas_too_low`, whose
+ * message names the least value.
+ */
+async function l1FeePreflight(client: Pick<ChainClient, 'getBlock' | 'readContract'>, op: PackedUserOperationWire, data: Hex): Promise<void> {
+  let baseFee: bigint;
+  let l1Fee: bigint;
+  try {
+    const [block, fee] = await Promise.all([
+      client.getBlock({ blockTag: 'latest' }),
+      client.readContract({ address: GAS_PRICE_ORACLE, abi: GAS_PRICE_ORACLE_ABI, functionName: 'getL1FeeUpperBound', args: [unsignedTxSize(data)] }),
+    ]);
+    baseFee = block.baseFeePerGas ?? 0n;
+    l1Fee = fee;
+  } catch (err) {
+    const reason = revertReason(err);
+    logRelay('aa_preflight_unavailable', op, { reason, step: 'l1_fee' });
+    throw new UserOpSubmitError('preflight_unavailable', reason);
+  }
+  const { maxFeePerGas } = unpackGasFees(op.gasFees);
+  if (maxFeePerGas * 4n < baseFee * 5n) {
+    throw new UserOpSubmitError('fee_too_low', `maxFeePerGas must be at least ${(baseFee * 5n + 3n) / 4n} (the base fee and a quarter)`);
+  }
+  const required = requiredPreVerificationGas(l1Fee, effectiveGasPrice(op, baseFee), data);
+  if (required === null || op.preVerificationGas < required) {
+    throw new UserOpSubmitError(
+      'pre_verification_gas_too_low',
+      required === null ? 'the op pays nothing at this price' : `preVerificationGas must be at least ${required} to repay the L1 data fee`,
+    );
+  }
+}
+
+/**
+ * Pre-flight from the relayer, admit, submit (signed once, one retry), then read
+ * the op's own outcome. In order: the registry's `check` (a lane with an
+ * identity registry), the `handleOps` simulation, the L1 fee (a lane where the
+ * op pays it), the execution pre-flight, the per-sender bucket, the send and
+ * the receipt.
+ */
 export async function submitUserOperation(
   env: Env,
   op: PackedUserOperationWire,
   admit: () => Promise<void> = async () => {},
   receiptWaitMs: number = RECEIPT_WAIT_MS,
+  lane: RelayLane = sepoliaLane(env),
 ): Promise<RelayOutcome> {
-  const rpcUrl = env.BASE_SEPOLIA_RPC_URL ?? DEFAULT_BASE_SEPOLIA_RPC_URL;
-  const relayer = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as Hex);
-  const publicClient = getBaseSepoliaClient(rpcUrl);
+  const { rpcUrl } = lane;
+  const relayer = privateKeyToAccount(lane.privateKey);
+  const publicClient: ChainClient =
+    lane.chainId === BASE_SEPOLIA_CHAIN_ID ? (getBaseSepoliaClient(rpcUrl) as unknown as ChainClient) : getBaseClient(rpcUrl);
+  const chain: Chain = lane.chainId === BASE_SEPOLIA_CHAIN_ID ? baseSepolia : base;
+  if (lane.identityRegistry) await registryPreflight(publicClient, lane.identityRegistry, op);
   let request;
   try {
     ({ request } = await publicClient.simulateContract({
@@ -248,14 +398,23 @@ export async function submitUserOperation(
     throw new UserOpSubmitError('simulation_failed', reason);
   }
   const data = encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args });
+  if (lane.opPaysL1) await l1FeePreflight(publicClient, op, data);
   await preflightExecution(publicClient, relayer.address, data, op);
   await admit();
-  const wallet = createWalletClient({ account: relayer, chain: baseSepolia, transport: http(rpcUrl) });
+  const wallet = createWalletClient({ account: relayer, chain, transport: http(rpcUrl) });
+  // The mainnet test lane signs at the op's own price, so the EntryPoint's
+  // repayment matches what the relayer's transaction pays for L2 gas.
+  const fees = lane.opPaysL1 ? unpackGasFees(op.gasFees) : null;
   let txHash: Hex;
   try {
     txHash = await sendWithRetry({
       sign: async () => {
-        const prepared = await wallet.prepareTransactionRequest({ to: request.address, data, chain: baseSepolia });
+        const prepared = await wallet.prepareTransactionRequest({
+          to: request.address,
+          data,
+          chain,
+          ...(fees ? { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas } : {}),
+        });
         return wallet.signTransaction(prepared);
       },
       send: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
@@ -293,6 +452,9 @@ export async function submitUserOperation(
 const SUBMIT_STATUS = {
   simulation_failed: 400,
   execution_reverted: 400,
+  identity_check_failed: 400,
+  fee_too_low: 400,
+  pre_verification_gas_too_low: 400,
   user_op_reverted: 422,
   rate_limited: 429,
   relay_failed: 502,
@@ -312,6 +474,14 @@ export function createAaRoutes(deps: AaRouteDeps) {
     } catch {
       return c.json({ ok: false, error: 'bad_request', message: 'Invalid JSON body' }, 400);
     }
+    // The chain the body names: Base Sepolia when it names none. Base mainnet
+    // is the test relay (decision 0080, M2), refused unless every switch is
+    // on; any other chain is refused. Both before any other limiter.
+    const chainId = relayChainId(body);
+    const config = chainId === BASE_MAINNET_CHAIN_ID ? testRelayConfig(c.env) : null;
+    if (chainId !== BASE_SEPOLIA_CHAIN_ID && !config) {
+      return c.json({ ok: false, error: 'chain_unsupported', message: 'the relay serves Base Sepolia, and Base mainnet only as the switched-on test relay' }, 400);
+    }
     const ip = c.req.header('cf-connecting-ip');
     if (ip && (await overLimit(c.env.AA_RELAY_IP_RL, `aa-ip:${ip}`))) {
       return c.json({ ok: false, error: 'rate_limited', message: 'too many requests from this network; retry shortly' }, 429);
@@ -319,13 +489,26 @@ export function createAaRoutes(deps: AaRouteDeps) {
     let parsed;
     try {
       parsed = parseUserOperationBody(body);
-      checkUserOperationPolicy(parsed.userOp, deps.policy);
+      if (config) checkTestRelayPolicy(parsed.userOp, config);
+      else checkUserOperationPolicy(parsed.userOp, deps.policy);
     } catch (err) {
-      if (err instanceof UserOpRequestError) return c.json({ ok: false, error: err.code, message: err.message }, 400);
+      if (err instanceof UserOpRequestError) {
+        return c.json({ ok: false, error: err.code, message: err.message }, err.code === 'not_test_account' ? 403 : 400);
+      }
       throw err;
     }
-    if (!c.env.RELAYER_PRIVATE_KEY) {
-      return c.json({ ok: false, error: 'relayer_not_configured', message: 'RELAYER_PRIVATE_KEY not set' }, 503);
+    let lane: RelayLane;
+    if (config) {
+      const test = testLane(c.env, config);
+      if (!test) {
+        return c.json({ ok: false, error: 'relayer_not_configured', message: 'RELAYER_MAINNET_TEST_PRIVATE_KEY not set' }, 503);
+      }
+      lane = test;
+    } else {
+      if (!c.env.RELAYER_PRIVATE_KEY) {
+        return c.json({ ok: false, error: 'relayer_not_configured', message: 'RELAYER_PRIVATE_KEY not set' }, 503);
+      }
+      lane = sepoliaLane(c.env);
     }
     try {
       // The per-sender bucket is counted only once policy and the handleOps
@@ -333,13 +516,14 @@ export function createAaRoutes(deps: AaRouteDeps) {
       // sender addresses are public, so an earlier count lets anyone lock the
       // owner out of the relay.
       const sender = parsed.userOp.sender.toLowerCase();
+      const bucket = config ? `aa-test:${sender}` : `aa:${sender}`;
       const admit = async () => {
-        if (await overLimit(c.env.AA_RELAY_RL, `aa:${sender}`)) {
+        if (await overLimit(c.env.AA_RELAY_RL, bucket)) {
           throw new UserOpSubmitError('rate_limited', 'too many ops for this account; retry shortly');
         }
       };
-      const { txHash, receipt } = await deps.submit(c.env, parsed.userOp, admit);
-      return c.json({ ok: true, txHash, entryPoint: parsed.entryPoint, receipt }, 202);
+      const { txHash, receipt } = await deps.submit(c.env, parsed.userOp, admit, lane);
+      return c.json({ ok: true, txHash, entryPoint: parsed.entryPoint, chainId: lane.chainId, receipt }, 202);
     } catch (err) {
       if (err instanceof UserOpSubmitError) {
         const status = SUBMIT_STATUS[err.code];
@@ -361,5 +545,5 @@ export const aaRoutes = createAaRoutes({
     paymaster: SEPOLIA_DEPLOYMENTS.CofferdamPaymaster.address,
     factory: SEPOLIA_DEPLOYMENTS.CofferdamAccountFactory4337.address,
   },
-  submit: submitUserOperation,
+  submit: (env, op, admit, lane) => submitUserOperation(env, op, admit, RECEIPT_WAIT_MS, lane),
 });
