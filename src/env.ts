@@ -253,6 +253,33 @@ export interface Env {
    */
   RELAYER_PRIVATE_KEY?: string;
 
+  /**
+   * The Base mainnet test relay (workspace decision 0080, M2; `services/testRelay.ts`):
+   * on only for exactly `"true"`, with `BASE_MAINNET_ENABLED` and `BASE_RPC_URL`,
+   * `BASE_MAINNET_TEST_DEPLOYMENTS`, `AA_MAINNET_TEST_ACCOUNTS` and
+   * `RELAYER_MAINNET_TEST_PRIVATE_KEY`. `"false"` in `wrangler.jsonc`.
+   */
+  AA_MAINNET_TEST_RELAY?: string;
+
+  /** Comma-separated test accounts the mainnet test relay serves; no other sender is relayed. */
+  AA_MAINNET_TEST_ACCOUNTS?: string;
+
+  /**
+   * The throwaway test generation's addresses, JSON in the shape of
+   * `base-contracts/deployments/*.json` (`CofferdamAccountFactory4337`,
+   * `CofferdamIdentityRegistry`), set on a test deployment only: decision 0080
+   * (2) keeps them out of the plane's defaults.
+   */
+  BASE_MAINNET_TEST_DEPLOYMENTS?: string;
+
+  /**
+   * The mainnet test relay's own EOA, a small balance from recorded Cofferdam
+   * Inc. money (decision 0080, T4): never `RELAYER_PRIVATE_KEY`, never the
+   * CofferdamDev key. Set by the founder via
+   * `wrangler secret put RELAYER_MAINNET_TEST_PRIVATE_KEY`; deleted when M2 ends.
+   */
+  RELAYER_MAINNET_TEST_PRIVATE_KEY?: string;
+
   // ── secrets (set via `wrangler secret put NAME`) ────────────────
   /**
    * Neon Postgres connection string for the `polis` DB (enterprise/company
