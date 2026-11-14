@@ -18,6 +18,7 @@ import {
   encodePacked,
   keccak256,
   parseAbi,
+  parseTransaction,
   toBytes,
   type Address,
   type Hex,
@@ -171,12 +172,12 @@ describe("the registry's check pre-flight call", () => {
 });
 
 describe('the L1 data fee', () => {
-  it('charges it at the op price with a quarter margin, plus calldata gas and overhead', () => {
+  it('charges it at the op price with a quarter margin, plus calldata gas and the intrinsic gas', () => {
     expect(calldataGas('0x00ff00')).toBe(24n);
     expect(effectiveGasPrice(op(), 10_000_000n)).toBe(15_000_000n);
     expect(effectiveGasPrice(op(), 100_000_000n)).toBe(20_000_000n);
-    // 0.00006 ETH of L1 fee at 0.015 gwei: 5,000,000 gas, plus 25%.
-    expect(requiredPreVerificationGas(60_000_000_000_000n, 15_000_000n, '0x00ff')).toBe(5_000_000n + 20n + 50_000n);
+    // 0.00006 ETH of L1 fee at 0.015 gwei is 4,000,000 gas; plus 25%, the calldata and the intrinsic 21,000.
+    expect(requiredPreVerificationGas(60_000_000_000_000n, 15_000_000n, '0x00ff')).toBe(5_000_000n + 20n + 21_000n);
     expect(requiredPreVerificationGas(1n, 0n, '0x')).toBeNull();
   });
 });
@@ -223,6 +224,9 @@ describe('submitUserOperation on the mainnet test lane', () => {
       expect.objectContaining({ address: REGISTRY, functionName: 'check', args: [IDENTITY_ACTIONS.bind, SENDER, ADAPTER, EVIDENCE] }),
     );
     expect(wallet.prepareTransactionRequest).toHaveBeenCalledWith(expect.objectContaining({ maxFeePerGas: 20_000_000n, maxPriorityFeePerGas: 5_000_000n }));
+    // The L1 fee is priced on the unsigned handleOps transaction at the op's fees.
+    const l1Call = base.readContract.mock.calls.map(([a]) => a as { functionName: string; args: [Hex] }).find((a) => a.functionName === 'getL1Fee')!;
+    expect(parseTransaction(l1Call.args[0])).toMatchObject({ chainId: 8453, to: ENTRY_POINT_V07.toLowerCase(), maxFeePerGas: 20_000_000n, maxPriorityFeePerGas: 5_000_000n });
   });
 
   it('refuses a bind the registry refuses, by the error name only, before any simulation', async () => {

@@ -85,7 +85,7 @@ import {
   registryCheckCall,
   requiredPreVerificationGas,
   testRelayConfig,
-  unsignedTxSize,
+  unsignedHandleOpsTx,
   type TestRelayConfig,
 } from '../services/testRelay.js';
 import { unpackGasFees } from '../services/userOp.js';
@@ -341,7 +341,7 @@ async function l1FeePreflight(client: Pick<ChainClient, 'getBlock' | 'readContra
   try {
     const [block, fee] = await Promise.all([
       client.getBlock({ blockTag: 'latest' }),
-      client.readContract({ address: GAS_PRICE_ORACLE, abi: GAS_PRICE_ORACLE_ABI, functionName: 'getL1FeeUpperBound', args: [unsignedTxSize(data)] }),
+      client.readContract({ address: GAS_PRICE_ORACLE, abi: GAS_PRICE_ORACLE_ABI, functionName: 'getL1Fee', args: [unsignedHandleOpsTx(data, op)] }),
     ]);
     baseFee = block.baseFeePerGas ?? 0n;
     l1Fee = fee;
