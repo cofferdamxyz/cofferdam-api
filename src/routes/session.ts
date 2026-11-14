@@ -126,7 +126,7 @@ sessionRoutes.post('/verify-attestation', async (c) => {
   // Signature verified — the holder of `publicKey` authorised exactly these
   // fields. Optionally escalate to the on-chain authorisation check.
   if (body.checkOnChain === true) {
-    const authority = await checkOnChainAuthority(att, c.env.BASE_SEPOLIA_RPC_URL);
+    const authority = await checkOnChainAuthority(att, c.env);
     return c.json({ ok: true, claims, authority });
   }
 

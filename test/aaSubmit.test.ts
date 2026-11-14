@@ -8,7 +8,16 @@
  * know how to serialize a BigInt", hiding the node's own error and skipping the retry.
  */
 
-import { BaseError, encodePacked, keccak256, type Address, type Hex } from 'viem';
+import {
+  BaseError,
+  encodeAbiParameters,
+  encodeErrorResult,
+  encodeEventTopics,
+  encodePacked,
+  keccak256,
+  type Address,
+  type Hex,
+} from 'viem';
 import type * as Viem from 'viem';
 import { generatePrivateKey } from 'viem/accounts';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -16,8 +25,14 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { Env } from '../src/env.js';
 import { UserOpSubmitError, submitUserOperation } from '../src/routes/aa.js';
 import { ENTRY_POINT_ABI, ENTRY_POINT_V07, parseUserOperationBody } from '../src/services/userOp.js';
+import { ENTRY_POINT_EVENTS_ABI } from '../src/services/userOpOutcome.js';
 
-const chain = vi.hoisted(() => ({ simulateContract: vi.fn(), sendRawTransaction: vi.fn() }));
+const chain = vi.hoisted(() => ({
+  simulateContract: vi.fn(),
+  simulateBlocks: vi.fn(),
+  sendRawTransaction: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
+}));
 const wallet = vi.hoisted(() => ({ prepareTransactionRequest: vi.fn(), signTransaction: vi.fn() }));
 
 vi.mock('../src/chain/client.js', () => ({ getBaseSepoliaClient: () => chain }));
@@ -43,6 +58,30 @@ const { userOp: op } = parseUserOperationBody({
 const env = { RELAYER_PRIVATE_KEY: generatePrivateKey(), BASE_SEPOLIA_RPC_URL: 'http://127.0.0.1:9' } as unknown as Env;
 const nodeError = (details: string) => Object.assign(new Error('HTTP request failed.'), { details });
 
+const OP_HASH = keccak256('0x01');
+/** The EntryPoint's `UserOperationEvent` for an op of `sender` and `nonce`. */
+const opEvent = (success: boolean, sender: Address = SENDER, nonce = 26n) => ({
+  address: ENTRY_POINT_V07,
+  topics: encodeEventTopics({ abi: ENTRY_POINT_EVENTS_ABI, eventName: 'UserOperationEvent', args: { userOpHash: OP_HASH, sender, paymaster: SENDER } }),
+  data: encodeAbiParameters([{ type: 'uint256' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }], [nonce, success, 1n, 1n]),
+});
+/** Its `UserOperationRevertReason`, carrying `reason`. */
+const revertEvent = (reason: Hex) => ({
+  address: ENTRY_POINT_V07,
+  topics: encodeEventTopics({ abi: ENTRY_POINT_EVENTS_ABI, eventName: 'UserOperationRevertReason', args: { userOpHash: OP_HASH, sender: SENDER } }),
+  data: encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [26n, reason]),
+});
+/** The decision 0080 registry's refusal, which carries the passport's identifier. */
+const IDENTIFIER = keccak256('0x0bad1d');
+const identifierBound = encodeErrorResult({
+  abi: [{ type: 'error', name: 'IdentifierAlreadyBound', inputs: [{ type: 'bytes32' }, { type: 'address' }] }],
+  errorName: 'IdentifierAlreadyBound',
+  args: [IDENTIFIER, SENDER],
+});
+const simulated = (logs: unknown[], status: 'success' | 'failure' = 'success', error?: Error) => [
+  { calls: [{ status, logs, data: '0x', gasUsed: 1n, ...(error ? { error } : {}) }] },
+];
+
 let warn: MockInstance<typeof console.warn>;
 const logged = () => warn.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
 
@@ -51,6 +90,8 @@ beforeEach(() => {
   chain.simulateContract.mockResolvedValue({
     request: { abi: ENTRY_POINT_ABI, functionName: 'handleOps', args: [[op], SENDER], address: ENTRY_POINT_V07 },
   });
+  chain.simulateBlocks.mockResolvedValue(simulated([opEvent(true)]));
+  chain.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [opEvent(true)] });
   wallet.prepareTransactionRequest.mockResolvedValue({});
   wallet.signTransaction.mockResolvedValue(RAW);
 });
@@ -63,7 +104,7 @@ afterEach(() => {
 describe('submitUserOperation with the op nonce a bigint', () => {
   it('logs a refused send attempt and retries it', async () => {
     chain.sendRawTransaction.mockRejectedValueOnce(nodeError('429 Too Many Requests')).mockResolvedValueOnce(keccak256(RAW));
-    await expect(submitUserOperation(env, op)).resolves.toBe(keccak256(RAW));
+    await expect(submitUserOperation(env, op)).resolves.toEqual({ txHash: keccak256(RAW), receipt: 'success' });
     expect(chain.sendRawTransaction).toHaveBeenCalledTimes(2);
     expect(logged()).toEqual([
       { event: 'aa_send_refused', sender: SENDER, nonce: '26', attempt: 1, class: 'transient', reason: '429 Too Many Requests' },
@@ -87,5 +128,75 @@ describe('submitUserOperation with the op nonce a bigint', () => {
     expect(admit).not.toHaveBeenCalled();
     expect(chain.sendRawTransaction).not.toHaveBeenCalled();
     expect(logged()).toMatchObject([{ event: 'aa_simulation_failed', sender: SENDER, nonce: '26' }]);
+  });
+});
+
+describe('submitUserOperation: the execution pre-flight and the op\'s own outcome (decision 0080)', () => {
+  it('refuses an op whose own call reverts, by the error name only, with nothing admitted or sent', async () => {
+    chain.simulateBlocks.mockResolvedValue(simulated([revertEvent(identifierBound), opEvent(false)]));
+    const admit = vi.fn(async () => {});
+    const failure = submitUserOperation(env, op, admit);
+    await expect(failure).rejects.toMatchObject({ code: 'execution_reverted', message: 'IdentifierAlreadyBound' });
+    expect(admit).not.toHaveBeenCalled();
+    expect(chain.sendRawTransaction).not.toHaveBeenCalled();
+    expect(logged()).toEqual([{ event: 'aa_execution_reverted', sender: SENDER, nonce: '26', reason: 'IdentifierAlreadyBound' }]);
+    expect(warn.mock.calls.flat().join('\n')).not.toContain(IDENTIFIER.slice(2));
+  });
+
+  it('pre-flights from the relayer through eth_simulateV1 with the handleOps calldata', async () => {
+    chain.sendRawTransaction.mockResolvedValue(keccak256(RAW));
+    await submitUserOperation(env, op);
+    const [{ blocks }] = chain.simulateBlocks.mock.calls[0] as [{ blocks: { calls: { to: Address; data: Hex }[] }[] }];
+    expect(blocks[0]!.calls[0]!.to).toBe(ENTRY_POINT_V07);
+    expect(blocks[0]!.calls[0]!.data.slice(0, 10)).toBe('0x765e827f'); // handleOps
+  });
+
+  it('refuses an op the EntryPoint did not execute, and a handleOps the pre-flight sees revert', async () => {
+    chain.simulateBlocks.mockResolvedValue(simulated([opEvent(true, SENDER, 27n)]));
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'execution_reverted', message: 'not_executed' });
+    chain.simulateBlocks.mockResolvedValue(simulated([], 'failure', new BaseError('execution reverted')));
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'simulation_failed' });
+    expect(chain.sendRawTransaction).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the node cannot simulate', async () => {
+    chain.simulateBlocks.mockRejectedValue(Object.assign(new BaseError('RPC error'), { details: 'the method eth_simulateV1 does not exist/is not available' }));
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'preflight_unavailable', message: 'eth_simulateV1 unsupported' });
+    expect(chain.sendRawTransaction).not.toHaveBeenCalled();
+  });
+
+  it('answers user_op_reverted with the tx hash when the mined op reverted', async () => {
+    chain.sendRawTransaction.mockResolvedValue(keccak256(RAW));
+    chain.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [revertEvent(identifierBound), opEvent(false)] });
+    const failure = submitUserOperation(env, op);
+    await expect(failure).rejects.toMatchObject({ code: 'user_op_reverted', message: 'IdentifierAlreadyBound', txHash: keccak256(RAW) });
+    expect(logged()).toEqual([
+      { event: 'aa_user_op_reverted', sender: SENDER, nonce: '26', txHash: keccak256(RAW), reason: 'IdentifierAlreadyBound' },
+    ]);
+  });
+
+  it("gives a handleOps the pre-flight sees revert its EntryPoint reason", async () => {
+    const data = encodeErrorResult({ abi: ENTRY_POINT_ABI, errorName: 'FailedOp', args: [0n, 'AA31 paymaster deposit too low'] });
+    chain.simulateBlocks.mockResolvedValue([{ calls: [{ status: 'failure', logs: [], data, gasUsed: 1n, error: new BaseError('Execution reverted') }] }]);
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'simulation_failed', message: 'FailedOp: AA31 paymaster deposit too low' });
+  });
+
+  it('answers unknown, never reverted, when handleOps itself reverted on chain', async () => {
+    chain.sendRawTransaction.mockResolvedValue(keccak256(RAW));
+    chain.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', logs: [] });
+    await expect(submitUserOperation(env, op)).resolves.toEqual({ txHash: keccak256(RAW), receipt: 'unknown' });
+    expect(logged()).toEqual([{ event: 'aa_handle_ops_reverted', sender: SENDER, nonce: '26', txHash: keccak256(RAW) }]);
+  });
+
+  it('labels only a missing method as eth_simulateV1 unsupported', async () => {
+    chain.simulateBlocks.mockRejectedValue(Object.assign(new BaseError('RPC error'), { details: 'transaction type not supported' }));
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'preflight_unavailable', message: 'RPC error' });
+  });
+
+  it('answers pending when the receipt does not come in time', async () => {
+    chain.sendRawTransaction.mockResolvedValue(keccak256(RAW));
+    chain.waitForTransactionReceipt.mockRejectedValue(new BaseError('Timed out while waiting for transaction'));
+    await expect(submitUserOperation(env, op, undefined, 10)).resolves.toEqual({ txHash: keccak256(RAW), receipt: 'pending' });
+    expect(chain.waitForTransactionReceipt).toHaveBeenCalledWith(expect.objectContaining({ hash: keccak256(RAW), timeout: 10 }));
   });
 });

@@ -56,6 +56,18 @@
     // .dev.vars (bind-bundle pickup then tolerates a missing csa1 token).
     "ENVIRONMENT": "staging",
     "BASE_SEPOLIA_RPC_URL": "https://sepolia.base.org",
+    // Base mainnet reads (workspace decision 0080): off. On only for exactly
+    // "true" with BASE_RPC_URL set (no default; the Base-mainnet fork in
+    // development, a keyed provider's URL as a secret), and even then every
+    // path answers chain_unsupported until its contracts are in the plane's
+    // mainnet table, which is empty (src/chain/chains.ts).
+    "BASE_MAINNET_ENABLED": "false",
+    // The Base mainnet test relay (decision 0080, M2; src/services/testRelay.ts):
+    // off. On needs exactly "true" with BASE_MAINNET_ENABLED, BASE_RPC_URL,
+    // BASE_MAINNET_TEST_DEPLOYMENTS (the test generation's addresses, set on a
+    // test deployment only), AA_MAINNET_TEST_ACCOUNTS and the secret
+    // RELAYER_MAINNET_TEST_PRIVATE_KEY.
+    "AA_MAINNET_TEST_RELAY": "false",
     // Celo mainnet, read-only: Self.xyz's identity registry lives there and
     // the attester's bind gate checks every proof against it. Must agree with
     // cofferdam-attester's CELO_RPC_URL chain (42220).

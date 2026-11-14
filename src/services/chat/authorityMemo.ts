@@ -34,9 +34,13 @@ export interface AuthorityMemo {
   put(att: PasskeySession, check: AuthorityCheck): Promise<void>;
 }
 
-/** Account, scheme and key: the same facts the on-chain check matches. */
+/**
+ * Chain, account, scheme and key: the same facts the on-chain check matches.
+ * The chain is in it since the check reads the chain the attestation names
+ * (workspace decision 0080): a pass on Base Sepolia never answers for mainnet.
+ */
 export function authorityKey(att: PasskeySession): string {
-  return [att.accountAddress, att.alg, att.publicKey.qx, att.publicKey.qy].join(':').toLowerCase();
+  return [att.chainId, att.accountAddress, att.alg, att.publicKey.qx, att.publicKey.qy].join(':').toLowerCase();
 }
 
 async function digest(key: string): Promise<string> {

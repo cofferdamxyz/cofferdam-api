@@ -12,7 +12,9 @@ src/
                      enterprise, activity, sepolia, health)
   services/          the logic behind them: selfBind, bindBundleDO, vaultHandoffDO, userOp, ceremony,
                      sessionAttestation, activity, company, companyLinks, attester (RPC types)
-  chain/             viem client, Celo reads, deployments.ts (SEPOLIA_DEPLOYMENTS)
+  chain/             viem clients, chains.ts (which chain a request may read: Base Sepolia,
+                     Base mainnet behind BASE_MAINNET_ENABLED), Celo reads,
+                     deployments.ts (DEPLOYMENTS_BY_CHAIN; mainnet empty)
 test/                Vitest suites and fixtures (test/xmtp/ for the operator Workers)
 wrangler.jsonc       vars, zone route, service binding, Durable Objects, rate limits
 xmtp/                the XMTP operator, three Workers deployed on their own (not the plane):
@@ -34,7 +36,7 @@ The `xmtp/` Workers share this repository's dependencies and tests but deploy se
 | `GET /sepolia/block-height`, `GET /sepolia/contracts` | Base Sepolia head; the pinned contract addresses |
 | `POST /v1/self/verify` | Self's relayer posts the `disclose` proof; pre-flights `NullifierRegistry`, calls the attester's Celo-gated `signBind` or `signRebind`, stores the bundle in the account's `BindBundleDO` (30 min) |
 | `GET /v1/self/bind-bundle/:account` | the app picks up its bundle; requires a `csa1:` attestation for the account from a key that is an active High authority on it (checked on Base), outside `development` |
-| `POST /v1/aa/user-operation` | relays a passkey-signed op: policy (our paymaster, our factory in `initCode`, gas and fee caps), simulation, `handleOps` from the relayer key; the first op deploys the account |
+| `POST /v1/aa/user-operation` | relays a passkey-signed op on Base Sepolia (the body's `chainId` 8453 is the Base mainnet test relay, off in `wrangler.jsonc`: allowlisted test accounts, the registry's `check`, the L1 data fee through `preVerificationGas`, its own key): policy (our paymaster, our factory in `initCode`, gas and fee caps), simulation, the execution pre-flight (`eth_simulateV1`, the op's own `UserOperationEvent`), `handleOps` from the relayer key, then the receipt's outcome (`receipt: success | pending | unknown`, or `422 user_op_reverted`); the first op deploys the account |
 | `POST /v1/ceremony/first-high` | the co-sign for a first-High enrolment (`enrollFirstHigh`): requires the signing authority's own session token (`Authorization: Bearer csa1:…` or `csa-sess1.…`), gated on the account's chain state, signed by the attester's ceremony key |
 | `POST /v1/session/verify-attestation` | verifies a `csa1:` envelope from `@cofferdam/sdk`, optionally against the account's on-chain authority |
 | `POST /v1/attester/test-sign` | rail smoke test (served only under `ENVIRONMENT=development`, so `wrangler dev`; 404 on the deployment): synthetic signals with Celo's current roots, signed by the attester, checked against `SelfAttesterRegistry` on Base |
@@ -71,7 +73,8 @@ From the Mac with the workspace `.envrc` loaded, the attester first when a pin m
 
 - Hosts: `https://cofferdam-api.shy-cell-424a.workers.dev` (every route) and the zone route `cofferdam.xyz/v1/*`. The Self endpoint must stay on `cofferdam.xyz`: the host is part of the registry's immutable scope.
 - `ENVIRONMENT=staging` on the deployment. Secrets: `RELAYER_PRIVATE_KEY`; optional `ACTIVITY_RPC_URL` (CDP Node URL for the activity scans) and `CDP_WEBHOOK_SECRET` (with the `ACTIVITY_INDEX_FROM_BLOCK` var, turns on the activity store); optional `POLIS_DATABASE_URL` (Neon `polis`) and `ACTIVITY_DATABASE_URL`, unused until provisioned.
-- `src/chain/deployments.ts` mirrors `base-contracts/deployments/baseSepolia.json` by hand; the relay policy, the ceremony gate and the Self routes read it. `NullifierRegistry` must equal the attester's `NULLIFIER_REGISTRY_ADDRESS`.
+- `src/chain/deployments.ts` mirrors `base-contracts/deployments/baseSepolia.json` by hand; the relay policy, the ceremony gate and the Self routes read it. `NullifierRegistry` must equal the attester's `NULLIFIER_REGISTRY_ADDRESS`. Its Base mainnet table is empty (workspace decision 0080), and mainnet reads are off unless `BASE_MAINNET_ENABLED="true"` with `BASE_RPC_URL` (`src/chain/chains.ts`).
+- Identity routes (`/v1/self/*`, the relay, `/v1/attester/*`) never log a passport identifier, a proof, evidence, `custom_data` or an op's call data next to the account (`src/services/identityLog.ts`, `test/identityLogs.test.ts`).
 - `src/services/sessionAttestation.ts` must stay byte-compatible with the SDK's `sessionAttestation.ts`.
 - No `account_id` in `wrangler.jsonc`. Stores: Durable Objects today; Neon Postgres, KV, R2 and D1 as surfaces need them. No MongoDB.
 

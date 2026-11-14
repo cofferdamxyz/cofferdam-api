@@ -33,6 +33,7 @@ import type { Context } from 'hono';
 import { getAddress, type Address } from 'viem';
 
 import type { Env } from '../env.js';
+import { BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 import { checkOnChainAuthority, type AuthorityCheck } from '../services/authorityCheck.js';
 import { TIER } from '../services/ceremony.js';
 import { createAuthorityMemo, type AuthorityMemo } from '../services/chat/authorityMemo.js';
@@ -69,7 +70,7 @@ export function envUsageStore(env: Env): ChatUsageStore | null {
 export const defaultWorkRouteDeps: WorkRouteDeps = {
   attestationMaxAgeMs: 60 * 60 * 1000,
   now: () => Date.now(),
-  authorityCheck: (env, att) => checkOnChainAuthority(att, env.BASE_SEPOLIA_RPC_URL),
+  authorityCheck: (env, att) => checkOnChainAuthority(att, env),
   authorityMemo: createAuthorityMemo(),
   inference: (env) => createInference(env),
   usageStore: envUsageStore,
@@ -139,6 +140,12 @@ export type BodyReader<T> = (b: Record<string, unknown>) => T | Response;
 export interface Admission<T> {
   account: Address;
   input: T;
+  /**
+   * The chain the session's attestation names, on which the gate found the
+   * account's High (workspace decision 0080); Base Sepolia when development
+   * admits a request with no token.
+   */
+  chainId: number;
 }
 
 export interface ModelAdmission<T> extends Admission<T> {
@@ -175,8 +182,8 @@ export function createWorkGate(deps: WorkRouteDeps, keys: GateKeys): WorkGate {
     return globalSpend.microUsd;
   }
 
-  /** The session pinned to the account, then an active High on it. Null when the caller may go on. */
-  async function gate(c: WorkContext, account: Address): Promise<Response | null> {
+  /** The session pinned to the account, then an active High on it: the session's chain when the caller may go on. */
+  async function gate(c: WorkContext, account: Address): Promise<Response | { chainId: number }> {
     const result = await checkSession(
       {
         env: c.env,
@@ -194,7 +201,7 @@ export function createWorkGate(deps: WorkRouteDeps, keys: GateKeys): WorkGate {
       },
     );
     if (isRefusal(result)) {
-      if (result.body.error === 'attestation_required' && c.env.ENVIRONMENT === 'development') return null;
+      if (result.body.error === 'attestation_required' && c.env.ENVIRONMENT === 'development') return { chainId: BASE_SEPOLIA_CHAIN_ID };
       return c.json(result.body, result.status);
     }
     const check = await authority(c.env, result.session);
@@ -208,7 +215,7 @@ export function createWorkGate(deps: WorkRouteDeps, keys: GateKeys): WorkGate {
         401,
       );
     }
-    return null;
+    return { chainId: result.session.chainId };
   }
 
   /** The global brake and the account's cap, before any model call. An unreadable meter lets the call through. */
@@ -262,12 +269,12 @@ export function createWorkGate(deps: WorkRouteDeps, keys: GateKeys): WorkGate {
       return c.json({ ok: false, error: 'rate_limited', message: 'too many requests from this network; retry shortly' }, 429);
     }
     const account = getAddress(b.account as string);
-    const refused = await gate(c, account);
-    if (refused) return refused;
+    const gated = await gate(c, account);
+    if (gated instanceof Response) return gated;
     if (await overLimit(c.env.WORK_RL, `${keys.account}${account.toLowerCase()}`)) {
       return c.json({ ok: false, error: 'rate_limited', message: 'slow down a little; retry shortly' }, 429);
     }
-    return { account, input };
+    return { account, input, chainId: gated.chainId };
   }
 
   return {

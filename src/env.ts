@@ -28,6 +28,24 @@ export interface Env {
   BASE_SEPOLIA_RPC_URL: string;
 
   /**
+   * Base mainnet (8453) on or off for the plane's reads (workspace decision
+   * 0080, milestone M1): on only when exactly `"true"` and `BASE_RPC_URL` is
+   * set (`chain/chains.ts`). Off by default and in `wrangler.jsonc`. On, a
+   * path still answers `chain_unsupported` on mainnet until its contracts are
+   * in `DEPLOYMENTS_BY_CHAIN`, whose mainnet table is empty. The relay never
+   * submits on mainnet (its 8453 test relay is designed in the workspace
+   * `plane.md`, not built).
+   */
+  BASE_MAINNET_ENABLED?: string;
+
+  /**
+   * Base mainnet JSON-RPC, read only when `BASE_MAINNET_ENABLED` is `"true"`.
+   * In development the Base-mainnet fork (anvil on :8546, chain id 8453); a
+   * keyed provider's URL is a secret. No default.
+   */
+  BASE_RPC_URL?: string;
+
+  /**
    * Celo mainnet JSON-RPC, where Self.xyz anchors its identity registry.
    * Read-only; used to build gate-passing synthetic signals for
    * `/v1/attester/test-sign` and to pre-flight real proofs. Defaults to the
@@ -234,6 +252,33 @@ export interface Env {
    * Migration path: replace with CDP Server-Side Wallets for production.
    */
   RELAYER_PRIVATE_KEY?: string;
+
+  /**
+   * The Base mainnet test relay (workspace decision 0080, M2; `services/testRelay.ts`):
+   * on only for exactly `"true"`, with `BASE_MAINNET_ENABLED` and `BASE_RPC_URL`,
+   * `BASE_MAINNET_TEST_DEPLOYMENTS`, `AA_MAINNET_TEST_ACCOUNTS` and
+   * `RELAYER_MAINNET_TEST_PRIVATE_KEY`. `"false"` in `wrangler.jsonc`.
+   */
+  AA_MAINNET_TEST_RELAY?: string;
+
+  /** Comma-separated test accounts the mainnet test relay serves; no other sender is relayed. */
+  AA_MAINNET_TEST_ACCOUNTS?: string;
+
+  /**
+   * The throwaway test generation's addresses, JSON in the shape of
+   * `base-contracts/deployments/*.json` (`CofferdamAccountFactory4337`,
+   * `CofferdamIdentityRegistry`), set on a test deployment only: decision 0080
+   * (2) keeps them out of the plane's defaults.
+   */
+  BASE_MAINNET_TEST_DEPLOYMENTS?: string;
+
+  /**
+   * The mainnet test relay's own EOA, a small balance from recorded Cofferdam
+   * Inc. money (decision 0080, T4): never `RELAYER_PRIVATE_KEY`, never the
+   * CofferdamDev key. Set by the founder via
+   * `wrangler secret put RELAYER_MAINNET_TEST_PRIVATE_KEY`; deleted when M2 ends.
+   */
+  RELAYER_MAINNET_TEST_PRIVATE_KEY?: string;
 
   // ── secrets (set via `wrangler secret put NAME`) ────────────────
   /**

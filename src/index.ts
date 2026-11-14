@@ -22,6 +22,7 @@ export { PopReplayDO } from './services/popReplayDO.js';
 export { VaultHandoffDO } from './services/vaultHandoffDO.js';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import { BaseError } from 'viem';
 import type { Env } from './env.js';
 import { activityRoutes } from './routes/activity.js';
 import { chatRoutes } from './routes/chat.js';
@@ -39,6 +40,7 @@ import { jobsRoutes } from './routes/jobs.js';
 import { workRoutes } from './routes/work.js';
 import { workListingRoutes } from './routes/workListing.js';
 import { redactVaultPath, vaultRoutes } from './routes/vault.js';
+import { identityLogLine, scrubIdentifiers } from './services/identityLog.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -136,8 +138,25 @@ app.route('/v1/vault', vaultRoutes);
 app.notFound((c) => c.json({ ok: false, error: 'not_found' }, 404));
 
 // ── 500 ────────────────────────────────────────────────────────────
+/** Identity routes, whose unhandled errors are logged under the identity log policy (`services/identityLog.ts`). */
+const IDENTITY_ROUTE = /^\/v1\/(self|aa|attester)(\/|$)/;
+
 app.onError((err, c) => {
-  console.error('[cofferdam-api] unhandled', err);
+  if (IDENTITY_ROUTE.test(c.req.path)) {
+    // A viem error's message carries the request's arguments (an op's call
+    // data, a proof, a nullifier): log its name and short message, cut.
+    const short = err instanceof BaseError ? err.shortMessage : err instanceof Error ? err.message : String(err);
+    console.error(
+      identityLogLine({
+        event: 'unhandled',
+        route: c.req.path.split('/').slice(0, 4).join('/'),
+        name: err instanceof Error ? err.name : typeof err,
+        message: scrubIdentifiers(short),
+      }),
+    );
+  } else {
+    console.error('[cofferdam-api] unhandled', err);
+  }
   return c.json(
     {
       ok: false,
