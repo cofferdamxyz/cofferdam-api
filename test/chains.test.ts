@@ -159,11 +159,12 @@ describe('ceremony pins per chain', () => {
 });
 
 describe('activity per chain', () => {
-  it('reads Sepolia as before and mainnet through BASE_RPC_URL only while the switch is on', () => {
+  it('reads Sepolia as before and mainnet never through BASE_RPC_URL', () => {
     expect(activityOptions({ ...OFF, ACTIVITY_RPC_URL: 'https://cdp.example' } as unknown as Env, 84532).rpcUrl).toBe('https://cdp.example');
     expect(activityOptions(OFF as unknown as Env, 84532).rpcUrl).toBe('https://sepolia.example');
     expect(activityOptions(OFF as unknown as Env, 8453).rpcUrl).toBeUndefined();
-    expect(activityOptions(ON as unknown as Env, 8453).rpcUrl).toBe('http://127.0.0.1:8546');
+    // Never BASE_RPC_URL: the route answers with the error's message, which names the URL.
+    expect(activityOptions(ON as unknown as Env, 8453).rpcUrl).toBeUndefined();
     expect(activityOptions(ON as unknown as Env, 1).rpcUrl).toBeUndefined();
   });
 });

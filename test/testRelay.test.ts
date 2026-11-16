@@ -39,7 +39,7 @@ import {
   requiredPreVerificationGas,
   testRelayConfig,
 } from '../src/services/testRelay.js';
-import { DEFAULT_USER_OP_POLICY, ENTRY_POINT_V07, parseUserOperationBody, type PackedUserOperationWire } from '../src/services/userOp.js';
+import { DEFAULT_USER_OP_POLICY, ENTRY_POINT_ABI, ENTRY_POINT_V07, parseUserOperationBody, type PackedUserOperationWire } from '../src/services/userOp.js';
 import { ENTRY_POINT_EVENTS_ABI } from '../src/services/userOpOutcome.js';
 
 const sepolia = vi.hoisted(() => ({ name: 'sepolia' }));
@@ -158,6 +158,39 @@ describe('the test relay policy', () => {
     );
     expect(TEST_RELAY_POLICY.maxCallGas).toBeGreaterThan(1_166_315n);
   });
+
+  // The SDK (cofferdam-sdk NativeAccountProvider): an op with initCode takes
+  // callGasLimit + 3.5M verification, 5M at the app's 1.5M; ensureDeployed
+  // sends execute(self, 0, 0x). The account's CREATE2 runs about 3.6M gas.
+  const DEPLOY = FACTORY + 'abcd';
+  const sdkGas = pack(5_000_000n, 1_500_000n);
+  const selfNoOp = execute(SENDER, '0x');
+
+  it("passes the SDK's first bind, which deploys the account, and its deployment, execute(self, 0, 0x)", () => {
+    expect(() => checkTestRelayPolicy(op({ initCode: DEPLOY, accountGasLimits: sdkGas }), CONFIG)).not.toThrow();
+    expect(() => checkTestRelayPolicy(op({ initCode: DEPLOY, callData: selfNoOp, accountGasLimits: sdkGas }), CONFIG)).not.toThrow();
+    expect(TEST_RELAY_POLICY.maxDeployVerificationGas).toBeGreaterThan(3_600_000n);
+  });
+
+  it('keeps the self-call to a deployment: no value, no data, with initCode, and the deployment cap to ops that deploy', () => {
+    const refused = [
+      op({ callData: selfNoOp }),
+      op({ initCode: DEPLOY, callData: execute(SENDER, '0x', 1n) }),
+      op({ initCode: DEPLOY, callData: execute(SENDER, '0x12') }),
+      op({ initCode: DEPLOY, callData: execute(SENDER, encodeFunctionData({ abi: REGISTRY_ABI, functionName: 'bind', args: [ADAPTER, EVIDENCE] })) }),
+    ];
+    for (const o of refused) expect(() => checkTestRelayPolicy(o, CONFIG)).toThrow(expect.objectContaining({ code: 'call_not_allowed' }));
+    expect(() => checkTestRelayPolicy(op({ accountGasLimits: sdkGas }), CONFIG)).toThrow(expect.objectContaining({ code: 'gas_limit_exceeded' }));
+    expect(() => checkTestRelayPolicy(op({ initCode: DEPLOY, accountGasLimits: pack(5_000_001n, 1_500_000n) }), CONFIG)).toThrow(
+      expect.objectContaining({ code: 'gas_limit_exceeded' }),
+    );
+  });
+
+  it('bounds a deploying op by its prefund: about 0.29 gwei, under the 1 gwei fee cap', () => {
+    const at = (maxFee: bigint) => op({ initCode: DEPLOY, accountGasLimits: sdkGas, preVerificationGas: '300000', gasFees: pack(maxFee, maxFee) });
+    expect(() => checkTestRelayPolicy(at(290_000_000n), CONFIG)).not.toThrow();
+    expect(() => checkTestRelayPolicy(at(300_000_000n), CONFIG)).toThrow(expect.objectContaining({ code: 'prefund_too_high' }));
+  });
 });
 
 describe("the registry's check pre-flight call", () => {
@@ -273,6 +306,39 @@ describe('submitUserOperation on the mainnet test lane', () => {
     await submitUserOperation(env, op({ callData: '0x', initCode: FACTORY + 'abcd' }), undefined, 10, lane);
     expect(base.readContract).not.toHaveBeenCalledWith(expect.objectContaining({ functionName: 'check' }));
   });
+
+  it('logs a fee refusal by its code', async () => {
+    await expect(submitUserOperation(env, op({ preVerificationGas: '0' }), undefined, 10, lane)).rejects.toMatchObject({ code: 'pre_verification_gas_too_low' });
+    base.getBlock.mockResolvedValue({ baseFeePerGas: 20_000_001n });
+    await expect(submitUserOperation(env, op(), undefined, 10, lane)).rejects.toMatchObject({ code: 'fee_too_low' });
+    const lines = warn.mock.calls.map(([l]) => JSON.parse(l as string) as Record<string, unknown>);
+    expect(lines.filter((l) => l.event === 'aa_fee_refused').map((l) => l.code)).toEqual(['pre_verification_gas_too_low', 'fee_too_low']);
+  });
+
+  // EntryPoint v0.7's FailedOpWithRevert(opIndex, "AA23 reverted", inner): the
+  // inner bytes are the account's (or the factory's) own revert.
+  const failedWithRevert = encodeErrorResult({
+    abi: ENTRY_POINT_ABI,
+    errorName: 'FailedOpWithRevert',
+    args: [0n, 'AA23 reverted', identifierBound],
+  });
+
+  it("names the account's own revert inside FailedOpWithRevert, by name only, in the simulation and the pre-flight", async () => {
+    base.simulateContract.mockRejectedValueOnce(new ContractFunctionRevertedError({ abi: ENTRY_POINT_ABI, data: failedWithRevert, functionName: 'handleOps' }));
+    await expect(submitUserOperation(env, op(), undefined, 10, lane)).rejects.toMatchObject({
+      code: 'simulation_failed',
+      message: 'FailedOpWithRevert: AA23 reverted (IdentifierAlreadyBound)',
+    });
+    base.simulateBlocks.mockResolvedValueOnce([{ calls: [{ status: 'failure', logs: [], data: failedWithRevert, gasUsed: 1n, error: new Error('reverted') }] }]);
+    await expect(submitUserOperation(env, op(), undefined, 10, lane)).rejects.toMatchObject({
+      code: 'simulation_failed',
+      message: 'FailedOpWithRevert: AA23 reverted (IdentifierAlreadyBound)',
+    });
+    const logged = warn.mock.calls.flat().join('\n').toLowerCase();
+    expect(logged).toContain('identifieralreadybound');
+    expect(logged).not.toContain(IDENTIFIER.slice(2));
+    expect(logged).not.toContain(OTHER.slice(2).toLowerCase());
+  });
 });
 
 describe('POST /v1/aa/user-operation on chain 8453', () => {
@@ -330,13 +396,42 @@ describe('POST /v1/aa/user-operation on chain 8453', () => {
     expect(await res.json()).toMatchObject({ error: 'relayer_not_configured' });
   });
 
-  it('relays an allowlisted op on the test lane with its own bucket', async () => {
+  it('relays an allowlisted op on the test lane with its own buckets, on its own binding when bound', async () => {
     const h = harness(ON);
     const res = await h.post({ chainId: 8453, userOp: wire(op()) });
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({ ok: true, chainId: 8453, receipt: 'success' });
     expect(h.lanes[0]).toMatchObject({ chainId: 8453, identityRegistry: REGISTRY, opPaysL1: true });
-    expect(h.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7', `aa-test:${SENDER.toLowerCase()}`]);
+    expect(h.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7', `aa-test:${SENDER.toLowerCase()}`, 'aa-test:global']);
+
+    const testKeys: string[] = [];
+    const own = harness({ ...ON, AA_TEST_RELAY_RL: { limit: async ({ key }: { key: string }) => (testKeys.push(key), { success: key !== 'aa-test:global' }) } });
+    const braked = await own.post({ chainId: 8453, userOp: wire(op()) });
+    expect(braked.status).toBe(429);
+    expect(own.keys).toEqual(['aa:global', 'aa-ip:203.0.113.7']);
+    expect(testKeys).toEqual([`aa-test:${SENDER.toLowerCase()}`, 'aa-test:global']);
+  });
+
+  it('logs each op the policy refuses by its code, never its call data', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const h = harness(ON);
+      expect((await h.post({ chainId: 8453, userOp: wire(op({ sender: OTHER })) })).status).toBe(403);
+      expect((await h.post({ chainId: 8453, userOp: wire(op({ callData: execute(OTHER, '0x') })) })).status).toBe(400);
+      expect((await h.post({ chainId: 8453, userOp: { sender: 'nope' } })).status).toBe(400);
+      const lines = warn.mock.calls.map(([l]) => JSON.parse(l as string) as Record<string, unknown>);
+      expect(lines).toEqual([
+        { event: 'aa_policy_refused', sender: OTHER, nonce: '3', chainId: 8453, code: 'not_test_account' },
+        { event: 'aa_policy_refused', sender: SENDER, nonce: '3', chainId: 8453, code: 'call_not_allowed' },
+      ]);
+      expect(warn.mock.calls.flat().join('\n')).not.toContain(EVIDENCE.slice(2, 40));
+      // The Sepolia lane, which anyone can post to, logs no policy refusal.
+      warn.mockClear();
+      expect((await h.post({ userOp: wire(op()) })).status).toBe(400);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('keeps an op that names no chain on Base Sepolia, under the Sepolia policy, with every switch on', async () => {

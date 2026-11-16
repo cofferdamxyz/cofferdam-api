@@ -178,6 +178,8 @@ export const RECEIPT_WAIT_MS = 20_000;
 const RECEIPT_POLL_MS = 2_000;
 
 const GLOBAL_KEY = 'aa:global';
+/** The mainnet test lane's own brake, counted with its per-sender bucket once the gate passes. */
+const TEST_GLOBAL_KEY = 'aa-test:global';
 
 /**
  * The chain the body names (`chainId`, Base Sepolia when absent, so every op
@@ -201,6 +203,18 @@ async function overLimit(rl: RateLimit | undefined, key: string): Promise<boolea
   }
 }
 
+/**
+ * An EntryPoint error as the relay reports it: `FailedOp: AA23 reverted`, and
+ * for `FailedOpWithRevert(opIndex, reason, inner)` the account's or the
+ * factory's own revert after it, by name only (`revertName`: the registries'
+ * errors carry the passport's identifier), so `AA23 reverted` says why.
+ */
+function entryPointFailure(name: string, args: readonly unknown[] | undefined): string {
+  if (!args || args.length < 2) return name;
+  const head = `${name}: ${String(args[1])}`;
+  return name === 'FailedOpWithRevert' && typeof args[2] === 'string' ? `${head} (${revertName(args[2] as Hex)})` : head;
+}
+
 /** The EntryPoint's `FailedOp(opIndex, reason)` reason, if the revert decodes. */
 function revertReason(err: unknown): string {
   if (err instanceof BaseError) {
@@ -208,7 +222,7 @@ function revertReason(err: unknown): string {
     if (revert instanceof ContractFunctionRevertedError) {
       const args = revert.data?.args as readonly unknown[] | undefined;
       const name = revert.data?.errorName ?? revert.reason ?? 'revert';
-      return args && args.length >= 2 ? `${name}: ${String(args[1])}` : name;
+      return entryPointFailure(name, args);
     }
     return err.shortMessage;
   }
@@ -239,8 +253,7 @@ function handleOpsRevert(data: Hex | undefined, err: unknown): string {
   if (data && data !== '0x') {
     try {
       const decoded = decodeErrorResult({ abi: ENTRY_POINT_ABI, data });
-      const args = decoded.args as readonly unknown[] | undefined;
-      return args && args.length >= 2 ? `${decoded.errorName}: ${String(args[1])}` : decoded.errorName;
+      return entryPointFailure(decoded.errorName, decoded.args as readonly unknown[] | undefined);
     } catch {
       // not an EntryPoint error: fall through to the node's message
     }
@@ -353,10 +366,12 @@ async function l1FeePreflight(client: Pick<ChainClient, 'getBlock' | 'readContra
   }
   const { maxFeePerGas } = unpackGasFees(op.gasFees);
   if (maxFeePerGas < baseFee) {
+    logRelay('aa_fee_refused', op, { code: 'fee_too_low' });
     throw new UserOpSubmitError('fee_too_low', `maxFeePerGas must be at least the base fee, ${baseFee}`);
   }
   const required = requiredPreVerificationGas(l1Fee, effectiveGasPrice(op, baseFee), data);
   if (required === null || op.preVerificationGas < required) {
+    logRelay('aa_fee_refused', op, { code: 'pre_verification_gas_too_low' });
     throw new UserOpSubmitError(
       'pre_verification_gas_too_low',
       required === null ? 'the op pays nothing at this price' : `preVerificationGas must be at least ${required} to repay the L1 data fee`,
@@ -494,6 +509,12 @@ export function createAaRoutes(deps: AaRouteDeps) {
       else checkUserOperationPolicy(parsed.userOp, deps.policy);
     } catch (err) {
       if (err instanceof UserOpRequestError) {
+        // On the mainnet test lane, one line per op its policy refuses, by
+        // code (the relay's other lines carry the sender and nonce too), so a
+        // mismatch with the SDK shows in the logs; a body that does not parse
+        // as an op has none. The Sepolia lane logs none, as before, since
+        // anyone can post it an op.
+        if (parsed && config) logRelay('aa_policy_refused', parsed.userOp, { chainId, code: err.code });
         return c.json({ ok: false, error: err.code, message: err.message }, err.code === 'not_test_account' ? 403 : 400);
       }
       throw err;
@@ -516,12 +537,22 @@ export function createAaRoutes(deps: AaRouteDeps) {
       // simulation pass (the EntryPoint has checked the passkey signature):
       // sender addresses are public, so an earlier count lets anyone lock the
       // owner out of the relay.
+      // The mainnet test lane counts on its own low binding (falling back to
+      // the relay's while it is unbound), its own brake too, after the same
+      // gate: only a validly signed op of an allowlisted account spends it,
+      // and a client resending one signed op while the first is pending (each
+      // copy passes the pre-flight; the later ones revert on chain with AA25 at
+      // the relayer's cost) gets a few through a minute, not thirty. The
+      // sender's bucket goes first, so an op it refuses spends no other
+      // account's share. The relay's own brake, `aa:global`, still runs first
+      // on every request, this lane's included.
       const sender = parsed.userOp.sender.toLowerCase();
-      const bucket = config ? `aa-test:${sender}` : `aa:${sender}`;
+      const testRl = c.env.AA_TEST_RELAY_RL ?? c.env.AA_RELAY_RL;
       const admit = async () => {
-        if (await overLimit(c.env.AA_RELAY_RL, bucket)) {
-          throw new UserOpSubmitError('rate_limited', 'too many ops for this account; retry shortly');
-        }
+        const over = config
+          ? (await overLimit(testRl, `aa-test:${sender}`)) || (await overLimit(testRl, TEST_GLOBAL_KEY))
+          : await overLimit(c.env.AA_RELAY_RL, `aa:${sender}`);
+        if (over) throw new UserOpSubmitError('rate_limited', 'too many ops for this account; retry shortly');
       };
       const { txHash, receipt } = await deps.submit(c.env, parsed.userOp, admit, lane);
       return c.json({ ok: true, txHash, entryPoint: parsed.entryPoint, chainId: lane.chainId, receipt }, 202);

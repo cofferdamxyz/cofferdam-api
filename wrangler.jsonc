@@ -60,7 +60,9 @@
     // "true" with BASE_RPC_URL set (no default; the Base-mainnet fork in
     // development, a keyed provider's URL as a secret), and even then every
     // path answers chain_unsupported until its contracts are in the plane's
-    // mainnet table, which is empty (src/chain/chains.ts).
+    // mainnet table, which is empty (src/chain/chains.ts), except the relay's
+    // test lane below, which takes its addresses from its own var and signs
+    // with its own key.
     "BASE_MAINNET_ENABLED": "false",
     // The Base mainnet test relay (decision 0080, M2; src/services/testRelay.ts):
     // off. On needs exactly "true" with BASE_MAINNET_ENABLED, BASE_RPC_URL,
@@ -206,6 +208,11 @@
     { "name": "SELF_PICKUP_IP_RL", "namespace_id": "1107", "simple": { "limit": 120, "period": 60 } },
     { "name": "CEREMONY_IP_RL", "namespace_id": "1108", "simple": { "limit": 120, "period": 60 } },
     { "name": "AA_RELAY_IP_RL", "namespace_id": "1109", "simple": { "limit": 120, "period": 60 } },
+    // The Base mainnet test relay (decision 0080, M2), counted once policy and
+    // the pre-flights pass: aa-test:global and aa-test:<sender> share this
+    // ceiling, a create and a bind with a retry each, so no one resend of a
+    // signed op reaches the chain thirty times a minute at the relayer's cost.
+    { "name": "AA_TEST_RELAY_RL", "namespace_id": "1115", "simple": { "limit": 4, "period": 60 } },
     // /v1/work, the Work parser's cloud executor (workspace decision 0021) and
     // the listing toggle: a CV is one classification and about seven block
     // extractions, so 30 a minute per account; the global key is the route's

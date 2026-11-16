@@ -24,7 +24,7 @@
 import { decodeFunctionData, getAddress, isAddress, keccak256, serializeTransaction, toBytes, type Address, type Hex } from 'viem';
 
 import { mainnetEnabled, type ChainEnv } from '../chain/chains.js';
-import { ENTRY_POINT_V07, UserOpRequestError, unpackGasFees, unpackGasLimits, type PackedUserOperationWire } from './userOp.js';
+import { DEFAULT_USER_OP_POLICY, ENTRY_POINT_V07, UserOpRequestError, unpackGasFees, unpackGasLimits, type PackedUserOperationWire } from './userOp.js';
 
 /** The vars the test relay reads (a subset of `Env`). */
 export interface TestRelayEnv extends ChainEnv {
@@ -82,9 +82,18 @@ export function testRelayConfig(env: TestRelayEnv): TestRelayConfig | null {
  * Caps for one bind or re-bind (a bind measured 1,166,315 gas on the
  * Base-mainnet fork, 2026-11-09). The account pays; the caps bound what one op
  * can take from it and what the relayer fronts before the EntryPoint repays it.
+ * An op that deploys its account runs the factory inside its verification gas
+ * (EntryPoint v0.7), and the account is a full-bytecode CREATE2 of about 3.6M
+ * gas, so it takes the Sepolia policy's 5M: the SDK sends `callGasLimit` plus
+ * 3.5M (`DEPLOY_VERIFICATION_GAS`) on any op with `initCode`, 5M at the app's
+ * 1.5M. At 5M the prefund cap, not the fee cap, bounds the price: about 0.29
+ * gwei for a bind that deploys (some 6.8M gas in all), still thirty times
+ * Base's usual base fee.
  */
 export const TEST_RELAY_POLICY = {
   maxVerificationGas: 3_000_000n,
+  /** Verification gas for an op that carries `initCode`, the Sepolia policy's figure. */
+  maxDeployVerificationGas: DEFAULT_USER_OP_POLICY.maxVerificationGas,
   maxCallGas: 1_500_000n,
   /** Gas units; a bind's L1 fee at Base's low L2 prices needs millions. */
   maxPreVerificationGas: 60_000_000n,
@@ -205,24 +214,34 @@ export function checkTestRelayPolicy(op: PackedUserOperationWire, config: TestRe
     }
   }
   const call = decodeAccountCall(op.callData);
+  const deploys = op.initCode !== '0x';
   const allowed =
-    (call.kind === 'none' && op.initCode !== '0x') ||
+    (deploys && (call.kind === 'none' || isSelfNoOp(call, op.sender))) ||
     (call.kind === 'execute' && call.target === config.registry && call.value === 0n && callsRegistry(call.data));
   if (!allowed) {
     throw new UserOpRequestError(
       'call_not_allowed',
-      'the test relay carries a deployment or one call to the test registry (bind, relink, requestRebind, cancelRebind, finalizeRebind) with no value',
+      'the test relay carries a deployment (empty callData, or execute(self, 0, 0x) as the SDK sends it) or one call to the test registry (bind, relink, requestRebind, cancelRebind, finalizeRebind) with no value',
     );
   }
   const { verificationGasLimit, callGasLimit } = unpackGasLimits(op.accountGasLimits);
   const { maxFeePerGas } = unpackGasFees(op.gasFees);
   const p = TEST_RELAY_POLICY;
-  if (verificationGasLimit > p.maxVerificationGas) throw new UserOpRequestError('gas_limit_exceeded', 'verificationGasLimit over cap');
+  if (verificationGasLimit > (deploys ? p.maxDeployVerificationGas : p.maxVerificationGas)) throw new UserOpRequestError('gas_limit_exceeded', 'verificationGasLimit over cap');
   if (callGasLimit > p.maxCallGas) throw new UserOpRequestError('gas_limit_exceeded', 'callGasLimit over cap');
   if (op.preVerificationGas > p.maxPreVerificationGas) throw new UserOpRequestError('gas_limit_exceeded', 'preVerificationGas over cap');
   if (maxFeePerGas > p.maxFeePerGas) throw new UserOpRequestError('fee_too_high', 'maxFeePerGas over cap');
   const prefund = (verificationGasLimit + callGasLimit + op.preVerificationGas) * maxFeePerGas;
   if (prefund > p.maxPrefund) throw new UserOpRequestError('prefund_too_high', 'the op would prefund more than the per-op cap');
+}
+
+/**
+ * The SDK's deployment, `ensureDeployed`: `execute(sender, 0, 0x)`, a call to
+ * the account itself with no value and no data, which the account answers
+ * with nothing (its `receive`), so the op only deploys.
+ */
+function isSelfNoOp(call: DecodedCall, sender: Address): boolean {
+  return call.kind === 'execute' && call.target === getAddress(sender) && call.value === 0n && call.data === '0x';
 }
 
 function callsRegistry(data: Hex): boolean {

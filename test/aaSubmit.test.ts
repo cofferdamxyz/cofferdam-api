@@ -10,6 +10,7 @@
 
 import {
   BaseError,
+  ContractFunctionRevertedError,
   encodeAbiParameters,
   encodeErrorResult,
   encodeEventTopics,
@@ -179,6 +180,13 @@ describe('submitUserOperation: the execution pre-flight and the op\'s own outcom
     const data = encodeErrorResult({ abi: ENTRY_POINT_ABI, errorName: 'FailedOp', args: [0n, 'AA31 paymaster deposit too low'] });
     chain.simulateBlocks.mockResolvedValue([{ calls: [{ status: 'failure', logs: [], data, gasUsed: 1n, error: new BaseError('Execution reverted') }] }]);
     await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'simulation_failed', message: 'FailedOp: AA31 paymaster deposit too low' });
+  });
+
+  it("names the account's own revert inside FailedOpWithRevert on Sepolia too, by name only", async () => {
+    const data = encodeErrorResult({ abi: ENTRY_POINT_ABI, errorName: 'FailedOpWithRevert', args: [0n, 'AA23 reverted', identifierBound] });
+    chain.simulateContract.mockRejectedValue(new ContractFunctionRevertedError({ abi: ENTRY_POINT_ABI, data, functionName: 'handleOps' }));
+    await expect(submitUserOperation(env, op)).rejects.toMatchObject({ code: 'simulation_failed', message: 'FailedOpWithRevert: AA23 reverted (IdentifierAlreadyBound)' });
+    expect(JSON.stringify(logged())).not.toContain(IDENTIFIER.slice(2));
   });
 
   it('answers unknown, never reverted, when handleOps itself reverted on chain', async () => {

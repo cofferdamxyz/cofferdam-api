@@ -32,9 +32,12 @@ export interface Env {
    * 0080, milestone M1): on only when exactly `"true"` and `BASE_RPC_URL` is
    * set (`chain/chains.ts`). Off by default and in `wrangler.jsonc`. On, a
    * path still answers `chain_unsupported` on mainnet until its contracts are
-   * in `DEPLOYMENTS_BY_CHAIN`, whose mainnet table is empty. The relay never
-   * submits on mainnet (its 8453 test relay is designed in the workspace
-   * `plane.md`, not built).
+   * in `DEPLOYMENTS_BY_CHAIN`, whose mainnet table is empty. The one
+   * exception is the 8453 test relay (M2, `services/testRelay.ts`), which
+   * signs `handleOps` on mainnet with its own key,
+   * `RELAYER_MAINNET_TEST_PRIVATE_KEY`, for the allowlisted test accounts,
+   * taking its addresses from `BASE_MAINNET_TEST_DEPLOYMENTS`, and only while
+   * `AA_MAINNET_TEST_RELAY` is also `"true"`.
    */
   BASE_MAINNET_ENABLED?: string;
 
@@ -364,6 +367,13 @@ export interface Env {
   AA_RELAY_RL?: RateLimit;
   /** `POST /v1/aa/user-operation`: a generous per-IP ceiling before policy and simulation. */
   AA_RELAY_IP_RL?: RateLimit;
+  /**
+   * The Base mainnet test relay's own limit (decision 0080, M2): its global
+   * key `aa-test:global` and its per-sender `aa-test:<sender>`, both counted
+   * once policy and the pre-flights pass. Unbound, the lane counts on
+   * `AA_RELAY_RL`.
+   */
+  AA_TEST_RELAY_RL?: RateLimit;
   /** `/v1/ceremony/*` (decision 0016 co-signs): a global brake, and per account once the gate passes. */
   CEREMONY_RL?: RateLimit;
   /** `/v1/ceremony/*`: a generous per-IP ceiling before the gate. */

@@ -13,7 +13,10 @@
  * Any other chain id is never read.
  *
  * Mainnet on is still not mainnet served: every path also needs its contracts
- * in `DEPLOYMENTS_BY_CHAIN`, and the mainnet table is empty.
+ * in `DEPLOYMENTS_BY_CHAIN`, and the mainnet table is empty. The exception is
+ * the relay's 8453 test lane (`services/testRelay.ts`, behind
+ * `AA_MAINNET_TEST_RELAY`), which takes the test generation's addresses from
+ * `BASE_MAINNET_TEST_DEPLOYMENTS` and never from this table.
  */
 
 import { getBaseClient, getBaseSepoliaClient, type ChainClient } from './client.js';

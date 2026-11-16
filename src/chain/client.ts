@@ -9,7 +9,9 @@
  *
  * Read-only. Signing happens client-side in the RN app (passkey-bound)
  * or in cofferdam-attester (SelfAttester signing key). The one key the
- * Worker holds is the relayer's (`routes/aa.ts`), Sepolia only.
+ * Worker holds are the relayers' (`routes/aa.ts`): Sepolia's, and the Base
+ * mainnet test relay's (`RELAYER_MAINNET_TEST_PRIVATE_KEY`, decision 0080 M2),
+ * which signs only while `AA_MAINNET_TEST_RELAY` and this switch are on.
  */
 
 import { createPublicClient, http, type Chain, type HttpTransport, type PublicClient } from 'viem';
