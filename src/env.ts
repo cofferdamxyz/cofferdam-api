@@ -400,7 +400,7 @@ export interface Env {
 
   // ── Handles (workspace decision 0086, runbook handles-build.md step 3) ──
   /**
-   * `cofferdam-handles`: the handle registry, the reserved list, the hold log,
+   * `cofferdam-handles-sepolia` (the test registry; a fresh `cofferdam-handles` at the MVP cut): the handle registry, the reserved list, the hold log,
    * the share links and the announcement feed (`migrations/handles/`), apart
    * from `WORK_DB` and from 0083 R10's address map. Unbound, every
    * `/v1/handles`, `/v1/handshake` and `/v1/announcements` route answers

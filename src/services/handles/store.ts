@@ -3,7 +3,7 @@
 
 /**
  * The handle registry's reads, the share links and the hold lapse over D1
- * `cofferdam-handles` (`HANDLES_DB`, `migrations/handles/`; workspace decision
+ * `cofferdam-handles-sepolia` until the MVP cut (`HANDLES_DB`, `migrations/handles/`; workspace decision
  * 0086, rule 4). The claim, the hold and the handle-scoped writes are not
  * built here: they wait on the SDK's typed data, the anchor, device
  * attestation and device sync (runbook step 3).

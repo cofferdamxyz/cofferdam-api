@@ -1,5 +1,5 @@
 -- The handle registry on the plane (workspace decision 0086, rule 4; runbook
--- docs/runbooks/handles-build.md, step 3). D1 `cofferdam-handles`, binding
+-- docs/runbooks/handles-build.md, step 3). D1 `cofferdam-handles-sepolia` until the MVP cut (then `cofferdam-handles`), binding
 -- HANDLES_DB, apart from WORK_DB and from 0083 R10's address map. No account,
 -- no address, no name, no avatar and no IP is stored here: a row names a label,
 -- its handle id, the pinned handle key and a random identity id, which only the

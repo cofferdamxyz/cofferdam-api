@@ -272,11 +272,15 @@
     // docs/runbooks/handles-build.md, step 3): handles, the reserved list, the
     // hold log, share links and the announcement feed. NOT CREATED YET, so
     // commented out and every handle route answers 503 handles_db_unprovisioned.
-    // To light it up: `wrangler d1 create cofferdam-handles`, paste the id below
+    // The test registry: `cofferdam-handles-sepolia` holds the test handles until
+    // the production cut at the MVP, which creates a fresh `cofferdam-handles`,
+    // re-points this binding (the database_id and name only) and archives or
+    // deletes the test one (the founder, 2026-11-17; no staging split before then).
+    // To light it up: `wrangler d1 create cofferdam-handles-sepolia`, paste the id below
     // and uncomment the line (with a comma after WORK_DB's), then
-    // `wrangler d1 migrations apply cofferdam-handles --remote`. No "remote": true,
+    // `wrangler d1 migrations apply cofferdam-handles-sepolia --remote`. No "remote": true,
     // unlike WORK_DB: wrangler dev then writes a local database, never the live one.
-    // { "binding": "HANDLES_DB", "database_name": "cofferdam-handles", "database_id": "<TBD-run-wrangler-d1-create-cofferdam-handles>", "migrations_dir": "migrations/handles" }
+    // { "binding": "HANDLES_DB", "database_name": "cofferdam-handles-sepolia", "database_id": "<TBD-run-wrangler-d1-create-cofferdam-handles-sepolia>", "migrations_dir": "migrations/handles" }
   ],
   "vectorize": [
     { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v2", "remote": true },
