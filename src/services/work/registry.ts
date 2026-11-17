@@ -392,6 +392,8 @@ export interface VectorIndex {
   query(vector: number[], opts: { topK: number; namespace?: string; filter?: IndexFilter }): Promise<IndexMatch[]>;
   upsert(vectors: IndexVector[]): Promise<void>;
   deleteByIds(ids: string[]): Promise<void>;
+  /** The stored vectors named, with values, namespace and metadata; a missing id is left out. For a metadata change, which Vectorize takes only as an upsert. */
+  getByIds?(ids: string[]): Promise<IndexVector[]>;
 }
 
 /**
@@ -422,6 +424,21 @@ export function vectorizeIndex(binding: Vectorize): VectorIndex {
     },
     async deleteByIds(ids) {
       for (let i = 0; i < ids.length; i += 500) await binding.deleteByIds(ids.slice(i, i + 500));
+    },
+    async getByIds(ids) {
+      const out: IndexVector[] = [];
+      // Vectorize answers at most 20 ids a call.
+      for (let i = 0; i < ids.length; i += 20) {
+        for (const v of await binding.getByIds(ids.slice(i, i + 20))) {
+          out.push({
+            id: v.id,
+            values: Array.from(v.values),
+            ...(v.namespace ? { namespace: v.namespace } : {}),
+            metadata: (v.metadata ?? {}) as Record<string, string | number | boolean>,
+          });
+        }
+      }
+      return out;
     },
   };
 }

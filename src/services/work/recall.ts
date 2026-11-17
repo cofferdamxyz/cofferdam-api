@@ -193,7 +193,17 @@ export interface RecallIntent {
    * by their distance band, nearest first.
    */
   at?: string;
+  /**
+   * Verified workers only (`HirerRequest.verifiedOnly`): a personhood of 1 or
+   * more, a bound account, merged into every Vectorize query on the indexed
+   * `tier` field and checked again on the D1 record. Named for personhood: the
+   * gate's tiers 1 and 2 are match quality, a different thing.
+   */
+  verifiedOnly?: boolean;
 }
+
+/** The listing personhoods a Verified-only search reads: bound (1), and bound with verified experience (2). */
+export const VERIFIED_PERSONHOODS = [1, 2] as const;
 
 export interface Finalist {
   listingId: string;
@@ -299,7 +309,11 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
   const at = intent.scope === 'onsite' ? intent.at : undefined;
   const reach = at ? await searchReach(at) : undefined;
   // On site with the job's cell, one query per radius step in each namespace; else one per namespace, unfiltered.
-  const filters: (IndexFilter | undefined)[] = reach ? reach.filters : [undefined];
+  const radiusFilters: (IndexFilter | undefined)[] = reach ? reach.filters : [undefined];
+  // Verified only: the personhood joins each query's filter, so unverified listings never take the 50 a query returns.
+  const filters = intent.verifiedOnly
+    ? radiusFilters.map((f): IndexFilter => ({ ...(f ?? {}), tier: { $in: [...VERIFIED_PERSONHOODS] } }))
+    : radiusFilters;
   const answers = await Promise.all(
     namespaces.flatMap((namespace) =>
       filters.map(async (filter) =>
@@ -352,6 +366,8 @@ async function recallWith(deps: RecallDeps, intent: RecallIntent, namespaces: st
   for (const g of top) {
     const r = records.get(g.match.id);
     if (!r || r.pseudonym === deps.excludePseudonym) continue;
+    // The record decides, not the vector's metadata: a refresh writes the record first (`refreshPersonhood`).
+    if (intent.verifiedOnly && !(r.tier >= 1)) continue;
     const held = new Set(r.tokens);
     if (!certificates.every((c) => held.has(c))) continue;
     candidates.push({

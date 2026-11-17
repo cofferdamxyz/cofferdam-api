@@ -267,6 +267,7 @@ describe("recall within the workers' own circles", () => {
       get: async (wanted) => new Map(wanted.flatMap((id) => (records.has(id) ? [[id, records.get(id)!] as const] : []))),
       profilesOf: async () => [],
       delete: async () => undefined,
+      setPersonhood: async () => [],
     };
     return { index, deps: { inference: fakeInference({}), index, listings } };
   };
@@ -315,6 +316,7 @@ describe("recall within the workers' own circles", () => {
       get: async (wanted) => new Map(wanted.flatMap((id) => (records.has(id) ? [[id, records.get(id)!] as const] : []))),
       profilesOf: async () => [],
       delete: async () => undefined,
+      setPersonhood: async () => [],
     };
     const out = await recall({ inference: fakeInference({}), index, listings, remoteCountries: ['br'] }, intent({ at: MACAE.r6 }));
     expect(out.ok && out.finalists.map((f) => f.listingId)).toEqual(['far']);

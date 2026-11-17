@@ -126,6 +126,7 @@ describe('POST /v1/jobs/intent', () => {
       'scope',
       'scopeP',
       'start',
+      'verifiedOnly',
     ]);
     // One listing per pseudonym: the plumber counts once, their helper profile beside it never.
     expect(body.finalists).toEqual({ count: 1, byGateTier: { 1: 1, 2: 0 }, byPersonhood: { 0: 0, 1: 1, 2: 0 } });
@@ -151,6 +152,37 @@ describe('POST /v1/jobs/intent', () => {
     expect(body.finalists).toEqual({ count: 3, byGateTier: { 1: 3, 2: 0 }, byPersonhood: { 0: 1, 1: 2, 2: 0 } });
     // No score, token list, reference or id per finalist.
     expect(text).not.toMatch(/"score"|"matched"|"ref"|"listingId"|"gateTier"/);
+  });
+
+  it('keeps Verified workers only when asked: the personhood in every listing query, and the record checked again', async () => {
+    const a = await app();
+    for (const [pseudonym, tier] of [['p1', 1], ['p2', 1], ['p3', 0]] as const) await a.publish(draft({ pseudonym, tier }));
+    const all = (await (await a.post(REQUEST)).json()) as any;
+    expect(all.plan.verifiedOnly).toBe(false);
+    expect(all.finalists.byPersonhood).toEqual({ 0: 1, 1: 2, 2: 0 });
+    a.listingIndex.queries.length = 0;
+    const verified = (await (await a.post({ ...REQUEST, verifiedOnly: true })).json()) as any;
+    expect(verified.plan.verifiedOnly).toBe(true);
+    expect(verified.finalists).toEqual({ count: 2, byGateTier: { 1: 2, 2: 0 }, byPersonhood: { 0: 0, 1: 2, 2: 0 } });
+    expect(a.listingIndex.queries.length).toBeGreaterThan(0);
+    for (const q of a.listingIndex.queries) expect(q.filter).toMatchObject({ tier: { $in: [1, 2] } });
+    // A vector whose metadata still says verified while the record says not (a refresh between its two writes): the record decides.
+    const p1 = await listingIdOf('p1', 'main');
+    await a.listings.setPersonhood('p1', 0, now);
+    const stale = (await (await a.post({ ...REQUEST, verifiedOnly: true })).json()) as any;
+    expect(a.listingIndex.vectors.get(p1)!.metadata.tier).toBe(1);
+    expect(stale.finalists).toEqual({ count: 1, byGateTier: { 1: 1, 2: 0 }, byPersonhood: { 0: 0, 1: 1, 2: 0 } });
+  });
+
+  it('refuses a Verified-only flag that is not a boolean, before the gate and any model', async () => {
+    const a = await app();
+    for (const bad of ['true', 1, 'yes', {}]) {
+      const res = await a.post({ ...REQUEST, verifiedOnly: bad });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ ok: false, error: 'bad_request', reason: 'verified_only' });
+    }
+    expect(a.checks.authority).toBe(0);
+    expect(a.calls).toHaveLength(0);
   });
 
   it('never offers the hirer their own listing', async () => {

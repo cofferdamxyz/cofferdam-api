@@ -128,6 +128,15 @@ export interface HirerRequest {
    * only the plane could embed; the parsed needs still refine by exact label.
    */
   vector?: number[];
+  /**
+   * Verified workers only (workspace decision 0083, "Hirers can filter for
+   * Verified workers"): every finalist's listing must carry personhood 1 or
+   * more, a bound account, which binds only at 18 or over (decision 0080). It
+   * says nothing about a country: every nationality binds (decision 0080 (6),
+   * workspace 748a991), and the launch countries are the listing's region, not
+   * the mark. ASSUMPTION(ruling J): Verified is not a country check.
+   */
+  verifiedOnly?: boolean;
 }
 
 export interface HirePlan {
@@ -157,7 +166,7 @@ export type PlanOutcome =
   | { ok: true; plan: HirePlan; calls: WorkCall[] }
   | { ok: false; error: 'refused'; reason: 'harmful' | 'injection'; calls: WorkCall[] }
   | { ok: false; error: 'text_refused'; reason: BlockRefusal; calls: WorkCall[] }
-  | { ok: false; error: 'bad_request'; reason: 'lang' | 'regions' | 'at' | 'near' | 'today'; calls: WorkCall[] }
+  | { ok: false; error: 'bad_request'; reason: 'lang' | 'regions' | 'at' | 'near' | 'today' | 'verified_only'; calls: WorkCall[] }
   | { ok: false; error: 'intent_failed' | 'classification_failed' | 'embedding_failed'; calls: WorkCall[] };
 
 type RequestRefusal = Extract<PlanOutcome, { error: 'text_refused' | 'bad_request' }>;
@@ -177,6 +186,7 @@ export function checkHirerRequest(req: HirerRequest): { ok: true; sentence: stri
   if (req.at != null && !isH3Cell(req.at, 6)) return { ok: false, error: 'bad_request', reason: 'at', calls: [] };
   if (req.near != null && !checkLegacyRing(req.near)) return { ok: false, error: 'bad_request', reason: 'near', calls: [] };
   if (req.today != null && (typeof req.today !== 'string' || !ISO_DAY.test(req.today))) return { ok: false, error: 'bad_request', reason: 'today', calls: [] };
+  if (req.verifiedOnly != null && typeof req.verifiedOnly !== 'boolean') return { ok: false, error: 'bad_request', reason: 'verified_only', calls: [] };
   return { ok: true, sentence };
 }
 
@@ -331,6 +341,7 @@ async function planWith(deps: HireDeps, req: HirerRequest, sentence: string, cal
     anyOf,
     mode: curated ? 'curated' : 'instant',
     ...(scope === 'onsite' && jobCell ? { at: jobCell } : {}),
+    ...(req.verifiedOnly === true ? { verifiedOnly: true } : {}),
   };
   const missing: HirePlan['missing'] = [];
   if (fields.budgetUsd == null) missing.push('budget');

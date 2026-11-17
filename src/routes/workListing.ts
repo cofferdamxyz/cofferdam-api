@@ -9,6 +9,7 @@
  *   PUT    /v1/work/listing  { account, profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells?, radiusKm?, vector, claims? }
  *                            → { ok, listingId, profileId, namespace, tier, tokens, unsnapped }
  *   DELETE /v1/work/listing  { account, profileId }  → { ok, listingId, profileId }
+ *   POST   /v1/work/listing/personhood  { account }  → { ok, personhood, listings, vectors }
  *
  *   Authorization: DPoP csa1:… + DPoP: <proof>   (a fast or slow session, decision 0055)
  *   (or Authorization: Bearer csa1:…, a v1 token, while CSA1_V1_ACCEPTED allows it)
@@ -40,7 +41,20 @@
  * (bound, with verified experience) needs attestation records the plane does
  * not hold yet. So a bound account publishes at most 1 and an unbound one 0,
  * and the answer names the tier published; Base unreadable is `503
- * binding_check_unavailable`, never a guess.
+ * binding_check_unavailable`, never a guess. The read is already per chain:
+ * the identity registry of the chain the session names (`readAccountBound`,
+ * api aa2f1f6, workspace decision 0080).
+ *
+ * The personhood refresh (P3, "the tier refresh on bind"): a listing's
+ * personhood is read when it publishes, so a bind, a re-bind to another
+ * account or a relink after it would leave it stale. The phone calls
+ * `POST /v1/work/listing/personhood` once its bind's (or re-bind's) receipt is
+ * in, and the plane reads the binding again and sets every listing the
+ * account holds to what it can stand behind, 1 when bound and 0 when not,
+ * record then vector (`refreshPersonhood`). It runs no model, so it skips the
+ * strict gateway and the caps, on the Work keys. A Verified-only search
+ * decides on the record (`recall.ts`), so an account that lost its binding
+ * drops out of those searches with the record's write.
  */
 
 import { Hono } from 'hono';
@@ -50,7 +64,15 @@ import { chainContext } from '../chain/chains.js';
 import type { Env } from '../env.js';
 import { readListingVectors } from '../services/work/clientVectors.js';
 import { WorkCallsError } from '../services/work/fields.js';
-import { checkDraft, publishListing, unpublishListing, type DraftRefusal, type ListingDraft, type PublishOutcome } from '../services/work/listings.js';
+import {
+  checkDraft,
+  publishListing,
+  refreshPersonhood,
+  unpublishListing,
+  type DraftRefusal,
+  type ListingDraft,
+  type PublishOutcome,
+} from '../services/work/listings.js';
 import { pseudonymKey, workPseudonym } from '../services/work/pseudonym.js';
 import { parseTau } from '../services/work/registry.js';
 import { allStores, envWorkStores, listingStores, UNPROVISIONED, type WorkStores } from '../services/work/stores.js';
@@ -233,6 +255,34 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
       unsnapped: outcome.unsnapped,
       ...(outcome.radius !== undefined ? { radius: outcome.radius } : {}),
     });
+  });
+
+  routes.post('/listing/personhood', async (c) => {
+    const admitted = await gate.admitWithoutModels<null>(c, () => null);
+    if (admitted instanceof Response) return admitted;
+    const { account } = admitted;
+    const stores = listingStores(storesOf(c.env));
+    if (typeof stores === 'string') return c.json({ ok: false, error: UNPROVISIONED[stores] }, 503);
+    const key = pseudonymKey(c.env.WORK_PSEUDONYM_KEY);
+    if (!key) return c.json({ ok: false, error: 'pseudonym_key_unprovisioned' }, 503);
+    let bound: boolean;
+    try {
+      bound = await (deps.accountBound ?? readAccountBound)(c.env, account, admitted.chainId);
+    } catch (err) {
+      workLog({ event: 'work_listing_binding_unreadable', reason: failureOf(err) });
+      return c.json({ ok: false, error: 'binding_check_unavailable', message: 'the personhood binding could not be read on Base; retry shortly' }, 503);
+    }
+    // ASSUMPTION(P3, tier refresh): the refresh stands for the phone's claim of personhood 1, so a bound
+    // account's listings publish 1 and an unbound one's 0, as a publish with that claim would (`publishedTier`).
+    const personhood = publishedTier(1, bound);
+    try {
+      const done = await refreshPersonhood({ listings: stores.listings, index: stores.listingIndex }, await workPseudonym(key, account), personhood, deps.now());
+      workLog({ event: 'work_listing_personhood', personhood, listings: done.listings, vectors: done.vectors });
+      return c.json({ ok: true, personhood, ...done });
+    } catch (err) {
+      workLog({ event: 'work_listing_personhood_failed', reason: failureOf(err) });
+      return c.json({ ok: false, error: 'work_store_unavailable' }, 503);
+    }
   });
 
   routes.delete('/listing', async (c) => {

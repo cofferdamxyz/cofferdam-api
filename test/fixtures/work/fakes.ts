@@ -147,6 +147,12 @@ export function memoryIndex(): MemoryIndex {
     async deleteByIds(ids) {
       for (const id of ids) vectors.delete(id);
     },
+    async getByIds(ids) {
+      return ids.flatMap((id) => {
+        const v = vectors.get(id);
+        return v ? [{ ...v, metadata: { ...v.metadata } }] : [];
+      });
+    },
   };
 }
 

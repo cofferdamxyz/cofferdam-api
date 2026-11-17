@@ -6,7 +6,7 @@
  * `docs/product/work-wallet.md`, Matching and award; `docs/product/engine.md`,
  * Pipeline, S5 to S8).
  *
- *   POST /v1/jobs/intent  { account, sentence, lang, regions, at?, today?, vector }
+ *   POST /v1/jobs/intent  { account, sentence, lang, regions, at?, today?, verifiedOnly?, vector }
  *        → { ok, plan, finalists: { count, byGateTier: { 1, 2 }, byPersonhood: { 0, 1, 2 } } }
  *
  *   Authorization: DPoP csa1:… + DPoP: <proof>   (a fast or slow session, decision 0055)
@@ -29,6 +29,13 @@
  * 0067, rule 8, as amended): a cell, never a position. The hirer picks no
  * radius: each worker's own circle decides whether the job reaches them. An
  * older app's ring (`near`) stands for its centre cell.
+ *
+ * `verifiedOnly: true` keeps Verified workers only (workspace decision 0083):
+ * listings whose personhood is 1 or more, a bound account (bound only at 18
+ * or over, decision 0080), filtered in each Vectorize query and again on the
+ * D1 record (`recall.ts`). Verified is not a country check: every nationality
+ * binds (decision 0080 (6)); the country rule is the listing's region and
+ * namespace. Anything but a boolean is `400 bad_request`, `verified_only`.
  *
  * The finalists come back as counts only: how many, by gate tier (1 passed
  * the Bloom gate, or a miss Clef's fit promoted; 2 a vector-strong token
@@ -75,6 +82,8 @@ export function planView(plan: HirePlan) {
     allOf: plan.intent.allOf,
     anyOf: plan.intent.anyOf,
     regions: plan.intent.regions,
+    // Verified workers only (workspace decision 0083): bound, so 18 or over; never a country check (decision 0080 (6)).
+    verifiedOnly: plan.intent.verifiedOnly === true,
     missing: plan.missing,
     // The job draft's settings (decision 0065): the start, whether Instant is open, and a budget under the smallest contract.
     start: plan.start,
@@ -125,6 +134,7 @@ export function createJobsRoutes(deps: JobsRouteDeps = defaultWorkRouteDeps) {
         ...(b.at != null ? { at: b.at } : {}),
         ...(b.near != null ? { near: b.near } : {}),
         ...(b.today != null ? { today: b.today } : {}),
+        ...(b.verifiedOnly != null ? { verifiedOnly: b.verifiedOnly } : {}),
       } as HirerRequest;
       const checked = checkHirerRequest(req);
       if (checked.ok) return { req, vector: b.vector };
@@ -197,6 +207,7 @@ export function createJobsRoutes(deps: JobsRouteDeps = defaultWorkRouteDeps) {
       event: 'jobs_intent',
       scope: plan.scope,
       mode: plan.intent.mode,
+      verifiedOnly: plan.intent.verifiedOnly === true,
       needs: plan.needs.length,
       required: plan.intent.allOf.length,
       missing: plan.missing.length,

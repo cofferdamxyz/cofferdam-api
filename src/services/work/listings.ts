@@ -159,6 +159,8 @@ export interface ListingStore {
   /** The profile ids the pseudonym holds a listing for. */
   profilesOf(pseudonym: string): Promise<string[]>;
   delete(listingId: string): Promise<void>;
+  /** Set the personhood of every listing the pseudonym holds (`updated_at` only where it changed); the ids of all of them. */
+  setPersonhood(pseudonym: string, tier: 0 | 1 | 2, at: number): Promise<string[]>;
 }
 
 interface ListingRow {
@@ -242,6 +244,17 @@ export class D1ListingStore implements ListingStore {
 
   async delete(listingId: string): Promise<void> {
     await this.db.prepare('DELETE FROM listings WHERE listing_id = ?').bind(listingId).run();
+  }
+
+  async setPersonhood(pseudonym: string, tier: 0 | 1 | 2, at: number): Promise<string[]> {
+    const { results } = await this.db
+      .prepare(
+        `UPDATE listings SET tier = ?1, updated_at = CASE WHEN tier <> ?1 THEN ?2 ELSE updated_at END
+         WHERE pseudonym = ?3 RETURNING listing_id`,
+      )
+      .bind(tier, at, pseudonym)
+      .all<{ listing_id: string }>();
+    return results.map((r) => r.listing_id).sort();
   }
 }
 
@@ -562,6 +575,30 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
 }
 
 /** Looking for work off: the vector and the record go. */
+/**
+ * The personhood refresh (P3, the tier refresh on bind): every listing the
+ * pseudonym holds takes `tier`, the record first and then its vector's
+ * metadata. The record is what a Verified-only search decides on
+ * (`recall.ts`), so a lowered personhood takes effect with the first write,
+ * and a raised one reaches Verified searches once the vector's metadata
+ * follows. Every vector whose metadata differs is rewritten, not only those
+ * whose record changed now, so a refresh after a failed vector write mends it.
+ * Answers how many listings the pseudonym holds and how many vectors were
+ * rewritten.
+ */
+export async function refreshPersonhood(
+  deps: Pick<PublishDeps, 'index' | 'listings'>,
+  pseudonym: string,
+  tier: 0 | 1 | 2,
+  at: number,
+): Promise<{ listings: number; vectors: number }> {
+  const ids = await deps.listings.setPersonhood(pseudonym, tier, at);
+  if (!ids.length || !deps.index.getByIds) return { listings: ids.length, vectors: 0 };
+  const stale = (await deps.index.getByIds(ids)).filter((v) => v.metadata.tier !== tier);
+  if (stale.length) await deps.index.upsert(stale.map((v) => ({ ...v, metadata: { ...v.metadata, tier } })));
+  return { listings: ids.length, vectors: stale.length };
+}
+
 export async function unpublishListing(deps: Pick<PublishDeps, 'index' | 'listings'>, pseudonym: string, profileId: string): Promise<string> {
   const listingId = await listingIdOf(pseudonym, profileId);
   await deps.index.deleteByIds([listingId]);

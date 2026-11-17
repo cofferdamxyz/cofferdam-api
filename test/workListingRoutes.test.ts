@@ -66,7 +66,9 @@ async function app(env: Record<string, unknown> = STAGING, deps: Partial<Listing
     (method: 'PUT' | 'DELETE') =>
     (body: unknown, headers: Record<string, string> = bearer) =>
       h.request('/v1/work/listing', { method, headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }, env as never);
-  return { ...w, calls, checks, put: send('PUT'), del: send('DELETE') };
+  const personhood = (body: unknown, headers: Record<string, string> = bearer) =>
+    h.request('/v1/work/listing/personhood', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }, env as never);
+  return { ...w, calls, checks, put: send('PUT'), del: send('DELETE'), personhood };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -402,5 +404,78 @@ describe('DELETE /v1/work/listing', () => {
     expect(await (await noListings.del({ account: fxAccount, profileId: 'main' })).json()).toEqual({ ok: false, error: 'jobs_listings_unprovisioned' });
     const noKey = await app({ ...STAGING, WORK_PSEUDONYM_KEY: undefined });
     expect(await (await noKey.del({ account: fxAccount, profileId: 'main' })).json()).toEqual({ ok: false, error: 'pseudonym_key_unprovisioned' });
+  });
+});
+
+describe('POST /v1/work/listing/personhood (the tier refresh on bind)', () => {
+  const tiers = (a: Awaited<ReturnType<typeof app>>) =>
+    (a.db.sqlite.prepare('SELECT profile_id, tier FROM listings ORDER BY profile_id').all() as { profile_id: string; tier: number }[]).map((r) => [r.profile_id, r.tier]);
+  const vectorTiers = (a: Awaited<ReturnType<typeof app>>) => [...a.listingIndex.vectors.values()].map((v) => v.metadata.tier).sort();
+
+  it('raises every listing of a newly bound account to 1, record and vector, and needs no model', async () => {
+    let bound = false;
+    const a = await app(STAGING, { accountBound: async () => bound });
+    await a.put({ account: fxAccount, ...DRAFT });
+    await a.put({ account: fxAccount, ...DRAFT, profileId: 'helper', titles: ["Plumber's Helper"] });
+    expect(tiers(a)).toEqual([['helper', 0], ['main', 0]]);
+    a.calls.length = 0;
+    bound = true;
+    const res = await a.personhood({ account: fxAccount });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, personhood: 1, listings: 2, vectors: 2 });
+    expect(tiers(a)).toEqual([['helper', 1], ['main', 1]]);
+    expect(vectorTiers(a)).toEqual([1, 1]);
+    expect(a.calls).toEqual([]);
+    // Again: nothing left to rewrite.
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 2, vectors: 0 });
+  });
+
+  it('lowers them to 0 when the binding has gone (a re-bind to another account), and mends a vector a failed write left behind', async () => {
+    let bound = true;
+    const a = await app(STAGING, { accountBound: async () => bound });
+    await a.put({ account: fxAccount, ...DRAFT });
+    expect(tiers(a)).toEqual([['main', 1]]);
+    bound = false;
+    const upsert = a.listingIndex.upsert.bind(a.listingIndex);
+    a.listingIndex.upsert = async () => {
+      throw new Error('index down');
+    };
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: false, error: 'work_store_unavailable' });
+    // The record went first, so a Verified-only search already leaves the listing out.
+    expect(tiers(a)).toEqual([['main', 0]]);
+    expect(vectorTiers(a)).toEqual([1]);
+    a.listingIndex.upsert = upsert;
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 0, listings: 1, vectors: 1 });
+    expect(vectorTiers(a)).toEqual([0]);
+  });
+
+  it('touches only the gated account’s listings, answers zero when it holds none, and refuses rather than guess', async () => {
+    const a = await app(STAGING, { authorityCheck: async () => HIGH });
+    await a.put({ account: fxAccount, ...DRAFT });
+    expect((await a.personhood({ account: '0x' + '12'.repeat(20) })).status).toBe(401);
+    const empty = await app();
+    expect(await (await empty.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 0, vectors: 0 });
+    const unreadable = await app(STAGING, {
+      accountBound: async () => {
+        throw new Error('rpc down');
+      },
+    });
+    const res = await unreadable.personhood({ account: fxAccount });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toBe('binding_check_unavailable');
+    const noKey = await app({ ...STAGING, WORK_PSEUDONYM_KEY: undefined });
+    expect(await (await noKey.personhood({ account: fxAccount })).json()).toEqual({ ok: false, error: 'pseudonym_key_unprovisioned' });
+    const w = await workWorld();
+    const noListings = await app(STAGING, { stores: () => ({ ...w.stores, listingIndex: null }) });
+    expect(await (await noListings.personhood({ account: fxAccount })).json()).toEqual({ ok: false, error: 'jobs_listings_unprovisioned' });
+  });
+
+  it('runs no model, so the strict gateway and the caps do not apply, and counts on the Work keys after the gate', async () => {
+    const rl = limiter();
+    const a = await app({ ENVIRONMENT: 'staging', WORK_PSEUDONYM_KEY: KEY, WORK_RL: rl }, { inference: () => null });
+    expect((await a.personhood({ account: fxAccount }, {})).status).toBe(401);
+    expect(rl.keys).toEqual(['work:global']);
+    expect((await a.personhood({ account: fxAccount })).status).toBe(200);
+    expect(rl.keys).toEqual(['work:global', 'work:global', `work:${fxAccount.toLowerCase()}`]);
   });
 });

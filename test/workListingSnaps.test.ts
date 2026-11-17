@@ -58,6 +58,7 @@ const deps = (): PublishDeps => {
     get: async () => new Map(),
     profilesOf: async () => [],
     delete: async () => undefined,
+    setPersonhood: async () => [],
   };
   const inference = fakeInference({});
   // The store answers no ISCO-08 group for the occupation; the snaps never reach it (`snap` is the fake above).
