@@ -9,7 +9,7 @@
  *   PUT    /v1/work/listing  { account, profileId, region, scope, tier, lang, titles, skills, certificates, languages, cells?, radiusKm?, vector, claims? }
  *                            → { ok, listingId, profileId, namespace, tier, tokens, unsnapped }
  *   DELETE /v1/work/listing  { account, profileId }  → { ok, listingId, profileId }
- *   POST   /v1/work/listing/personhood  { account }  → { ok, personhood, listings, vectors }
+ *   POST   /v1/work/listing/personhood  { account }  → { ok, personhood, listings, vectors, pending }
  *
  *   Authorization: DPoP csa1:… + DPoP: <proof>   (a fast or slow session, decision 0055)
  *   (or Authorization: Bearer csa1:…, a v1 token, while CSA1_V1_ACCEPTED allows it)
@@ -51,10 +51,20 @@
  * `POST /v1/work/listing/personhood` once its bind's (or re-bind's) receipt is
  * in, and the plane reads the binding again and sets every listing the
  * account holds to what it can stand behind, 1 when bound and 0 when not,
- * record then vector (`refreshPersonhood`). It runs no model, so it skips the
- * strict gateway and the caps, on the Work keys. A Verified-only search
- * decides on the record (`recall.ts`), so an account that lost its binding
- * drops out of those searches with the record's write.
+ * record then vector (`refreshPersonhood`; `pending` counts vectors not yet
+ * readable as the record's last publish, and the phone asks again). It runs
+ * no model, so it skips the strict gateway and the caps, on the Work keys. A
+ * Verified-only search decides on the record (`recall.ts`), so an account
+ * that calls it after losing its binding drops out of those searches with the
+ * record's write.
+ *
+ * KNOWN GAP: a re-bind that moves a passport to a new account is usually a
+ * recovery, and the old account's keys are gone, so nobody calls this route
+ * for it: its listings keep personhood 1 until they are taken down. The plane
+ * can derive the old account's pseudonym itself, so the fix is the cron
+ * reading the identity registry's re-bind and relink events and setting that
+ * pseudonym's listings to 0; not built (it waits on the registry's event
+ * shapes per generation, decision 0080).
  */
 
 import { Hono } from 'hono';
@@ -276,8 +286,8 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
     // account's listings publish 1 and an unbound one's 0, as a publish with that claim would (`publishedTier`).
     const personhood = publishedTier(1, bound);
     try {
-      const done = await refreshPersonhood({ listings: stores.listings, index: stores.listingIndex }, await workPseudonym(key, account), personhood, deps.now());
-      workLog({ event: 'work_listing_personhood', personhood, listings: done.listings, vectors: done.vectors });
+      const done = await refreshPersonhood({ listings: stores.listings, index: stores.listingIndex }, await workPseudonym(key, account), personhood);
+      workLog({ event: 'work_listing_personhood', personhood, listings: done.listings, vectors: done.vectors, pending: done.pending });
       return c.json({ ok: true, personhood, ...done });
     } catch (err) {
       workLog({ event: 'work_listing_personhood_failed', reason: failureOf(err) });

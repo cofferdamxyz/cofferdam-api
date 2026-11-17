@@ -29,11 +29,16 @@
  * (q18's spot check). Any ERC-20 counts, not USDC alone, so a junk token's
  * transfer passes: the flood residual q18 states.
  *
- * The indexer reads up to the chain's `safe` head, in chunks of
- * `ANNOUNCEMENT_LOG_RANGE` blocks, and stores a chunk's kept announcements and
- * the next block in one batch, so a failed call leaves the cursor where it was
- * and the next run reads the chunk again. A refused call is an error, never an
- * empty chunk (as `activityScan.ts`).
+ * The indexer first checks that its node serves the chain it indexes, then
+ * reads up to the chain's `safe` head, in chunks of `ANNOUNCEMENT_LOG_RANGE`
+ * blocks, and stores a chunk's kept announcements and the next block, the
+ * cursor in the last batch, so a failed call leaves the cursor where it was and
+ * the next run reads the chunk again. A refused call is an error, never an
+ * empty chunk (as `activityScan.ts`). A chunk a node refuses (a result too
+ * large, from a flood) is read again in halves, down to one block, so no
+ * stranger can stall the feed for good; and an announcement that is not a
+ * well-formed scheme 1 one (an ephemeral key other than 33 bytes, metadata
+ * empty or over `MAX_METADATA_BYTES`) is never kept, so no row can outgrow D1.
  */
 
 import {
@@ -67,6 +72,17 @@ export const ANNOUNCEMENT_LOG_RANGE = 200;
 export const MAX_CHUNKS_PER_RUN = 10;
 /** Stealth addresses per transfer query: one `topics` OR-list, kept short for public nodes. */
 export const TRANSFER_ADDRESSES_PER_QUERY = 100;
+/** The most metadata a kept announcement carries: the view tag and, as ERC-5564 suggests, a selector, a token and an amount, with room. */
+export const MAX_METADATA_BYTES = 512;
+/** Rows per D1 batch when a chunk is committed; the cursor goes in the last one. */
+export const COMMIT_ROWS_PER_BATCH = 100;
+/** Retries a run may spend halving refused chunks (200 blocks halve to one in eight). */
+export const MAX_SPLITS_PER_RUN = 16;
+
+/** The node the indexer was given serves another chain: nothing is read or written. */
+export class FeedChainMismatch extends Error {
+  override name = 'FeedChainMismatch';
+}
 
 /** A log as `eth_getLogs` answers it, the fields the indexer reads. */
 export interface RawLog {
@@ -86,8 +102,9 @@ export interface LogQuery {
   toBlock: bigint;
 }
 
-/** What the indexer asks of a chain: its `safe` head and `eth_getLogs`. */
+/** What the indexer asks of a chain: its id, its `safe` head and `eth_getLogs`. */
 export interface FeedChain {
+  chainId(): Promise<number>;
   safeHead(): Promise<bigint>;
   logs(query: LogQuery): Promise<RawLog[]>;
 }
@@ -120,6 +137,10 @@ export function decodeAnnouncement(log: RawLog, chainId: number): Announcement |
   if (log.topics.length !== 4 || topic0?.toLowerCase() !== ANNOUNCEMENT_TOPIC || scheme?.toLowerCase() !== SCHEME_TOPIC) return null;
   try {
     const [ephemeralPubKey, metadata] = decodeAbiParameters([{ type: 'bytes' }, { type: 'bytes' }], log.data as Hex);
+    // Scheme 1: a compressed secp256k1 key, and metadata that starts with the view tag and stays small.
+    if (!/^0x0[23][0-9a-f]{64}$/i.test(ephemeralPubKey)) return null;
+    const metadataBytes = (metadata.length - 2) / 2;
+    if (metadataBytes < 1 || metadataBytes > MAX_METADATA_BYTES) return null;
     return {
       chainId,
       blockNumber: Number(log.blockNumber),
@@ -201,6 +222,7 @@ export interface IndexDeps {
   now: () => number;
   range?: number;
   maxChunks?: number;
+  maxSplits?: number;
 }
 
 export interface IndexRun {
@@ -212,21 +234,40 @@ export interface IndexRun {
   through: number | null;
 }
 
-/** One run: from the stored cursor (else `fromBlock`) towards the `safe` head, chunk by chunk. A failed call throws; the chunks before it stay committed. */
+/**
+ * One run: from the stored cursor (else `fromBlock`) towards the `safe` head,
+ * chunk by chunk. A chunk the node refuses is read again in halves, within
+ * `maxSplits`; a refusal of a single block, or past the splits, throws, and the
+ * chunks before it stay committed.
+ */
 export async function indexAnnouncements(deps: IndexDeps): Promise<IndexRun> {
-  const range = deps.range ?? ANNOUNCEMENT_LOG_RANGE;
+  const range = BigInt(deps.range ?? ANNOUNCEMENT_LOG_RANGE);
   const maxChunks = deps.maxChunks ?? MAX_CHUNKS_PER_RUN;
+  let splits = deps.maxSplits ?? MAX_SPLITS_PER_RUN;
+  const served = await deps.chain.chainId();
+  if (served !== deps.chainId) throw new FeedChainMismatch(`the node serves chain ${served}, not ${deps.chainId}`);
   let next = BigInt((await deps.store.cursor(deps.chainId)) ?? deps.fromBlock);
   const head = await deps.chain.safeHead();
   const run: IndexRun = { chunks: 0, kept: 0, through: null };
+  let span = range;
   while (next <= head && run.chunks < maxChunks) {
-    const to = next + BigInt(range - 1) < head ? next + BigInt(range - 1) : head;
-    const kept = await keptAnnouncements(deps.chain, deps.chainId, next, to, deps.planeCallers);
+    const to = next + span - 1n < head ? next + span - 1n : head;
+    let kept: Announcement[];
+    try {
+      kept = await keptAnnouncements(deps.chain, deps.chainId, next, to, deps.planeCallers);
+    } catch (err) {
+      if (to === next || splits <= 0) throw err;
+      splits--;
+      span = (to - next + 2n) / 2n;
+      continue;
+    }
     await deps.store.commit(deps.chainId, kept, Number(to + 1n), deps.now());
     run.chunks++;
     run.kept += kept.length;
     run.through = Number(to);
     next = to + 1n;
+    // Back towards the full range after a halved chunk read.
+    span = span * 2n < range ? span * 2n : range;
   }
   return run;
 }
@@ -247,6 +288,9 @@ interface RpcLog {
 export function rpcFeedChain(rpcUrl: string): FeedChain {
   const client = createPublicClient({ transport: http(rpcUrl, { retryCount: 1 }) });
   return {
+    async chainId() {
+      return client.getChainId();
+    },
     async safeHead() {
       const block = await client.getBlock({ blockTag: 'safe' });
       return block.number;
@@ -310,7 +354,10 @@ export class D1FeedStore implements FeedStore {
          WHERE excluded.next_block > announcement_cursor.next_block`,
       )
       .bind(chainId, nextBlock, now);
-    await this.db.batch([...rows, cursor]);
+    // A batch per hundred rows, the cursor with the last: rows a failed batch left are written again, once, next run.
+    for (let i = 0; i + COMMIT_ROWS_PER_BATCH < rows.length; i += COMMIT_ROWS_PER_BATCH) await this.db.batch(rows.slice(i, i + COMMIT_ROWS_PER_BATCH));
+    const tail = rows.length ? rows.slice(Math.floor((rows.length - 1) / COMMIT_ROWS_PER_BATCH) * COMMIT_ROWS_PER_BATCH) : [];
+    await this.db.batch([...tail, cursor]);
   }
 
   async page(chainId: number, after: { block: number; logIndex: number } | null, limit: number, through: number): Promise<Announcement[]> {

@@ -41,7 +41,7 @@ import { Hono, type Context } from 'hono';
 import type { Env } from '../env.js';
 import { readHandle } from '../services/handles/grammar.js';
 import { handlesLog, publicLimit } from '../services/handles/limits.js';
-import { availabilityOf, D1HandleStore, resolutionOf, type HandleStore } from '../services/handles/store.js';
+import { availabilityOf, D1HandleStore, quarantineMs, resolutionOf, type HandleStore } from '../services/handles/store.js';
 
 export interface HandlesRouteDeps {
   /** The registry, or null when `HANDLES_DB` is not bound (default: from the env). */
@@ -71,9 +71,18 @@ function unavailable(c: HandlesContext, route: string, err: unknown): Response {
 /** The words a path under `/v1/handles/:label/` may end in that a log line keeps. */
 const HANDLE_ROUTE_WORDS = new Set(['available', 'inbox', 'self']);
 
+/** `/v1/handles/…` or `/v1/handshake/links/…`, with any run of slashes, in a decoded word. */
+const HANDLES_PREFIX = /\/+v1\/+handles(?:\/|$)/i;
+const SHARE_LINK_PREFIX = /\/+v1\/+handshake\/+links\/+\S/i;
+
 /**
- * The request logger's line with every handle and share-link token cut out:
- * `/v1/handles/:label…` and `/v1/handshake/links/:token`, encoded or not.
+ * The request logger's line with every handle and share-link token cut out.
+ * The logger writes the raw URL path, one whitespace-free word, so each word
+ * is decoded only to recognise the prefix, and the whole word is then
+ * replaced: `/v1/handles/:label`, with one known route word kept
+ * (`/available`), or `/v1/handshake/links/:token`. Nothing of the raw word
+ * after the prefix survives, so no encoding, slash or newline in a label
+ * carries part of it into the line.
  */
 export function redactHandlePath(line: string): string {
   return line.replace(/\S+/g, (word) => {
@@ -83,16 +92,13 @@ export function redactHandlePath(line: string): string {
     } catch {
       // not percent-encoded text; matched as it is
     }
-    if (/\/v1\/handles\//i.test(path)) {
-      // The label and any query go; one known route word after it stays.
-      return path.replace(/\/v1\/handles\/[^/?#\s]+((?:\/[^/?#\s]*)*)(?:[?#]\S*)?/gi, (_m, rest: string) => {
-        const parts = rest.split('/').filter(Boolean);
-        const known = parts.length === 1 && HANDLE_ROUTE_WORDS.has(parts[0]!) ? `/${parts[0]}` : parts.length ? '/…' : '';
-        return `/v1/handles/:label${known}`;
-      });
-    }
-    if (/\/v1\/handshake\/links\//i.test(path)) return path.replace(/\/v1\/handshake\/links\/\S*/gi, '/v1/handshake/links/:token');
-    return word;
+    if (SHARE_LINK_PREFIX.test(path) || SHARE_LINK_PREFIX.test(word)) return '/v1/handshake/links/:token';
+    const at = HANDLES_PREFIX.exec(path);
+    if (!at) return HANDLES_PREFIX.test(word) ? '/v1/handles/:label' : word;
+    const parts = path.slice(at.index + at[0].length).split(/[?#]/)[0]!.split('/').filter(Boolean);
+    if (!parts.length) return '/v1/handles';
+    const known = parts.length === 2 && HANDLE_ROUTE_WORDS.has(parts[1]!) ? `/${parts[1]}` : parts.length > 1 ? '/…' : '';
+    return `/v1/handles/:label${known}`;
   });
 }
 
@@ -114,7 +120,7 @@ export function createHandlesRoutes(deps: HandlesRouteDeps = defaultHandlesRoute
     if (!store) return unprovisioned(c);
     try {
       const [row, reserved] = await Promise.all([store.row(label), store.reserved(label)]);
-      const answer = availabilityOf(row, reserved, deps.now());
+      const answer = availabilityOf(row, reserved, deps.now(), quarantineMs(c.env.HANDLES_QUARANTINE_DAYS));
       handlesLog({ route: 'available', available: answer.available });
       return c.json({ ok: true, label, ...answer });
     } catch (err) {

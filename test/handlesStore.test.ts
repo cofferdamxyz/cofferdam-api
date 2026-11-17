@@ -35,7 +35,7 @@ describe('migrations/handles on local D1 (node:sqlite)', () => {
     const tables = (db.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(
       (t) => t.name,
     );
-    expect(tables).toEqual(['announcement_cursor', 'announcements', 'handle_holds', 'handles', 'reserved_labels', 'share_links']);
+    expect(tables).toEqual(['announcement_cursor', 'announcements', 'handle_holds', 'handles', 'handles_counters', 'reserved_labels', 'share_links']);
     const reserved = (db.sqlite.prepare('SELECT label FROM reserved_labels').all() as { label: string }[]).map((r) => r.label);
     expect(reserved.length).toBeGreaterThan(50);
     expect(reserved.filter((l) => !isStoredHandle(l))).toEqual([]);
@@ -134,14 +134,15 @@ describe('D1HandleStore', () => {
     const db = handlesD1();
     const store = new D1HandleStore(db.d1);
     const bytes = Uint8Array.from([1, 2, 3]);
-    expect(await store.putShareLink('a'.repeat(64), bytes, NOW + 10)).toBe(true);
-    expect(await store.putShareLink('a'.repeat(64), bytes, NOW + 10)).toBe(false);
+    expect(await store.putShareLink('a'.repeat(64), bytes, NOW + 10)).toBe('stored');
+    expect(await store.putShareLink('a'.repeat(64), bytes, NOW + 10)).toBe('taken');
     expect(await store.takeShareLink('a'.repeat(64), NOW)).toEqual(bytes);
     expect(await store.takeShareLink('a'.repeat(64), NOW)).toBeNull();
     await store.putShareLink('b'.repeat(64), bytes, NOW);
     expect(await store.takeShareLink('b'.repeat(64), NOW)).toBeNull();
-    // The expired row went with the fetch.
+    // The expired row went with the fetch, and the trigger-kept count follows the table.
     expect((db.sqlite.prepare('SELECT COUNT(*) AS n FROM share_links').get() as { n: number }).n).toBe(0);
+    expect(db.sqlite.prepare("SELECT n FROM handles_counters WHERE name = 'share_links'").get()).toEqual({ n: 0 });
   });
 
   it('sweeps expired links, lapsed holds (logging the lapse) and hold-log rows past 31 days, and nothing else', async () => {
@@ -166,5 +167,6 @@ describe('D1HandleStore', () => {
       { label: 'recent', outcome: 'lapsed', ended_at: NOW - 6 * DAY },
     ]);
     expect((db.sqlite.prepare('SELECT COUNT(*) AS n FROM share_links').get() as { n: number }).n).toBe(1);
+    expect(db.sqlite.prepare("SELECT n FROM handles_counters WHERE name = 'share_links'").get()).toEqual({ n: 1 });
   });
 });

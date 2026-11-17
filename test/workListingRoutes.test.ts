@@ -119,7 +119,7 @@ describe('PUT /v1/work/listing', () => {
     const stored = JSON.stringify(row) + JSON.stringify([...a.listingIndex.vectors.values()]);
     expect(stored.toLowerCase()).not.toContain(fxAccount.slice(2).toLowerCase());
     const vector = a.listingIndex.vectors.get(listingId)!;
-    expect(Object.keys(vector.metadata).sort()).toEqual(['bloom', 'model', 'region', 'scope', 'tier', 'v']);
+    expect(Object.keys(vector.metadata).sort()).toEqual(['at', 'bloom', 'model', 'region', 'scope', 'tier', 'v']);
     expect(JSON.stringify(body).toLowerCase()).not.toContain(fxAccount.slice(2).toLowerCase());
   });
 
@@ -133,7 +133,7 @@ describe('PUT /v1/work/listing', () => {
     expect(await res.json()).toMatchObject({ ok: true, radius: 50 });
     const vector = [...a.listingIndex.vectors.values()][0]!;
     expect(vector.metadata).toMatchObject({ cell6: cells.r6, cell5: cells.r5, cell4: '84a8b1bffffffff', radius: 50 });
-    expect(Object.keys(vector.metadata).sort()).toEqual(['bloom', 'cell4', 'cell5', 'cell6', 'model', 'radius', 'region', 'scope', 'tier', 'v']);
+    expect(Object.keys(vector.metadata).sort()).toEqual(['at', 'bloom', 'cell4', 'cell5', 'cell6', 'model', 'radius', 'region', 'scope', 'tier', 'v']);
     // An older phone's cells without a radius take the app's default; a radius off the map's steps, or without cells, is refused.
     const older = await app();
     expect(await (await older.put({ account: fxAccount, ...DRAFT, region: 'br', cells })).json()).toMatchObject({ ok: true, radius: 25 });
@@ -422,15 +422,15 @@ describe('POST /v1/work/listing/personhood (the tier refresh on bind)', () => {
     bound = true;
     const res = await a.personhood({ account: fxAccount });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, personhood: 1, listings: 2, vectors: 2 });
+    expect(await res.json()).toEqual({ ok: true, personhood: 1, listings: 2, vectors: 2, pending: 0 });
     expect(tiers(a)).toEqual([['helper', 1], ['main', 1]]);
     expect(vectorTiers(a)).toEqual([1, 1]);
     expect(a.calls).toEqual([]);
     // Again: nothing left to rewrite.
-    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 2, vectors: 0 });
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 2, vectors: 0, pending: 0 });
   });
 
-  it('lowers them to 0 when the binding has gone (a re-bind to another account), and mends a vector a failed write left behind', async () => {
+  it('lowers them to 0 when the account it gates has lost its binding, and mends a vector a failed write left behind', async () => {
     let bound = true;
     const a = await app(STAGING, { accountBound: async () => bound });
     await a.put({ account: fxAccount, ...DRAFT });
@@ -445,8 +445,28 @@ describe('POST /v1/work/listing/personhood (the tier refresh on bind)', () => {
     expect(tiers(a)).toEqual([['main', 0]]);
     expect(vectorTiers(a)).toEqual([1]);
     a.listingIndex.upsert = upsert;
-    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 0, listings: 1, vectors: 1 });
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 0, listings: 1, vectors: 1, pending: 0 });
     expect(vectorTiers(a)).toEqual([0]);
+  });
+
+  it('never writes an older publish’s vector back: one the index has not caught up with is pending', async () => {
+    let bound = false;
+    const a = await app(STAGING, { accountBound: async () => bound });
+    const up = (await (await a.put({ account: fxAccount, ...DRAFT })).json()) as { listingId: string };
+    const newer = a.listingIndex.vectors.get(up.listingId)!;
+    // The index still answers the previous publish: another radius, an older time.
+    a.listingIndex.vectors.set(up.listingId, { ...newer, metadata: { ...newer.metadata, at: Number(newer.metadata.at) - 1, radius: 100 } });
+    bound = true;
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 1, vectors: 0, pending: 1 });
+    expect(a.listingIndex.vectors.get(up.listingId)!.metadata).toMatchObject({ tier: 0, radius: 100 });
+    // Once the index holds the record's own publish, the next call rewrites it.
+    a.listingIndex.vectors.set(up.listingId, newer);
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 1, vectors: 1, pending: 0 });
+    expect(a.listingIndex.vectors.get(up.listingId)!.metadata).toMatchObject({ tier: 1, at: newer.metadata.at });
+    // A vector the index does not hold yet is pending too.
+    a.listingIndex.vectors.delete(up.listingId);
+    bound = false;
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 0, listings: 1, vectors: 0, pending: 1 });
   });
 
   it('touches only the gated account’s listings, answers zero when it holds none, and refuses rather than guess', async () => {
@@ -454,7 +474,7 @@ describe('POST /v1/work/listing/personhood (the tier refresh on bind)', () => {
     await a.put({ account: fxAccount, ...DRAFT });
     expect((await a.personhood({ account: '0x' + '12'.repeat(20) })).status).toBe(401);
     const empty = await app();
-    expect(await (await empty.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 0, vectors: 0 });
+    expect(await (await empty.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 0, vectors: 0, pending: 0 });
     const unreadable = await app(STAGING, {
       accountBound: async () => {
         throw new Error('rpc down');

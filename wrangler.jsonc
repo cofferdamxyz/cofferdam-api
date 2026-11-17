@@ -233,10 +233,15 @@
     // /v1/vault's global brake (vault:global), first on every route.
     { "name": "VAULT_GLOBAL_RL", "namespace_id": "1114", "simple": { "limit": 600, "period": 60 } },
     // The handle registry's public routes (workspace decision 0086, rule 4): per IP
-    // (handles-ip:, handshake-ip:, announce-ip:), as generous as chat's, and their
+    // (handles-ip:, handshake-ip:, announce-ip:), as generous as chat's, then their
     // global brake (handles:global, handshake:global, announce:global). No IP is stored.
-    { "name": "HANDLES_IP_RL", "namespace_id": "1115", "simple": { "limit": 120, "period": 60 } },
-    { "name": "HANDLES_GLOBAL_RL", "namespace_id": "1116", "simple": { "limit": 600, "period": 60 } }
+    // Ids from 1121: 1115 is AA_TEST_RELAY_RL on claude/zkp-plane-relay-fixes, and 1116 to 1120 stay free for it.
+    { "name": "HANDLES_IP_RL", "namespace_id": "1121", "simple": { "limit": 120, "period": 60 } },
+    { "name": "HANDLES_GLOBAL_RL", "namespace_id": "1122", "simple": { "limit": 600, "period": 60 } },
+    // A share link's upload, the one anonymous write: far lower, on bindings of its own
+    // (handshake-put-ip:, handshake-put:global), beside a ceiling on the live links in HANDLES_DB.
+    { "name": "HANDSHAKE_PUT_IP_RL", "namespace_id": "1123", "simple": { "limit": 10, "period": 60 } },
+    { "name": "HANDSHAKE_PUT_GLOBAL_RL", "namespace_id": "1124", "simple": { "limit": 120, "period": 60 } }
   ],
 
   // ─────────────────────────────────────────────────────────────────
@@ -262,15 +267,16 @@
   // under a pseudonym the deployed Worker never derives.
   // ─────────────────────────────────────────────────────────────────
   "d1_databases": [
-    { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "bcaf84d1-c870-4e4e-85e9-6b0dd822ecd5", "migrations_dir": "migrations/work", "remote": true },
+    { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "bcaf84d1-c870-4e4e-85e9-6b0dd822ecd5", "migrations_dir": "migrations/work", "remote": true }
     // The handle registry (workspace decision 0086, rule 4; runbook
     // docs/runbooks/handles-build.md, step 3): handles, the reserved list, the
-    // hold log, share links and the announcement feed. NOT CREATED YET: the
-    // founder runs `wrangler d1 create cofferdam-handles`, pastes its id here,
-    // then `wrangler d1 migrations apply cofferdam-handles --remote`. The
-    // placeholder id makes a deploy fail loudly until then. No "remote": true,
-    // unlike WORK_DB: wrangler dev writes a local database, never the live one.
-    { "binding": "HANDLES_DB", "database_name": "cofferdam-handles", "database_id": "TBD-run-wrangler-d1-create-cofferdam-handles", "migrations_dir": "migrations/handles" }
+    // hold log, share links and the announcement feed. NOT CREATED YET, so
+    // commented out and every handle route answers 503 handles_db_unprovisioned.
+    // To light it up: `wrangler d1 create cofferdam-handles`, paste the id below
+    // and uncomment the line (with a comma after WORK_DB's), then
+    // `wrangler d1 migrations apply cofferdam-handles --remote`. No "remote": true,
+    // unlike WORK_DB: wrangler dev then writes a local database, never the live one.
+    // { "binding": "HANDLES_DB", "database_name": "cofferdam-handles", "database_id": "<TBD-run-wrangler-d1-create-cofferdam-handles>", "migrations_dir": "migrations/handles" }
   ],
   "vectorize": [
     { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v2", "remote": true },
@@ -289,13 +295,14 @@
   // ─────────────────────────────────────────────────────────────────
   "r2_buckets": [
     { "binding": "VAULT", "bucket_name": "cofferdam-vault" }
-  ],
+  ]
 
   // The handle registry's scheduled run (src/services/handles/cron.ts): the
   // sweep of expired share links and lapsed holds, then the announcement
   // indexer, which stays off until ANNOUNCEMENTS_FROM_BLOCK is set. Does
-  // nothing while HANDLES_DB is unbound.
-  "triggers": { "crons": ["* * * * *"] }
+  // nothing while HANDLES_DB is unbound. Uncomment with HANDLES_DB above,
+  // with a comma after the r2_buckets array:
+  // "triggers": { "crons": ["* * * * *"] }
 
   // Bindings below are intentionally COMMENTED until their resources
   // are provisioned. Uncomment + fill IDs as we go through Sessions 4-N.

@@ -409,8 +409,18 @@ export interface Env {
   HANDLES_DB?: D1Database;
   /** The handle routes' per-IP ceiling (`handles-ip:`, `handshake-ip:`, `announce-ip:` keys); no IP is stored. */
   HANDLES_IP_RL?: RateLimit;
-  /** The handle routes' global brake (`handles:global`, `handshake:global`, `announce:global`), first on every one. */
+  /** The handle routes' global brake (`handles:global`, `handshake:global`, `announce:global`), after the per-IP ceiling. */
   HANDLES_GLOBAL_RL?: RateLimit;
+  /** A share link's upload, the one public write: its own per-IP ceiling (`handshake-put-ip:`), far below the reads'. */
+  HANDSHAKE_PUT_IP_RL?: RateLimit;
+  /** A share link's upload: its own global brake (`handshake-put:global`), so uploads never spend the fetches'. */
+  HANDSHAKE_PUT_GLOBAL_RL?: RateLimit;
+  /**
+   * The quarantine after a release, in whole days, as the anchor this plane
+   * relays to enforces it (decision 0086 rule 3; runbook step 2 deploys short
+   * delays on Base Sepolia). Unset or not a whole number: 365.
+   */
+  HANDLES_QUARANTINE_DAYS?: string;
   /**
    * The first Base Sepolia block the announcement feed indexes, decimal. Unset,
    * the indexer is off and the feed stays empty; set it once, to a block before

@@ -168,7 +168,7 @@ describe('POST /v1/jobs/intent', () => {
     for (const q of a.listingIndex.queries) expect(q.filter).toMatchObject({ tier: { $in: [1, 2] } });
     // A vector whose metadata still says verified while the record says not (a refresh between its two writes): the record decides.
     const p1 = await listingIdOf('p1', 'main');
-    await a.listings.setPersonhood('p1', 0, now);
+    await a.listings.setPersonhood('p1', 0);
     const stale = (await (await a.post({ ...REQUEST, verifiedOnly: true })).json()) as any;
     expect(a.listingIndex.vectors.get(p1)!.metadata.tier).toBe(1);
     expect(stale.finalists).toEqual({ count: 1, byGateTier: { 1: 1, 2: 0 }, byPersonhood: { 0: 0, 1: 1, 2: 0 } });

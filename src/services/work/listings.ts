@@ -159,8 +159,8 @@ export interface ListingStore {
   /** The profile ids the pseudonym holds a listing for. */
   profilesOf(pseudonym: string): Promise<string[]>;
   delete(listingId: string): Promise<void>;
-  /** Set the personhood of every listing the pseudonym holds (`updated_at` only where it changed); the ids of all of them. */
-  setPersonhood(pseudonym: string, tier: 0 | 1 | 2, at: number): Promise<string[]>;
+  /** Set the personhood of every listing the pseudonym holds, leaving `updatedAt` (the last publish) as it is; the ids of all of them. */
+  setPersonhood(pseudonym: string, tier: 0 | 1 | 2): Promise<string[]>;
 }
 
 interface ListingRow {
@@ -246,13 +246,10 @@ export class D1ListingStore implements ListingStore {
     await this.db.prepare('DELETE FROM listings WHERE listing_id = ?').bind(listingId).run();
   }
 
-  async setPersonhood(pseudonym: string, tier: 0 | 1 | 2, at: number): Promise<string[]> {
+  async setPersonhood(pseudonym: string, tier: 0 | 1 | 2): Promise<string[]> {
     const { results } = await this.db
-      .prepare(
-        `UPDATE listings SET tier = ?1, updated_at = CASE WHEN tier <> ?1 THEN ?2 ELSE updated_at END
-         WHERE pseudonym = ?3 RETURNING listing_id`,
-      )
-      .bind(tier, at, pseudonym)
+      .prepare('UPDATE listings SET tier = ?1 WHERE pseudonym = ?2 RETURNING listing_id')
+      .bind(tier, pseudonym)
       .all<{ listing_id: string }>();
     return results.map((r) => r.listing_id).sort();
   }
@@ -557,6 +554,8 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
         tier: draft.tier,
         bloom: bloomOf(list),
         model: embedModel,
+        // The record's last publish, so a later metadata rewrite can tell this vector from an older one (`refreshPersonhood`).
+        at,
         // The proximity cells (`cell6`, `cell5`, `cell4`, indexed on `jobs-listings-v2`; a search filters by `cell4`) and the
         // radius recall measures a job's distance against (decision 0067, rule 8, as amended).
         ...(draft.scope === 'onsite' && draft.cells
@@ -574,7 +573,6 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
   return { ok: true, listingId, namespace, tokens: list, unsnapped, ...(radius !== undefined ? { radius } : {}), calls };
 }
 
-/** Looking for work off: the vector and the record go. */
 /**
  * The personhood refresh (P3, the tier refresh on bind): every listing the
  * pseudonym holds takes `tier`, the record first and then its vector's
@@ -583,21 +581,33 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
  * and a raised one reaches Verified searches once the vector's metadata
  * follows. Every vector whose metadata differs is rewritten, not only those
  * whose record changed now, so a refresh after a failed vector write mends it.
- * Answers how many listings the pseudonym holds and how many vectors were
- * rewritten.
+ *
+ * Vectorize applies an upsert later than it answers, so a vector read back can
+ * be an older publish's, or not there yet. A vector is rewritten only when its
+ * `at` is the record's last publish (`updatedAt`), so a refresh never writes an
+ * older publish's values, namespace or cells back over a newer one; a vector
+ * from before `at` was stored has none and is taken as it is. Any other is
+ * `pending`, and the phone asks again a little later (it also asks after any
+ * publish it began before its bind landed, whose own read of the binding may
+ * have been the old one). Answers how many listings the pseudonym holds, how
+ * many vectors were rewritten and how many are pending.
  */
 export async function refreshPersonhood(
   deps: Pick<PublishDeps, 'index' | 'listings'>,
   pseudonym: string,
   tier: 0 | 1 | 2,
-  at: number,
-): Promise<{ listings: number; vectors: number }> {
-  const ids = await deps.listings.setPersonhood(pseudonym, tier, at);
-  if (!ids.length || !deps.index.getByIds) return { listings: ids.length, vectors: 0 };
-  const stale = (await deps.index.getByIds(ids)).filter((v) => v.metadata.tier !== tier);
+): Promise<{ listings: number; vectors: number; pending: number }> {
+  const ids = await deps.listings.setPersonhood(pseudonym, tier);
+  if (!ids.length) return { listings: 0, vectors: 0, pending: 0 };
+  if (!deps.index.getByIds) return { listings: ids.length, vectors: 0, pending: ids.length };
+  const [records, stored] = await Promise.all([deps.listings.get(ids), deps.index.getByIds(ids)]);
+  const current = stored.filter((v) => v.metadata.at === undefined || v.metadata.at === records.get(v.id)?.updatedAt);
+  const stale = current.filter((v) => v.metadata.tier !== tier);
   if (stale.length) await deps.index.upsert(stale.map((v) => ({ ...v, metadata: { ...v.metadata, tier } })));
-  return { listings: ids.length, vectors: stale.length };
+  return { listings: ids.length, vectors: stale.length, pending: ids.length - current.length };
 }
+
+/** Looking for work off: the vector and the record go. */
 
 export async function unpublishListing(deps: Pick<PublishDeps, 'index' | 'listings'>, pseudonym: string, profileId: string): Promise<string> {
   const listingId = await listingIdOf(pseudonym, profileId);

@@ -156,7 +156,7 @@ describe('publishListing', () => {
     if (!out.ok) return;
     const v = jobsIndex.vectors.get(out.listingId)!;
     expect(v.namespace).toBe('us-tx:onsite');
-    expect(Object.keys(v.metadata).sort()).toEqual(['bloom', 'model', 'region', 'scope', 'tier', 'v']);
+    expect(Object.keys(v.metadata).sort()).toEqual(['at', 'bloom', 'model', 'region', 'scope', 'tier', 'v']);
     expect(v.metadata).toMatchObject({ v: 1, region: 'us-tx', scope: 'onsite', tier: 1, model: '@cf/baai/bge-m3' });
     expect(JSON.stringify(v.metadata)).not.toMatch(/p1|main|Plumber/);
     const record = (await listings.get([out.listingId])).get(out.listingId)!;

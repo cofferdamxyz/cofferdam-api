@@ -82,6 +82,10 @@ describe('GET /v1/handles/:label/available', () => {
     expect(await available('held-gone')).toBe(true);
     expect(await available('was-ana')).toBe(false);
     expect(await available('long-ago')).toBe(true);
+    // A Sepolia anchor deployed with a short quarantine (runbook step 2): the plane follows HANDLES_QUARANTINE_DAYS.
+    const short = world({ HANDLES_QUARANTINE_DAYS: '0' });
+    insertHandle(short.db, { label: 'was-ana', handle_id: handleIdOf('was-ana'), identity: 'i3', state: 'quarantined', released_at: now - 1000 });
+    expect(((await (await short.get('/v1/handles/was-ana/available')).json()) as { available: boolean }).available).toBe(true);
   });
 });
 
@@ -205,6 +209,32 @@ describe('/v1/handshake/links', () => {
     expect((await h.request(`/links/${token}`, {}, env as never)).status).toBe(404);
   });
 
+  it('refuses uploads past the ceiling of live links, which a fetch frees, and counts them with triggers', async () => {
+    const db = handlesD1();
+    const h = createHandshakeRoutes({ store: () => new D1HandleStore(db.d1, 2), now: () => 1 });
+    const env = { HANDLES_DB: db.d1 };
+    const send = () => h.request('/links', { method: 'POST', headers: { 'content-length': '1' }, body: Uint8Array.of(1) }, env as never);
+    const first = (await (await send()).json()) as { token: string };
+    expect((await send()).status).toBe(201);
+    const full = await send();
+    expect(full.status).toBe(503);
+    expect(await full.json()).toEqual({ ok: false, error: 'share_links_full', retryAfterSeconds: 3600 });
+    expect((await h.request(`/links/${first.token}`, {}, env as never)).status).toBe(200);
+    expect((await send()).status).toBe(201);
+    expect(db.sqlite.prepare("SELECT n FROM handles_counters WHERE name = 'share_links'").get()).toEqual({ n: 2 });
+  });
+
+  it('puts an upload through its own, lower limits first, so uploads never spend the fetches’ brake', async () => {
+    const putIp = limiter();
+    const putGlobal = limiter(() => true);
+    const w = world({ HANDSHAKE_PUT_IP_RL: putIp, HANDSHAKE_PUT_GLOBAL_RL: putGlobal });
+    expect((await post(w, Uint8Array.of(1))).status).toBe(429);
+    expect(putIp.keys).toEqual([`handshake-put-ip:${IP}`]);
+    expect(putGlobal.keys).toEqual(['handshake-put:global']);
+    expect(w.global.keys).toEqual([]);
+    expect((await w.get('/v1/handshake/links/AAAAAAAAAAAAAAAAAAAAAA')).status).toBe(404);
+  });
+
   it('draws again when a token is taken, and answers 503 rather than reuse one', async () => {
     const db = handlesD1();
     const same = Uint8Array.from({ length: 16 }, () => 9);
@@ -237,6 +267,14 @@ describe('redactHandlePath', () => {
     expect(redactHandlePath('<-- GET /v1/handles/search?q=ana')).toBe('<-- GET /v1/handles/:label');
     expect(redactHandlePath('<-- GET /v1/handles/ana/x/ana')).toBe('<-- GET /v1/handles/:label/…');
     expect(redactHandlePath('<-- GET /v1/handles/%61na/available')).toBe('<-- GET /v1/handles/:label/available');
+    // Nothing of an encoded space, newline or slash in a label survives, nor a doubled slash before it.
+    expect(redactHandlePath('<-- GET /v1/handles/ana%20smith/available')).toBe('<-- GET /v1/handles/:label/available');
+    expect(redactHandlePath('<-- GET /v1/handles/ana%0Asmith/available')).toBe('<-- GET /v1/handles/:label/available');
+    expect(redactHandlePath('<-- GET /v1/handles/ana%2Fsmith')).toBe('<-- GET /v1/handles/:label/…');
+    expect(redactHandlePath('<-- GET /v1/handles//ana')).toBe('<-- GET /v1/handles/:label');
+    expect(redactHandlePath('<-- GET /v1//handles/ana')).toBe('<-- GET /v1/handles/:label');
+    expect(redactHandlePath('<-- GET /v1/handles/%E0%A4%A')).toBe('<-- GET /v1/handles/:label');
+    expect(redactHandlePath('<-- GET //v1/handshake//links/AAAAAAAAAAAAAAAAAAAAAA')).toBe('<-- GET /v1/handshake/links/:token');
     expect(redactHandlePath('<-- GET /v1/handshake/links/AAAAAAAAAAAAAAAAAAAAAA')).toBe('<-- GET /v1/handshake/links/:token');
     expect(redactHandlePath('<-- POST /v1/handshake/links')).toBe('<-- POST /v1/handshake/links');
     expect(redactHandlePath('<-- GET /v1/chat/usage')).toBe('<-- GET /v1/chat/usage');

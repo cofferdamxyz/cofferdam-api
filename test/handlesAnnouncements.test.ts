@@ -17,6 +17,7 @@ import {
   decodeAnnouncement,
   ERC5564_ANNOUNCER,
   FEED_CHAIN_ID,
+  FeedChainMismatch,
   indexAnnouncements,
   keptAnnouncements,
   parsePlaneCallers,
@@ -63,6 +64,9 @@ function fakeChain(logs: RawLog[], head: number) {
   const chain: FeedChain & { queries: LogQuery[]; head: number; fail?: (q: LogQuery) => boolean } = {
     queries,
     head,
+    async chainId() {
+      return FEED_CHAIN_ID;
+    },
     async safeHead() {
       return BigInt(chain.head);
     },
@@ -95,6 +99,18 @@ describe('decodeAnnouncement', () => {
       ephemeralPubKey: `0x02${'ee'.repeat(32)}`,
       metadata: '0x7f',
     });
+  });
+
+  it('keeps only well-formed scheme 1 fields: a 33-byte compressed key and 1 to 512 bytes of metadata', () => {
+    const withData = (key: Hex, metadata: Hex) => ({ ...announcement(10, 0, 1, addr(1)), data: encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes' }], [key, metadata]) });
+    const key = `0x03${'ab'.repeat(32)}` as Hex;
+    expect(decodeAnnouncement(withData(key, `0x${'01'.repeat(512)}`), FEED_CHAIN_ID)).not.toBeNull();
+    expect(decodeAnnouncement(withData(key, `0x${'01'.repeat(513)}`), FEED_CHAIN_ID)).toBeNull();
+    expect(decodeAnnouncement(withData(key, '0x'), FEED_CHAIN_ID)).toBeNull();
+    expect(decodeAnnouncement(withData(`0x04${'ab'.repeat(32)}`, '0x01'), FEED_CHAIN_ID)).toBeNull();
+    expect(decodeAnnouncement(withData(`0x04${'ab'.repeat(64)}`, '0x01'), FEED_CHAIN_ID)).toBeNull();
+    // About a megabyte of key or metadata, which would outgrow a D1 row, is never kept.
+    expect(decodeAnnouncement(withData(key, `0x${'00'.repeat(1_000_000)}`), FEED_CHAIN_ID)).toBeNull();
   });
 
   it('refuses another scheme, another contract, another event and data that does not decode', () => {
@@ -180,6 +196,60 @@ describe('indexAnnouncements', () => {
     chain.queries.length = 0;
     await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 3, maxChunks: 1 });
     expect(Number(chain.queries[0]!.fromBlock)).toBe(600);
+  });
+
+  it('reads a refused chunk again in halves, down to one block, and throws only when one block is refused', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    const stealth = addr(0xe1);
+    const chain = fakeChain([announcement(150, 0, 1, stealth), transfer(150, 1, 1, stealth)], 399);
+    // The node refuses any range over 50 blocks that holds block 120 (a flood's result too large).
+    chain.fail = (q) => q.fromBlock <= 120n && q.toBlock >= 120n && q.toBlock - q.fromBlock >= 50n;
+    const run = await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 1 });
+    expect(run.through).toBe(399);
+    expect(run.kept).toBe(1);
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(400);
+    const read = chain.queries.filter((q) => q.address && !chain.fail!(q)).map((q) => [Number(q.fromBlock), Number(q.toBlock)]);
+    // Every block read once, in order, after the halvings.
+    let next = 0;
+    for (const [from, to] of read) {
+      expect(from).toBe(next);
+      next = to! + 1;
+    }
+    expect(next).toBe(400);
+    // One block the node refuses stops the run there, with what came before committed.
+    const stuck = fakeChain([], 399);
+    stuck.fail = (q) => q.fromBlock <= 120n && q.toBlock >= 120n;
+    const db2 = handlesD1();
+    const store2 = new D1FeedStore(db2.d1);
+    await expect(indexAnnouncements({ chain: stuck, store: store2, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 1 })).rejects.toThrow('refused');
+    expect(await store2.cursor(FEED_CHAIN_ID)).toBe(120);
+  });
+
+  it('refuses a node that serves another chain, before reading or writing anything', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    const chain = fakeChain([], 1_000);
+    chain.chainId = async () => 8453;
+    await expect(indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 1 })).rejects.toThrow(FeedChainMismatch);
+    expect(chain.queries).toEqual([]);
+    expect(await store.cursor(FEED_CHAIN_ID)).toBeNull();
+  });
+
+  it('commits a large chunk in batches of 100 rows, the cursor with the last', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    const items = Array.from({ length: 250 }, (_, i) => decodeAnnouncement(announcement(5, i, i + 1, addr(0x2000 + i), PLANE), FEED_CHAIN_ID)!);
+    const batches: number[] = [];
+    const batch = db.d1.batch.bind(db.d1);
+    (db.d1 as { batch: unknown }).batch = async (stmts: D1PreparedStatement[]) => (batches.push(stmts.length), batch(stmts));
+    await store.commit(FEED_CHAIN_ID, items, 6, 1);
+    expect(batches).toEqual([100, 100, 51]);
+    expect(await store.page(FEED_CHAIN_ID, null, 1_000, 5)).toHaveLength(250);
+    batches.length = 0;
+    await store.commit(FEED_CHAIN_ID, [], 7, 2);
+    expect(batches).toEqual([1]);
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(7);
   });
 
   it('writes a chunk read twice once, and never moves the cursor back', async () => {

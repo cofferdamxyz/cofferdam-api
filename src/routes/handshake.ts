@@ -80,7 +80,7 @@ export function createHandshakeRoutes(deps: HandshakeRouteDeps = defaultHandshak
   });
 
   routes.post('/links', async (c) => {
-    const limited = await publicLimit(c, 'handshake');
+    const limited = (await publicLimit(c, 'handshake-put')) ?? (await publicLimit(c, 'handshake'));
     if (limited) return limited;
     const length = c.req.header('content-length');
     if (length === undefined || !/^\d+$/.test(length)) {
@@ -101,9 +101,15 @@ export function createHandshakeRoutes(deps: HandshakeRouteDeps = defaultHandshak
         const draw = random();
         if (draw.byteLength !== 16) throw new Error('random source gave the wrong length');
         const token = base64url(draw);
-        if (await store.putShareLink(await shareTokenHash(token), bytes, expiresAt)) {
+        const put = await store.putShareLink(await shareTokenHash(token), bytes, expiresAt);
+        if (put === 'stored') {
           handlesLog({ route: 'share_link', op: 'put', bytes: bytes.byteLength });
           return c.json({ ok: true, token, expiresAt }, 201);
+        }
+        if (put === 'full') {
+          // A flood of uploads fills the share links only; the app falls back to the in-person code.
+          handlesLog({ route: 'share_link', op: 'put', error: 'full' });
+          return c.json({ ok: false, error: 'share_links_full', retryAfterSeconds: 3600 }, 503);
         }
       }
       handlesLog({ route: 'share_link', op: 'put', error: 'collision' });

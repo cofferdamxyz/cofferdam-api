@@ -122,6 +122,23 @@ CREATE TABLE share_links (
 );
 CREATE INDEX share_links_expires ON share_links (expires_at);
 
+-- The live share links, counted by triggers, so an upload can be refused past a
+-- ceiling without counting the table: anonymous uploads may fill the share
+-- links, never the database the registry's other tables share.
+CREATE TABLE handles_counters (
+  name TEXT PRIMARY KEY,
+  n INTEGER NOT NULL CHECK (n >= 0)
+);
+INSERT INTO handles_counters (name, n) VALUES ('share_links', 0);
+CREATE TRIGGER share_links_counted_in AFTER INSERT ON share_links
+BEGIN
+  UPDATE handles_counters SET n = n + 1 WHERE name = 'share_links';
+END;
+CREATE TRIGGER share_links_counted_out AFTER DELETE ON share_links
+BEGIN
+  UPDATE handles_counters SET n = n - 1 WHERE name = 'share_links';
+END;
+
 -- ── The announcement feed (rule 5, corrected 2026-11-16; q18) ────────────────
 -- Every ERC-5564 scheme 1 announcement of the announcer singleton that the
 -- plane keeps: those whose transaction also moved value to the announced
@@ -136,9 +153,10 @@ CREATE TABLE announcements (
   -- The announced address: the one-time account, never its signer (rule 5).
   stealth_address TEXT NOT NULL,
   caller TEXT NOT NULL,
-  ephemeral_pub_key TEXT NOT NULL,
-  -- The announcement's metadata; its first byte is the view tag.
-  metadata TEXT NOT NULL,
+  -- A compressed secp256k1 key, 33 bytes in hex (scheme 1).
+  ephemeral_pub_key TEXT NOT NULL CHECK (length(ephemeral_pub_key) = 68),
+  -- The announcement's metadata, 1 to 512 bytes in hex; its first byte is the view tag.
+  metadata TEXT NOT NULL CHECK (length(metadata) BETWEEN 4 AND 1026),
   PRIMARY KEY (chain_id, block_number, log_index)
 );
 
