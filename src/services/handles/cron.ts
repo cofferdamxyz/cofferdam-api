@@ -10,7 +10,7 @@
 
 import { chainRpcUrl } from '../../chain/chains.js';
 import type { Env } from '../../env.js';
-import { D1FeedStore, FEED_CHAIN_ID, indexAnnouncements, parsePlaneCallers, rpcFeedChain, type FeedChain } from './announcements.js';
+import { D1FeedStore, FEED_CHAIN_ID, indexAnnouncements, parseFeedTokens, parsePlaneCallers, rpcFeedChain, type FeedChain } from './announcements.js';
 import { handlesLog } from './limits.js';
 import { D1HandleStore } from './store.js';
 
@@ -51,9 +51,11 @@ export async function runHandlesCron(env: Env, deps: HandlesCronDeps): Promise<v
       chainId: FEED_CHAIN_ID,
       fromBlock,
       planeCallers: parsePlaneCallers(env.ANNOUNCEMENTS_PLANE_CALLERS),
+      tokens: parseFeedTokens(env.ANNOUNCEMENTS_TOKENS),
       now: () => deps.now(),
     });
-    handlesLog({ route: 'cron', step: 'announcements', chunks: run.chunks, kept: run.kept, through: run.through ?? -1 });
+    // A gap or an unchecked keep is an alert for the founder: the feed names the gap, and phones scan it themselves.
+    handlesLog({ route: 'cron', step: 'announcements', chunks: run.chunks, kept: run.kept, unchecked: run.unchecked, gaps: run.gaps, through: run.through ?? -1 });
   } catch (err) {
     // The chunks before the failure are committed; the next run reads the failed one again.
     handlesLog({ route: 'cron', step: 'announcements', error: err instanceof Error ? err.name : typeof err });

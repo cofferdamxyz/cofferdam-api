@@ -80,7 +80,8 @@ export function createHandshakeRoutes(deps: HandshakeRouteDeps = defaultHandshak
   });
 
   routes.post('/links', async (c) => {
-    const limited = (await publicLimit(c, 'handshake-put')) ?? (await publicLimit(c, 'handshake'));
+    // Its own limits only: an upload never spends the brake the fetches share.
+    const limited = await publicLimit(c, 'handshake-put');
     if (limited) return limited;
     const length = c.req.header('content-length');
     if (length === undefined || !/^\d+$/.test(length)) {

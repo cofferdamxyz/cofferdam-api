@@ -105,6 +105,14 @@ export function namespaceOf(region: string, scope: Scope, prefix = ''): string {
 
 /** The metadata schema of a listing's vector (`jobs-listings-v2`). */
 export const LISTING_METADATA_VERSION = 1;
+/**
+ * When a listing's vector began to carry `at` (its record's last publish): this
+ * branch's date, 2026-11-17 UTC. A vector without it is taken by the personhood
+ * refresh only for a record last published before then; one published later by
+ * a plane without `at` (between this date and the deploy) waits as pending
+ * until the phone publishes again.
+ */
+export const LISTING_AT_SINCE = Date.UTC(2026, 10, 17);
 
 export interface ListingDraft {
   /** The account's Work pseudonym: opaque here, derived by the publishing route. */
@@ -601,9 +609,17 @@ export async function refreshPersonhood(
   if (!ids.length) return { listings: 0, vectors: 0, pending: 0 };
   if (!deps.index.getByIds) return { listings: ids.length, vectors: 0, pending: ids.length };
   const [records, stored] = await Promise.all([deps.listings.get(ids), deps.index.getByIds(ids)]);
-  const current = stored.filter((v) => v.metadata.at === undefined || v.metadata.at === records.get(v.id)?.updatedAt);
-  const stale = current.filter((v) => v.metadata.tier !== tier);
-  if (stale.length) await deps.index.upsert(stale.map((v) => ({ ...v, metadata: { ...v.metadata, tier } })));
+  // A vector without `at` passes only for a record last published before `at` existed; a record gone (an unpublish
+  // meanwhile) passes never, so no deleted listing comes back.
+  const current = stored.flatMap((v) => {
+    const record = records.get(v.id);
+    if (!record) return [];
+    const fresh = v.metadata.at === undefined ? record.updatedAt < LISTING_AT_SINCE : v.metadata.at === record.updatedAt;
+    return fresh ? [{ vector: v, record }] : [];
+  });
+  const stale = current.filter(({ vector }) => vector.metadata.tier !== tier);
+  // The namespace is the record's: the index's answer may leave it out, and a vector upserted without it would leave every search.
+  if (stale.length) await deps.index.upsert(stale.map(({ vector, record }) => ({ ...vector, namespace: record.namespace, metadata: { ...vector.metadata, tier } })));
   return { listings: ids.length, vectors: stale.length, pending: ids.length - current.length };
 }
 

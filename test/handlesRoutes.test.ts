@@ -232,7 +232,13 @@ describe('/v1/handshake/links', () => {
     expect(putIp.keys).toEqual([`handshake-put-ip:${IP}`]);
     expect(putGlobal.keys).toEqual(['handshake-put:global']);
     expect(w.global.keys).toEqual([]);
+    expect(w.ip.keys).toEqual([]);
     expect((await w.get('/v1/handshake/links/AAAAAAAAAAAAAAAAAAAAAA')).status).toBe(404);
+    // A stored upload spends the upload limits alone, never the fetches' keys.
+    const open = world({ HANDSHAKE_PUT_IP_RL: limiter(), HANDSHAKE_PUT_GLOBAL_RL: limiter() });
+    expect((await post(open, Uint8Array.of(1))).status).toBe(201);
+    expect(open.global.keys).toEqual([]);
+    expect(open.ip.keys).toEqual([]);
   });
 
   it('draws again when a token is taken, and answers 503 rather than reuse one', async () => {
@@ -249,8 +255,9 @@ describe('/v1/handshake/links', () => {
     const w = world();
     const { token } = (await (await post(w, Uint8Array.of(5, 6))).json()) as { token: string };
     await w.get(`/v1/handshake/links/${token}`);
-    expect(w.ip.keys).toEqual([`handshake-ip:${IP}`, `handshake-ip:${IP}`]);
-    expect(w.global.keys).toEqual(['handshake:global', 'handshake:global']);
+    // The fetch counts on the reads' keys; the upload's own bindings are unbound in this world.
+    expect(w.ip.keys).toEqual([`handshake-ip:${IP}`]);
+    expect(w.global.keys).toEqual(['handshake:global']);
     expect(logged()).not.toContain(token.toLowerCase());
     expect(logged()).not.toContain(IP);
     expect(logged()).toContain('/v1/handshake/links/:token');

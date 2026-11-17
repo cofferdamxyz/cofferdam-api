@@ -14,7 +14,7 @@ CREATE TABLE handles (
   -- characters, no hyphen at either end, no `--` in places three and four.
   label TEXT PRIMARY KEY CHECK (length(label) BETWEEN 3 AND 64),
   -- keccak256("cofferdam-handle-v1:" || label), 0x and 64 lower-case hex (rule 2).
-  handle_id TEXT NOT NULL UNIQUE CHECK (handle_id GLOB '0x[0-9a-f]*' AND length(handle_id) = 66),
+  handle_id TEXT NOT NULL UNIQUE CHECK (handle_id GLOB '0x*' AND substr(handle_id, 3) NOT GLOB '*[^0-9a-f]*' AND length(handle_id) = 66),
   -- The random identity id (rule 4), minted in the address map at the identity's
   -- first claim or first job; never an account, never a hash of a passport identifier.
   identity TEXT NOT NULL,
@@ -29,10 +29,10 @@ CREATE TABLE handles (
   -- The anchor's serial (rule 3); null while held.
   serial INTEGER CHECK (serial IS NULL OR serial >= 1),
   -- The pinned handle key's address, 0x and 40 lower-case hex.
-  owner TEXT CHECK (owner IS NULL OR (owner GLOB '0x[0-9a-f]*' AND length(owner) = 42)),
+  owner TEXT CHECK (owner IS NULL OR (owner GLOB '0x*' AND substr(owner, 3) NOT GLOB '*[^0-9a-f]*' AND length(owner) = 42)),
   -- ERC-5564 scheme 1 meta-address: spending then viewing key, 33 bytes each
   -- compressed, 0x and 132 lower-case hex (rule 1). Null while held.
-  meta_address TEXT CHECK (meta_address IS NULL OR (meta_address GLOB '0x[0-9a-f]*' AND length(meta_address) = 134)),
+  meta_address TEXT CHECK (meta_address IS NULL OR (meta_address GLOB '0x*' AND substr(meta_address, 3) NOT GLOB '*[^0-9a-f]*' AND length(meta_address) = 134)),
   -- 0 while the claim is queued for the relay, 1 once the anchor holds it.
   -- ASSUMPTION(0086 q22): a queued claim resolves with its pending owner, marked unchecked.
   onchain INTEGER NOT NULL DEFAULT 0 CHECK (onchain IN (0, 1)),
@@ -116,7 +116,7 @@ INSERT INTO reserved_labels (label, reason) VALUES
 -- deletes it at the first fetch. The row is keyed by the SHA-256 of the 128-bit
 -- token, so a read of the table gives no working link. No account, no IP.
 CREATE TABLE share_links (
-  token_hash TEXT PRIMARY KEY CHECK (length(token_hash) = 64),
+  token_hash TEXT PRIMARY KEY CHECK (length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
   ciphertext BLOB NOT NULL CHECK (length(ciphertext) BETWEEN 1 AND 2048),
   expires_at INTEGER NOT NULL
 );
@@ -149,16 +149,39 @@ CREATE TABLE announcements (
   chain_id INTEGER NOT NULL,
   block_number INTEGER NOT NULL,
   log_index INTEGER NOT NULL,
-  tx_hash TEXT NOT NULL,
+  tx_hash TEXT NOT NULL CHECK (length(tx_hash) = 66 AND tx_hash GLOB '0x*' AND substr(tx_hash, 3) NOT GLOB '*[^0-9a-f]*'),
   -- The announced address: the one-time account, never its signer (rule 5).
   stealth_address TEXT NOT NULL,
   caller TEXT NOT NULL,
   -- A compressed secp256k1 key, 33 bytes in hex (scheme 1).
-  ephemeral_pub_key TEXT NOT NULL CHECK (length(ephemeral_pub_key) = 68),
+  ephemeral_pub_key TEXT NOT NULL CHECK (length(ephemeral_pub_key) = 68 AND ephemeral_pub_key GLOB '0x*' AND substr(ephemeral_pub_key, 3) NOT GLOB '*[^0-9a-f]*'),
   -- The announcement's metadata, 1 to 512 bytes in hex; its first byte is the view tag.
-  metadata TEXT NOT NULL CHECK (length(metadata) BETWEEN 4 AND 1026),
+  metadata TEXT NOT NULL CHECK (length(metadata) BETWEEN 4 AND 1026 AND metadata GLOB '0x*' AND substr(metadata, 3) NOT GLOB '*[^0-9a-f]*'),
   PRIMARY KEY (chain_id, block_number, log_index)
 );
+
+-- Blocks the indexer could not read: failures in a row, and once skipped, a gap
+-- the feed names, so phones scan that block against a public node themselves.
+CREATE TABLE announcement_gaps (
+  chain_id INTEGER NOT NULL,
+  block_number INTEGER NOT NULL,
+  failures INTEGER NOT NULL CHECK (failures >= 1),
+  last_failed_at INTEGER NOT NULL,
+  skipped_at INTEGER,
+  PRIMARY KEY (chain_id, block_number)
+);
+
+-- The feed's rows, counted like the share links', so the indexer stops at a
+-- ceiling rather than fill the registry's database.
+INSERT INTO handles_counters (name, n) VALUES ('announcements', 0);
+CREATE TRIGGER announcements_counted_in AFTER INSERT ON announcements
+BEGIN
+  UPDATE handles_counters SET n = n + 1 WHERE name = 'announcements';
+END;
+CREATE TRIGGER announcements_counted_out AFTER DELETE ON announcements
+BEGIN
+  UPDATE handles_counters SET n = n - 1 WHERE name = 'announcements';
+END;
 
 -- Where the indexer reads next, per chain.
 CREATE TABLE announcement_cursor (

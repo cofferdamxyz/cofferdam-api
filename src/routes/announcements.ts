@@ -7,14 +7,16 @@
  *
  *   GET /v1/announcements?after=<block>:<logIndex>
  *        → 200 { ok, chainId, items: [{ position, blockNumber, logIndex, txHash, stealthAddress, caller, ephemeralPubKey, metadata }],
- *                next, through }
+ *                gaps, next, through }
  *
  * The scheme 1 announcements the indexer kept (`services/handles/announcements.ts`),
  * in chain order, `FEED_PAGE` at a time, after the position `after` names
  * (from the start without it). `next` is the cursor to ask with next: the last
  * item's position on a full page, else the end of the last block indexed
  * (`through`), so a phone that has caught up asks from there. `through` is
- * null before the indexer's first run.
+ * null before the indexer's first run. `gaps` names the blocks the page
+ * covers that the indexer had to skip (a block the node refused on several
+ * runs in a row): the phone scans each against a public node itself.
  *
  * Unauthenticated, the same bytes for every caller who asks the same thing,
  * no IP kept, rate-limited per IP like the other public routes. A phone reads
@@ -33,6 +35,8 @@ import { handlesLog, publicLimit } from '../services/handles/limits.js';
 export const FEED_PAGE = 500;
 /** A cursor's log index past every log of its block: "after the whole block". */
 export const END_OF_BLOCK = 1_000_000;
+/** Gaps named per page at most; past it the page ends at the last gap named, so none is ever left out. */
+export const FEED_GAPS = 100;
 
 const CURSOR = /^(\d{1,12}):(\d{1,7})$/;
 
@@ -82,15 +86,22 @@ export function createAnnouncementsRoutes(deps: AnnouncementsRouteDeps = {}) {
       // The cursor first, and the page bounded by it: a chunk the indexer commits meanwhile is neither half-read nor skipped.
       const cursor = await store.cursor(FEED_CHAIN_ID);
       const through = cursor === null ? null : cursor - 1;
-      const page = through === null ? [] : await store.page(FEED_CHAIN_ID, after, FEED_PAGE, through);
+      // The gaps first: a page never runs past the last gap it can name.
+      const fromBlock = after ? (after.logIndex >= END_OF_BLOCK ? after.block : after.block - 1) : -1;
+      const gapsSeen = through === null ? [] : await store.gaps(FEED_CHAIN_ID, fromBlock, through, FEED_GAPS + 1);
+      const reach = gapsSeen.length > FEED_GAPS ? gapsSeen[FEED_GAPS - 1]! : through;
+      const gaps = gapsSeen.slice(0, FEED_GAPS);
+      const page = reach === null ? [] : await store.page(FEED_CHAIN_ID, after, FEED_PAGE, reach);
       const last = page[page.length - 1];
       let next: string | null;
       if (page.length === FEED_PAGE && last) next = `${last.blockNumber}:${last.logIndex}`;
-      else if (through !== null && (!after || through >= after.block)) next = `${through}:${END_OF_BLOCK}`;
+      else if (reach !== null && (!after || reach >= after.block)) next = `${reach}:${END_OF_BLOCK}`;
       else next = after ? `${after.block}:${after.logIndex}` : null;
+      // A gap past the full page's last item waits for the page that reaches it.
+      const named = page.length === FEED_PAGE && last ? gaps.filter((g) => g <= last.blockNumber) : gaps;
       handlesLog({ route: 'announcements', items: page.length });
       // A short TTL: the page after a cursor only grows as the indexer goes on.
-      return c.json({ ok: true, chainId: FEED_CHAIN_ID, items: page.map(item), next, through }, 200, { 'cache-control': 'public, max-age=10' });
+      return c.json({ ok: true, chainId: FEED_CHAIN_ID, items: page.map(item), gaps: named, next, through }, 200, { 'cache-control': 'public, max-age=10' });
     } catch (err) {
       handlesLog({ route: 'announcements', error: err instanceof Error ? err.name : typeof err });
       return c.json({ ok: false, error: 'handles_unavailable' }, 503, { 'cache-control': 'no-store' });

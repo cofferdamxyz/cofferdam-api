@@ -35,7 +35,7 @@ describe('migrations/handles on local D1 (node:sqlite)', () => {
     const tables = (db.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(
       (t) => t.name,
     );
-    expect(tables).toEqual(['announcement_cursor', 'announcements', 'handle_holds', 'handles', 'handles_counters', 'reserved_labels', 'share_links']);
+    expect(tables).toEqual(['announcement_cursor', 'announcement_gaps', 'announcements', 'handle_holds', 'handles', 'handles_counters', 'reserved_labels', 'share_links']);
     const reserved = (db.sqlite.prepare('SELECT label FROM reserved_labels').all() as { label: string }[]).map((r) => r.label);
     expect(reserved.length).toBeGreaterThan(50);
     expect(reserved.filter((l) => !isStoredHandle(l))).toEqual([]);
@@ -71,6 +71,10 @@ describe('migrations/handles on local D1 (node:sqlite)', () => {
     expect(() => insertHandle(db, { ...base, state: 'frozen' })).toThrow(/CHECK/);
     expect(() => insertHandle(db, { label: 'bo', handle_id: handleIdOf('bo') })).toThrow(/CHECK/);
     expect(() => insertHandle(db, { ...base, handle_id: 'ab'.repeat(33) })).toThrow(/CHECK/);
+    // Every character after 0x is lower-case hex, not only the first.
+    expect(() => insertHandle(db, { ...base, handle_id: '0xa' + 'Z'.repeat(63) })).toThrow(/CHECK/);
+    expect(() => insertHandle(db, { ...base, owner: '0x1' + 'G'.repeat(39) })).toThrow(/CHECK/);
+    expect(() => insertHandle(db, { ...base, meta_address: '0x02' + 'aa'.repeat(32) + '03' + 'bb'.repeat(31) + 'bX' })).toThrow(/CHECK/);
     insertHandle(db, base);
     expect(() => insertHandle(db, { label: 'bob2', handle_id: handleIdOf('bob') })).toThrow(/UNIQUE/);
     // A share link holds 1 to 2,048 bytes.

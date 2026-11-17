@@ -14,6 +14,10 @@ import { createAnnouncementsRoutes, END_OF_BLOCK, FEED_PAGE, readCursor } from '
 import {
   ANNOUNCEMENT_TOPIC,
   D1FeedStore,
+  DEFAULT_FEED_TOKENS,
+  FeedFull,
+  FeedNodeBehind,
+  GAP_AFTER_FAILURES,
   decodeAnnouncement,
   ERC5564_ANNOUNCER,
   FEED_CHAIN_ID,
@@ -61,9 +65,12 @@ function transfer(block: number, logIndex: number, txn: number, to: string, amou
 /** `eth_getLogs` over a list: the address, each topic position (one, any of a list, or any) and the inclusive block range. */
 function fakeChain(logs: RawLog[], head: number) {
   const queries: LogQuery[] = [];
-  const chain: FeedChain & { queries: LogQuery[]; head: number; fail?: (q: LogQuery) => boolean } = {
+  const chain: FeedChain & { queries: LogQuery[]; head: number; fail?: (q: LogQuery) => boolean; holds?: (b: bigint) => boolean } = {
     queries,
     head,
+    async hasBlock(b) {
+      return chain.holds ? chain.holds(b) : b <= BigInt(chain.head);
+    },
     async chainId() {
       return FEED_CHAIN_ID;
     },
@@ -78,7 +85,7 @@ function fakeChain(logs: RawLog[], head: number) {
         (l) =>
           l.blockNumber >= q.fromBlock &&
           l.blockNumber <= q.toBlock &&
-          (!q.address || l.address.toLowerCase() === q.address.toLowerCase()) &&
+          (!q.address || (Array.isArray(q.address) ? q.address : [q.address]).some((a) => a.toLowerCase() === l.address.toLowerCase())) &&
           q.topics.every((t, i) => t === null || (Array.isArray(t) ? t.map((x) => x.toLowerCase()) : [t.toLowerCase()]).includes((l.topics[i] ?? '').toLowerCase())),
       );
     },
@@ -141,15 +148,38 @@ describe('keptAnnouncements (rule 5, q18)', () => {
       { ...transfer(102, 2, 7, nft!), topics: [...transfer(102, 2, 7, nft!).topics, pad('0x01', { size: 32 })] },
     ];
     const chain = fakeChain(logs, 200);
-    const kept = await keptAnnouncements(chain, FEED_CHAIN_ID, 100n, 102n, parsePlaneCallers(` ${PLANE},not-an-address`));
+    const { kept } = await keptAnnouncements(chain, FEED_CHAIN_ID, 100n, 102n, parsePlaneCallers(` ${PLANE},not-an-address`));
     expect(kept.map((a) => a.stealthAddress)).toEqual([paid, own]);
     // The transfer query names the announced addresses the plane does not vouch for, over the same blocks; never the plane's own.
     const transferQuery = chain.queries.find((q) => q.topics[0] === TRANSFER_TOPIC)!;
     expect(transferQuery.fromBlock).toBe(100n);
     expect(transferQuery.toBlock).toBe(102n);
-    expect(transferQuery.address).toBeUndefined();
+    expect(transferQuery.address).toEqual(DEFAULT_FEED_TOKENS.map((t) => t.toLowerCase()));
     expect((transferQuery.topics[2] as string[]).length).toBe(5);
     expect(transferQuery.topics[2]).not.toContain(topicOf(own!));
+  });
+
+  it('counts only transfers of a listed token: a Transfer-shaped log from another contract is nothing', async () => {
+    const stealth = addr(0xf1);
+    const junk = { ...transfer(100, 1, 1, stealth), address: '0x' + '99'.repeat(20) };
+    const chain = fakeChain([announcement(100, 0, 1, stealth), junk], 200);
+    expect((await keptAnnouncements(chain, FEED_CHAIN_ID, 100n, 100n, new Set())).kept).toEqual([]);
+    // No token listed: nothing but the plane's own is kept, and no transfer is asked for.
+    const none = fakeChain([announcement(100, 0, 1, stealth), transfer(100, 1, 1, stealth)], 200);
+    expect((await keptAnnouncements(none, FEED_CHAIN_ID, 100n, 100n, new Set(), new Set())).kept).toEqual([]);
+    expect(none.queries).toHaveLength(1);
+  });
+
+  it('within one block, halves a refused transfer query down to one address, and keeps unchecked an address still refused alone', async () => {
+    const [a, b, c] = [addr(0xa01), addr(0xa02), addr(0xa03)];
+    const chain = fakeChain([announcement(7, 0, 1, a), transfer(7, 1, 1, a), announcement(7, 2, 2, b), announcement(7, 3, 3, c), transfer(7, 4, 3, c)], 200);
+    // The node refuses any transfer query that names b (its result too large).
+    chain.fail = (q) => q.topics[0] === TRANSFER_TOPIC && (q.topics[2] as string[]).includes(topicOf(b));
+    const out = await keptAnnouncements(chain, FEED_CHAIN_ID, 7n, 7n, new Set());
+    expect(out.kept.map((x) => x.stealthAddress)).toEqual([a, b, c]);
+    expect(out.unchecked).toBe(1);
+    // Across several blocks the refusal goes up, for the indexer to halve the range.
+    await expect(keptAnnouncements(chain, FEED_CHAIN_ID, 6n, 7n, new Set())).rejects.toThrow('refused');
   });
 
   it('asks for transfers only when an announcement needs a check, in batches of 100 addresses', async () => {
@@ -167,10 +197,11 @@ describe('indexAnnouncements', () => {
     const db = handlesD1();
     const store = new D1FeedStore(db.d1);
     const stealth = addr(0xc1);
-    const chain = fakeChain([announcement(1_150, 0, 1, stealth), transfer(1_150, 1, 1, stealth), announcement(1_390, 0, 2, addr(0xc2))], 1_450);
+    // The safe head is 1,460; the indexer stops SAFE_HEAD_MARGIN (10) blocks behind it.
+    const chain = fakeChain([announcement(1_150, 0, 1, stealth), transfer(1_150, 1, 1, stealth), announcement(1_390, 0, 2, addr(0xc2))], 1_460);
     const run = await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 1_000, planeCallers: new Set(), now: () => 7 });
-    expect(run).toEqual({ chunks: 3, kept: 1, through: 1_450 });
-    const ranges = chain.queries.filter((q) => q.address).map((q) => [Number(q.fromBlock), Number(q.toBlock)]);
+    expect(run).toEqual({ chunks: 3, kept: 1, unchecked: 0, gaps: 0, through: 1_450 });
+    const ranges = chain.queries.filter((q) => q.topics[0] === ANNOUNCEMENT_TOPIC).map((q) => [Number(q.fromBlock), Number(q.toBlock)]);
     expect(ranges).toEqual([
       [1_000, 1_199],
       [1_200, 1_399],
@@ -180,7 +211,7 @@ describe('indexAnnouncements', () => {
     expect((await store.page(FEED_CHAIN_ID, null, 10, 1_450)).map((a) => a.stealthAddress)).toEqual([stealth]);
     // The next run starts from the stored cursor, and does nothing until the safe head moves.
     chain.queries.length = 0;
-    expect(await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 8 })).toEqual({ chunks: 0, kept: 0, through: null });
+    expect(await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 8 })).toEqual({ chunks: 0, kept: 0, unchecked: 0, gaps: 0, through: null });
     expect(chain.queries).toEqual([]);
   });
 
@@ -202,14 +233,14 @@ describe('indexAnnouncements', () => {
     const db = handlesD1();
     const store = new D1FeedStore(db.d1);
     const stealth = addr(0xe1);
-    const chain = fakeChain([announcement(150, 0, 1, stealth), transfer(150, 1, 1, stealth)], 399);
+    const chain = fakeChain([announcement(150, 0, 1, stealth), transfer(150, 1, 1, stealth)], 409);
     // The node refuses any range over 50 blocks that holds block 120 (a flood's result too large).
     chain.fail = (q) => q.fromBlock <= 120n && q.toBlock >= 120n && q.toBlock - q.fromBlock >= 50n;
     const run = await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 1 });
     expect(run.through).toBe(399);
     expect(run.kept).toBe(1);
     expect(await store.cursor(FEED_CHAIN_ID)).toBe(400);
-    const read = chain.queries.filter((q) => q.address && !chain.fail!(q)).map((q) => [Number(q.fromBlock), Number(q.toBlock)]);
+    const read = chain.queries.filter((q) => q.topics[0] === ANNOUNCEMENT_TOPIC && !chain.fail!(q)).map((q) => [Number(q.fromBlock), Number(q.toBlock)]);
     // Every block read once, in order, after the halvings.
     let next = 0;
     for (const [from, to] of read) {
@@ -218,12 +249,68 @@ describe('indexAnnouncements', () => {
     }
     expect(next).toBe(400);
     // One block the node refuses stops the run there, with what came before committed.
-    const stuck = fakeChain([], 399);
+    const stuck = fakeChain([], 409);
     stuck.fail = (q) => q.fromBlock <= 120n && q.toBlock >= 120n;
     const db2 = handlesD1();
     const store2 = new D1FeedStore(db2.d1);
     await expect(indexAnnouncements({ chain: stuck, store: store2, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 1 })).rejects.toThrow('refused');
     expect(await store2.cursor(FEED_CHAIN_ID)).toBe(120);
+  });
+
+  it('skips one block as a gap after it fails on three runs in a row, and the feed names it', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    const stealth = addr(0xe9);
+    const chain = fakeChain([announcement(150, 0, 1, stealth), transfer(150, 1, 1, stealth)], 409);
+    chain.fail = (q) => q.fromBlock <= 120n && q.toBlock >= 120n;
+    const deps = { chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set<string>(), now: () => 5 };
+    for (let i = 1; i < GAP_AFTER_FAILURES; i++) await expect(indexAnnouncements(deps)).rejects.toThrow('refused');
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(120);
+    const run = await indexAnnouncements(deps);
+    expect(run).toMatchObject({ gaps: 1, kept: 1, through: 399 });
+    expect(await store.gaps(FEED_CHAIN_ID, -1, 399, 10)).toEqual([120]);
+    // The feed names the gap to every phone, which scans that block against a public node itself.
+    const body = (await (await createAnnouncementsRoutes({ store: () => store }).request('/', {}, {} as never)).json()) as any;
+    expect(body.gaps).toEqual([120]);
+    expect(body.items.map((x: { stealthAddress: string }) => x.stealthAddress)).toEqual([stealth]);
+    expect((await (await createAnnouncementsRoutes({ store: () => store }).request('/?after=120:1000000', {}, {} as never)).json()) as any).toMatchObject({ gaps: [] });
+  });
+
+  it('forgets a block’s failures once it is read, so only failures in a row make a gap', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    const chain = fakeChain([], 409);
+    let failing = true;
+    chain.fail = (q) => failing && q.fromBlock <= 120n && q.toBlock >= 120n;
+    const deps = { chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set<string>(), now: () => 5 };
+    await expect(indexAnnouncements(deps)).rejects.toThrow('refused');
+    failing = false;
+    await indexAnnouncements(deps);
+    expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM announcement_gaps').get()).toEqual({ n: 0 });
+  });
+
+  it('never takes an empty answer for blocks the node does not hold: the run stops, with no gap', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    const chain = fakeChain([], 409);
+    chain.holds = (b) => b < 300n;
+    const deps = { chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set<string>(), now: () => 5 };
+    for (let i = 0; i < GAP_AFTER_FAILURES + 1; i++) await expect(indexAnnouncements(deps)).rejects.toThrow(FeedNodeBehind);
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(200);
+    expect(await store.gaps(FEED_CHAIN_ID, -1, 1_000, 10)).toEqual([]);
+  });
+
+  it('stops at the feed’s row ceiling rather than fill the registry’s database', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1, 2);
+    const items = [1, 2, 3].map((i) => decodeAnnouncement(announcement(5, i, i, addr(0x3000 + i), PLANE), FEED_CHAIN_ID)!);
+    await store.commit(FEED_CHAIN_ID, items.slice(0, 2), 6, 1);
+    await expect(store.commit(FEED_CHAIN_ID, items.slice(2), 7, 2)).rejects.toThrow(FeedFull);
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(6);
+    // An empty chunk still moves the cursor.
+    await store.commit(FEED_CHAIN_ID, [], 8, 3);
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(8);
+    expect(db.sqlite.prepare("SELECT n FROM handles_counters WHERE name = 'announcements'").get()).toEqual({ n: 2 });
   });
 
   it('refuses a node that serves another chain, before reading or writing anything', async () => {
@@ -244,11 +331,12 @@ describe('indexAnnouncements', () => {
     const batch = db.d1.batch.bind(db.d1);
     (db.d1 as { batch: unknown }).batch = async (stmts: D1PreparedStatement[]) => (batches.push(stmts.length), batch(stmts));
     await store.commit(FEED_CHAIN_ID, items, 6, 1);
-    expect(batches).toEqual([100, 100, 51]);
+    // The last batch also carries the clearing of failures and the cursor.
+    expect(batches).toEqual([100, 100, 52]);
     expect(await store.page(FEED_CHAIN_ID, null, 1_000, 5)).toHaveLength(250);
     batches.length = 0;
     await store.commit(FEED_CHAIN_ID, [], 7, 2);
-    expect(batches).toEqual([1]);
+    expect(batches).toEqual([2]);
     expect(await store.cursor(FEED_CHAIN_ID)).toBe(7);
   });
 
@@ -308,7 +396,7 @@ describe('GET /v1/announcements', () => {
   it('answers an empty feed before the first run, refuses a bad cursor, and 503 unbound', async () => {
     const db = handlesD1();
     const app = createAnnouncementsRoutes({ store: () => new D1FeedStore(db.d1) });
-    expect(await (await app.request('/', {}, {} as never)).json()).toEqual({ ok: true, chainId: FEED_CHAIN_ID, items: [], next: null, through: null });
+    expect(await (await app.request('/', {}, {} as never)).json()).toEqual({ ok: true, chainId: FEED_CHAIN_ID, items: [], gaps: [], next: null, through: null });
     for (const bad of ['abc', '1:', ':1', '1:2:3', `1:${END_OF_BLOCK + 1}`]) expect((await app.request(`/?after=${bad}`, {}, {} as never)).status).toBe(400);
     expect(readCursor('12:3')).toEqual({ block: 12, logIndex: 3 });
     const unbound = createAnnouncementsRoutes();
@@ -331,11 +419,11 @@ describe('the cron', () => {
     await runHandlesCron({ HANDLES_DB: db.d1 } as never, { now: () => 1, chain: () => chain });
     expect(chain.queries).toEqual([]);
     await runHandlesCron({ HANDLES_DB: db.d1, ANNOUNCEMENTS_FROM_BLOCK: '40' } as never, { now: () => 2, chain: () => chain });
-    expect(await new D1FeedStore(db.d1).cursor(FEED_CHAIN_ID)).toBe(121);
+    expect(await new D1FeedStore(db.d1).cursor(FEED_CHAIN_ID)).toBe(111);
     expect(lines.map((l) => JSON.parse(l) as Record<string, unknown>)).toEqual([
       { kind: 'handles', route: 'cron', step: 'sweep', links: 0, holds: 0, holdLog: 0 },
       { kind: 'handles', route: 'cron', step: 'sweep', links: 0, holds: 0, holdLog: 0 },
-      { kind: 'handles', route: 'cron', step: 'announcements', chunks: 1, kept: 1, through: 120 },
+      { kind: 'handles', route: 'cron', step: 'announcements', chunks: 1, kept: 1, unchecked: 0, gaps: 0, through: 110 },
     ]);
     expect(lines.join('\n').toLowerCase()).not.toContain(stealth.slice(2).toLowerCase());
   });

@@ -22,23 +22,28 @@
  * in a block range, and the ERC-20 transfers in that range to the addresses
  * those announcements name, which are public already.
  *
- * ASSUMPTION(ruling F, USDC on Base at launch): value means an ERC-20
- * transfer. A native ETH value inside an ERC-4337 op is an internal call that
+ * ASSUMPTION(ruling F, USDC on Base at launch): value means a non-zero
+ * transfer of a listed token (`ANNOUNCEMENTS_TOKENS`, else Base Sepolia's two
+ * USDC contracts), so a Transfer-shaped log from any other contract counts for
+ * nothing. A native ETH value inside an ERC-4337 op is an internal call that
  * `eth_getLogs` cannot see, so such an announcement is not kept; its payer
  * announced it, and a phone's full scan against a public node still finds it
- * (q18's spot check). Any ERC-20 counts, not USDC alone, so a junk token's
- * transfer passes: the flood residual q18 states.
+ * (q18's spot check). The Sepolia MockUSDC may mint to anyone, so there a flood
+ * costs gas only: the feed's row ceiling (`ANNOUNCEMENT_CEILING`, counted by
+ * triggers) keeps it from filling the registry's database.
  *
  * The indexer first checks that its node serves the chain it indexes, then
- * reads up to the chain's `safe` head, in chunks of `ANNOUNCEMENT_LOG_RANGE`
- * blocks, and stores a chunk's kept announcements and the next block, the
- * cursor in the last batch, so a failed call leaves the cursor where it was and
- * the next run reads the chunk again. A refused call is an error, never an
- * empty chunk (as `activityScan.ts`). A chunk a node refuses (a result too
- * large, from a flood) is read again in halves, down to one block, so no
- * stranger can stall the feed for good; and an announcement that is not a
+ * reads up to `SAFE_HEAD_MARGIN` blocks behind the chain's `safe` head, in
+ * chunks of `ANNOUNCEMENT_LOG_RANGE` blocks, and stores a chunk's kept
+ * announcements and the next block, the cursor in the last batch, so a failed
+ * call leaves the cursor where it was and the next run reads the chunk again.
+ * A refused call is an error, never an empty chunk (as `activityScan.ts`), and
+ * an empty chunk counts only from a node that holds its last block. A chunk
+ * that fails is read again in halves; one block that fails on
+ * `GAP_AFTER_FAILURES` runs in a row is skipped as a gap the feed names, so
+ * no stranger can stall the feed for good; and an announcement that is not a
  * well-formed scheme 1 one (an ephemeral key other than 33 bytes, metadata
- * empty or over `MAX_METADATA_BYTES`) is never kept, so no row can outgrow D1.
+ * empty or over `MAX_METADATA_BYTES`) is never kept, so no row outgrows D1.
  */
 
 import {
@@ -78,6 +83,12 @@ export const MAX_METADATA_BYTES = 512;
 export const COMMIT_ROWS_PER_BATCH = 100;
 /** Retries a run may spend halving refused chunks (200 blocks halve to one in eight). */
 export const MAX_SPLITS_PER_RUN = 16;
+/** Runs in a row a single block may fail before it is skipped as a gap the feed names. */
+export const GAP_AFTER_FAILURES = 3;
+/** Blocks behind the `safe` head the indexer stops, so a load-balanced node's lagging backend still holds them. */
+export const SAFE_HEAD_MARGIN = 10n;
+/** The most announcements the feed holds; past it the indexer stops and logs `FeedFull`, so the feed never fills the registry's database. */
+export const ANNOUNCEMENT_CEILING = 1_000_000;
 
 /** The node the indexer was given serves another chain: nothing is read or written. */
 export class FeedChainMismatch extends Error {
@@ -95,17 +106,19 @@ export interface RawLog {
 }
 
 export interface LogQuery {
-  address?: string;
+  /** One contract, or any of a list. */
+  address?: string | string[];
   /** Per position: a topic, a list of topics (any), or null (any). */
   topics: (string | string[] | null)[];
   fromBlock: bigint;
   toBlock: bigint;
 }
 
-/** What the indexer asks of a chain: its id, its `safe` head and `eth_getLogs`. */
+/** What the indexer asks of a chain: its id, its `safe` head, whether it holds a block, and `eth_getLogs`. */
 export interface FeedChain {
   chainId(): Promise<number>;
   safeHead(): Promise<bigint>;
+  hasBlock(block: bigint): Promise<boolean>;
   logs(query: LogQuery): Promise<RawLog[]>;
 }
 
@@ -124,10 +137,16 @@ export interface Announcement {
 export interface FeedStore {
   /** The next block the indexer reads on this chain, or null before its first run. */
   cursor(chainId: number): Promise<number | null>;
-  /** The kept announcements of a chunk and the next block, in one batch. */
+  /** The kept announcements of a chunk and the next block, the cursor in the last batch; `FeedFull` past `ANNOUNCEMENT_CEILING`. */
   commit(chainId: number, announcements: Announcement[], nextBlock: number, now: number): Promise<void>;
   /** Announcements after a position and up to block `through`, in chain order, at most `limit`. */
   page(chainId: number, after: { block: number; logIndex: number } | null, limit: number, through: number): Promise<Announcement[]>;
+  /** Count a failed read of one block; answers its failures in a row. */
+  failed(chainId: number, block: number, now: number): Promise<number>;
+  /** Skip one block as a gap and move the cursor past it, in one batch. */
+  skip(chainId: number, block: number, now: number): Promise<void>;
+  /** Skipped blocks after `afterBlock` and up to `through`, in order, at most `limit`. */
+  gaps(chainId: number, afterBlock: number, through: number, limit: number): Promise<number[]>;
 }
 
 /** A scheme 1 announcement log as an `Announcement`, or null when it is not one. */
@@ -179,10 +198,36 @@ export function parsePlaneCallers(raw: string | undefined): Set<string> {
   );
 }
 
+/** Tokens whose transfers count as value (ASSUMPTION(ruling F): USDC on Base at launch): `ANNOUNCEMENTS_TOKENS`, else Base Sepolia's. */
+export const DEFAULT_FEED_TOKENS = [
+  // The plane's MockUSDC (src/chain/deployments.ts, the activity service's token).
+  '0x8c05Df95F91De2D70e0436B774fc9D1f86FF1f51',
+  // Circle's USDC on Base Sepolia.
+  '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+] as const;
+
+/** `ANNOUNCEMENTS_TOKENS`: comma-separated token addresses, lower case; unset or empty, `DEFAULT_FEED_TOKENS`. */
+export function parseFeedTokens(raw: string | undefined): Set<string> {
+  const listed = parsePlaneCallers(raw);
+  return listed.size ? listed : new Set(DEFAULT_FEED_TOKENS.map((t) => t.toLowerCase()));
+}
+
+/** The node answered an empty range for blocks it does not hold yet: the run stops, nothing is skipped. */
+export class FeedNodeBehind extends Error {
+  override name = 'FeedNodeBehind';
+}
+
+/** The feed holds `ANNOUNCEMENT_CEILING` rows: the run stops, and the cron's log line is the alert. */
+export class FeedFull extends Error {
+  override name = 'FeedFull';
+}
+
 /**
  * Which announcements of a block range the feed keeps (see the module
- * comment): the plane's own, and those with a non-zero ERC-20 transfer to the
- * announced address in the same transaction.
+ * comment): the plane's own, and those with a non-zero transfer of a listed
+ * token to the announced address in the same transaction. Answers the kept
+ * ones, the raw announcement count, and how many were kept without the value
+ * check because a one-block transfer query for their address was refused.
  */
 export async function keptAnnouncements(
   chain: FeedChain,
@@ -190,26 +235,46 @@ export async function keptAnnouncements(
   fromBlock: bigint,
   toBlock: bigint,
   planeCallers: ReadonlySet<string>,
-): Promise<Announcement[]> {
+  tokens: ReadonlySet<string> = parseFeedTokens(undefined),
+): Promise<{ kept: Announcement[]; raw: number; unchecked: number }> {
   const raw = await chain.logs({ address: ERC5564_ANNOUNCER, topics: [ANNOUNCEMENT_TOPIC, SCHEME_TOPIC], fromBlock, toBlock });
   const all = raw.map((l) => decodeAnnouncement(l, chainId)).filter((a): a is Announcement => a !== null);
   const kept = new Set(all.filter((a) => planeCallers.has(a.caller.toLowerCase())));
   const open = all.filter((a) => !kept.has(a));
-  if (open.length) {
-    // One transfer query per batch of announced addresses, over the same blocks; a payment moves value in its own transaction.
-    const addresses = [...new Set(open.map((a) => a.stealthAddress.toLowerCase()))];
+  let unchecked = 0;
+  if (open.length && tokens.size) {
     const paid = new Set<string>();
-    for (let i = 0; i < addresses.length; i += TRANSFER_ADDRESSES_PER_QUERY) {
-      const batch = addresses.slice(i, i + TRANSFER_ADDRESSES_PER_QUERY).map((a) => pad(a as Hex, { size: 32 }));
-      const transfers = await chain.logs({ topics: [TRANSFER_TOPIC, null, batch], fromBlock, toBlock });
-      for (const t of transfers) {
-        const to = erc20Recipient(t);
-        if (to) paid.add(`${t.transactionHash.toLowerCase()}:${to}`);
+    const vouched = new Set<string>();
+    // One transfer query per batch of announced addresses, over the same blocks and the listed tokens only.
+    const ask = async (addresses: string[]): Promise<void> => {
+      try {
+        const transfers = await chain.logs({ address: [...tokens], topics: [TRANSFER_TOPIC, null, addresses.map((a) => pad(a as Hex, { size: 32 }))], fromBlock, toBlock });
+        for (const t of transfers) {
+          const to = tokens.has(t.address.toLowerCase()) ? erc20Recipient(t) : null;
+          if (to) paid.add(`${t.transactionHash.toLowerCase()}:${to}`);
+        }
+      } catch (err) {
+        // Across several blocks the indexer halves the range; within one, the address list halves, and an address the node
+        // still refuses alone is kept unchecked: the value filter is a brake on floods, never a reason to stall the feed.
+        if (fromBlock !== toBlock) throw err;
+        if (addresses.length > 1) {
+          const half = Math.ceil(addresses.length / 2);
+          await ask(addresses.slice(0, half));
+          await ask(addresses.slice(half));
+        } else vouched.add(addresses[0]!);
+      }
+    };
+    const addresses = [...new Set(open.map((a) => a.stealthAddress.toLowerCase()))];
+    for (let i = 0; i < addresses.length; i += TRANSFER_ADDRESSES_PER_QUERY) await ask(addresses.slice(i, i + TRANSFER_ADDRESSES_PER_QUERY));
+    for (const a of open) {
+      if (paid.has(`${a.txHash}:${a.stealthAddress.toLowerCase()}`)) kept.add(a);
+      else if (vouched.has(a.stealthAddress.toLowerCase())) {
+        kept.add(a);
+        unchecked++;
       }
     }
-    for (const a of open) if (paid.has(`${a.txHash}:${a.stealthAddress.toLowerCase()}`)) kept.add(a);
   }
-  return all.filter((a) => kept.has(a));
+  return { kept: all.filter((a) => kept.has(a)), raw: raw.length, unchecked };
 }
 
 export interface IndexDeps {
@@ -219,6 +284,8 @@ export interface IndexDeps {
   /** `ANNOUNCEMENTS_FROM_BLOCK`: where the first run starts. */
   fromBlock: number;
   planeCallers: ReadonlySet<string>;
+  /** The tokens whose transfers count as value (`parseFeedTokens`). */
+  tokens?: ReadonlySet<string>;
   now: () => number;
   range?: number;
   maxChunks?: number;
@@ -226,44 +293,68 @@ export interface IndexDeps {
 }
 
 export interface IndexRun {
-  /** Chunks committed this run. */
+  /** Chunks committed this run, a skipped block counted as one. */
   chunks: number;
   /** Announcements kept this run. */
   kept: number;
+  /** Announcements kept without the value check (a refused one-block transfer query). */
+  unchecked: number;
+  /** Blocks skipped this run as gaps (`GAP_AFTER_FAILURES`). */
+  gaps: number;
   /** The last block indexed, or null when the run committed nothing. */
   through: number | null;
 }
 
 /**
- * One run: from the stored cursor (else `fromBlock`) towards the `safe` head,
- * chunk by chunk. A chunk the node refuses is read again in halves, within
- * `maxSplits`; a refusal of a single block, or past the splits, throws, and the
- * chunks before it stay committed.
+ * One run: from the stored cursor (else `fromBlock`) towards the `safe` head
+ * less `SAFE_HEAD_MARGIN`, chunk by chunk. A chunk that fails (a refused read,
+ * a refused write) is read again in halves, within `maxSplits`. A single block
+ * that fails counts a failure against itself, and on its
+ * `GAP_AFTER_FAILURES`th run in a row it is skipped as a gap, which the feed
+ * then names so phones scan that block against a public node themselves: no
+ * block can stall the feed for good. A node that answers nothing for blocks it
+ * does not hold (`FeedNodeBehind`), the feed at its ceiling (`FeedFull`) and a
+ * node of another chain stop the run without a gap.
  */
 export async function indexAnnouncements(deps: IndexDeps): Promise<IndexRun> {
   const range = BigInt(deps.range ?? ANNOUNCEMENT_LOG_RANGE);
   const maxChunks = deps.maxChunks ?? MAX_CHUNKS_PER_RUN;
+  const tokens = deps.tokens ?? parseFeedTokens(undefined);
   let splits = deps.maxSplits ?? MAX_SPLITS_PER_RUN;
   const served = await deps.chain.chainId();
   if (served !== deps.chainId) throw new FeedChainMismatch(`the node serves chain ${served}, not ${deps.chainId}`);
   let next = BigInt((await deps.store.cursor(deps.chainId)) ?? deps.fromBlock);
-  const head = await deps.chain.safeHead();
-  const run: IndexRun = { chunks: 0, kept: 0, through: null };
+  const head = (await deps.chain.safeHead()) - SAFE_HEAD_MARGIN;
+  const run: IndexRun = { chunks: 0, kept: 0, unchecked: 0, gaps: 0, through: null };
   let span = range;
   while (next <= head && run.chunks < maxChunks) {
     const to = next + span - 1n < head ? next + span - 1n : head;
-    let kept: Announcement[];
+    let read: Awaited<ReturnType<typeof keptAnnouncements>>;
     try {
-      kept = await keptAnnouncements(deps.chain, deps.chainId, next, to, deps.planeCallers);
+      read = await keptAnnouncements(deps.chain, deps.chainId, next, to, deps.planeCallers, tokens);
+      // An empty answer counts only from a node that holds the chunk's last block (REVIEW.md: a failed read is never an empty one).
+      if (read.raw === 0 && !(await deps.chain.hasBlock(to))) throw new FeedNodeBehind(`the node has no block ${to}`);
+      await deps.store.commit(deps.chainId, read.kept, Number(to + 1n), deps.now());
     } catch (err) {
-      if (to === next || splits <= 0) throw err;
-      splits--;
-      span = (to - next + 2n) / 2n;
+      if (err instanceof FeedNodeBehind || err instanceof FeedFull) throw err;
+      if (to > next && splits > 0) {
+        splits--;
+        span = (to - next + 2n) / 2n;
+        continue;
+      }
+      if (to > next) throw err;
+      const failures = await deps.store.failed(deps.chainId, Number(next), deps.now());
+      if (failures < GAP_AFTER_FAILURES) throw err;
+      await deps.store.skip(deps.chainId, Number(next), deps.now());
+      run.gaps++;
+      run.chunks++;
+      run.through = Number(next);
+      next += 1n;
       continue;
     }
-    await deps.store.commit(deps.chainId, kept, Number(to + 1n), deps.now());
     run.chunks++;
-    run.kept += kept.length;
+    run.kept += read.kept.length;
+    run.unchecked += read.unchecked;
     run.through = Number(to);
     next = to + 1n;
     // Back towards the full range after a halved chunk read.
@@ -294,6 +385,10 @@ export function rpcFeedChain(rpcUrl: string): FeedChain {
     async safeHead() {
       const block = await client.getBlock({ blockTag: 'safe' });
       return block.number;
+    },
+    async hasBlock(block) {
+      const found = (await client.request({ method: 'eth_getBlockByNumber', params: [toHex(block), false] } as never)) as unknown;
+      return found !== null && found !== undefined;
     },
     async logs(q) {
       const params = {
@@ -330,7 +425,10 @@ interface AnnouncementRow {
 }
 
 export class D1FeedStore implements FeedStore {
-  constructor(private readonly db: D1Database) {}
+  constructor(
+    private readonly db: D1Database,
+    private readonly ceiling = ANNOUNCEMENT_CEILING,
+  ) {}
 
   async cursor(chainId: number): Promise<number | null> {
     const r = await this.db.prepare('SELECT next_block FROM announcement_cursor WHERE chain_id = ?').bind(chainId).first<{ next_block: number }>();
@@ -347,17 +445,58 @@ export class D1FeedStore implements FeedStore {
         )
         .bind(chainId, a.blockNumber, a.logIndex, a.txHash, a.stealthAddress, a.caller, a.ephemeralPubKey, a.metadata),
     );
-    const cursor = this.db
+    if (rows.length) {
+      const held = await this.db.prepare("SELECT n FROM handles_counters WHERE name = 'announcements'").first<{ n: number }>();
+      if ((held?.n ?? 0) + rows.length > this.ceiling) throw new FeedFull(`the feed holds ${held?.n ?? 0} announcements`);
+    }
+    const cursor = this.cursorTo(chainId, nextBlock, now);
+    // A block read at last is no longer failing; a gap already skipped stays named.
+    const cleared = this.db.prepare('DELETE FROM announcement_gaps WHERE chain_id = ? AND skipped_at IS NULL AND block_number < ?').bind(chainId, nextBlock);
+    // A batch per hundred rows, the cursor with the last: rows a failed batch left are written again, once, next run.
+    for (let i = 0; i + COMMIT_ROWS_PER_BATCH < rows.length; i += COMMIT_ROWS_PER_BATCH) await this.db.batch(rows.slice(i, i + COMMIT_ROWS_PER_BATCH));
+    const tail = rows.length ? rows.slice(Math.floor((rows.length - 1) / COMMIT_ROWS_PER_BATCH) * COMMIT_ROWS_PER_BATCH) : [];
+    await this.db.batch([...tail, cleared, cursor]);
+  }
+
+  private cursorTo(chainId: number, nextBlock: number, now: number): D1PreparedStatement {
+    return this.db
       .prepare(
         `INSERT INTO announcement_cursor (chain_id, next_block, updated_at) VALUES (?1, ?2, ?3)
          ON CONFLICT (chain_id) DO UPDATE SET next_block = excluded.next_block, updated_at = excluded.updated_at
          WHERE excluded.next_block > announcement_cursor.next_block`,
       )
       .bind(chainId, nextBlock, now);
-    // A batch per hundred rows, the cursor with the last: rows a failed batch left are written again, once, next run.
-    for (let i = 0; i + COMMIT_ROWS_PER_BATCH < rows.length; i += COMMIT_ROWS_PER_BATCH) await this.db.batch(rows.slice(i, i + COMMIT_ROWS_PER_BATCH));
-    const tail = rows.length ? rows.slice(Math.floor((rows.length - 1) / COMMIT_ROWS_PER_BATCH) * COMMIT_ROWS_PER_BATCH) : [];
-    await this.db.batch([...tail, cursor]);
+  }
+
+  async failed(chainId: number, block: number, now: number): Promise<number> {
+    const r = await this.db
+      .prepare(
+        `INSERT INTO announcement_gaps (chain_id, block_number, failures, last_failed_at) VALUES (?1, ?2, 1, ?3)
+         ON CONFLICT (chain_id, block_number) DO UPDATE SET failures = failures + 1, last_failed_at = excluded.last_failed_at
+         RETURNING failures`,
+      )
+      .bind(chainId, block, now)
+      .first<{ failures: number }>();
+    return r?.failures ?? 1;
+  }
+
+  async skip(chainId: number, block: number, now: number): Promise<void> {
+    await this.db.batch([
+      this.db.prepare('UPDATE announcement_gaps SET skipped_at = ? WHERE chain_id = ? AND block_number = ?').bind(now, chainId, block),
+      this.cursorTo(chainId, block + 1, now),
+    ]);
+  }
+
+  async gaps(chainId: number, afterBlock: number, through: number, limit: number): Promise<number[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT block_number FROM announcement_gaps
+         WHERE chain_id = ? AND skipped_at IS NOT NULL AND block_number > ? AND block_number <= ?
+         ORDER BY block_number LIMIT ?`,
+      )
+      .bind(chainId, afterBlock, through, limit)
+      .all<{ block_number: number }>();
+    return results.map((r) => r.block_number);
   }
 
   async page(chainId: number, after: { block: number; logIndex: number } | null, limit: number, through: number): Promise<Announcement[]> {

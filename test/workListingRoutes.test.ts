@@ -9,7 +9,7 @@ import { createWorkListingRoutes, publishedTier, type ListingRouteDeps } from '.
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
 import { GLOBAL_USAGE_NAME, monthOf } from '../src/services/chatUsageStore.js';
-import { listingIdOf } from '../src/services/work/listings.js';
+import { LISTING_AT_SINCE, listingIdOf } from '../src/services/work/listings.js';
 import { pseudonymKey, workPseudonym } from '../src/services/work/pseudonym.js';
 import type { WorkStores } from '../src/services/work/stores.js';
 import { memoryUsageStore, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
@@ -467,6 +467,46 @@ describe('POST /v1/work/listing/personhood (the tier refresh on bind)', () => {
     a.listingIndex.vectors.delete(up.listingId);
     bound = false;
     expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 0, listings: 1, vectors: 0, pending: 1 });
+  });
+
+  it('takes the namespace from the record, never from the index’s answer, and never brings back a listing taken down', async () => {
+    let bound = false;
+    const a = await app(STAGING, { accountBound: async () => bound });
+    const up = (await (await a.put({ account: fxAccount, ...DRAFT })).json()) as { listingId: string; namespace: string };
+    // An index whose read-back leaves the namespace out.
+    const getByIds = a.listingIndex.getByIds!.bind(a.listingIndex);
+    a.listingIndex.getByIds = async (ids) => (await getByIds(ids)).map(({ namespace: _n, ...v }) => v);
+    bound = true;
+    expect(await (await a.personhood({ account: fxAccount })).json()).toMatchObject({ vectors: 1, pending: 0 });
+    expect(a.listingIndex.vectors.get(up.listingId)!.namespace).toBe(up.namespace);
+    // A vector the index still answers after its record was deleted (an unpublish meanwhile) is never upserted again.
+    const record = a.db.sqlite.prepare('SELECT * FROM listings').get() as Record<string, unknown>;
+    a.db.sqlite.prepare('DELETE FROM listings').run();
+    const listings = a.listings.setPersonhood.bind(a.listings);
+    a.listings.setPersonhood = async () => [up.listingId];
+    const upserts: unknown[] = [];
+    const upsert = a.listingIndex.upsert.bind(a.listingIndex);
+    a.listingIndex.upsert = async (v) => (upserts.push(v), upsert(v));
+    bound = false;
+    expect(await (await a.personhood({ account: fxAccount })).json()).toMatchObject({ vectors: 0, pending: 1 });
+    expect(upserts).toEqual([]);
+    a.listings.setPersonhood = listings;
+    expect(record.listing_id).toBe(up.listingId);
+  });
+
+  it('takes a vector without `at` only for a record last published before `at` existed', async () => {
+    let bound = false;
+    const a = await app(STAGING, { accountBound: async () => bound });
+    const up = (await (await a.put({ account: fxAccount, ...DRAFT })).json()) as { listingId: string };
+    const v = a.listingIndex.vectors.get(up.listingId)!;
+    const { at: _at, ...withoutAt } = v.metadata;
+    a.listingIndex.vectors.set(up.listingId, { ...v, metadata: withoutAt });
+    bound = true;
+    // Published after LISTING_AT_SINCE: an at-less vector may be an older publish, so it waits.
+    a.db.sqlite.prepare('UPDATE listings SET updated_at = ?').run(LISTING_AT_SINCE + 1);
+    expect(await (await a.personhood({ account: fxAccount })).json()).toMatchObject({ vectors: 0, pending: 1 });
+    a.db.sqlite.prepare('UPDATE listings SET updated_at = ?').run(LISTING_AT_SINCE - 1);
+    expect(await (await a.personhood({ account: fxAccount })).json()).toMatchObject({ vectors: 1, pending: 0 });
   });
 
   it('touches only the gated account’s listings, answers zero when it holds none, and refuses rather than guess', async () => {

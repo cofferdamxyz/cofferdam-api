@@ -435,6 +435,12 @@ export interface Env {
   ANNOUNCEMENTS_PLANE_CALLERS?: string;
   /** A JSON-RPC URL for the feed's reads (a secret when it carries a key); unset, `BASE_SEPOLIA_RPC_URL`. */
   ANNOUNCEMENTS_RPC_URL?: string;
+  /**
+   * The tokens whose transfer to an announced address in the same transaction
+   * makes the feed keep the announcement, comma-separated addresses. Unset:
+   * Base Sepolia's MockUSDC and Circle USDC (decision 0086 q18, ruling F).
+   */
+  ANNOUNCEMENTS_TOKENS?: string;
 
   // ── Service bindings ────────────────────────────────────────────
   /**
