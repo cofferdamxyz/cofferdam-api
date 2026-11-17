@@ -13,13 +13,15 @@
  * and ASCII upper case folded), and the phone normalises anything else before
  * it asks (cofferdam-app `handleGrammar.ts`, `toHandle`).
  *
- * DUPLICATION, to remove: the shared validator and `handleId` move to
- * cofferdam-sdk `identity/handle.ts` (runbook step 0 and step 1), which the
- * plane does not import (it depends on no `@cofferdam/sdk` package, as
- * `sessionAttestation.ts` mirrors the SDK byte for byte). Until it does, the
- * vectors in `test/handlesGrammar.test.ts` pin the same rules, and the SDK's
- * shared fixture `handles-0086.json` is to be copied into
- * `test/fixtures/handles/` and read there once that branch lands.
+ * DUPLICATION, to remove: the shared validator and `handleId` are
+ * cofferdam-sdk's `identity/handle.ts` (`toHandle`, `isHandle`, `handleId`;
+ * branch `claude/handles-sdk`), which the plane does not import (it depends
+ * on no `@cofferdam/sdk` package, as `sessionAttestation.ts` mirrors the SDK
+ * byte for byte). `test/handlesGrammar.test.ts` holds the plane to the SDK's
+ * shared fixture (`test/fixtures/handles/handleAnchorTypes.json`, copied from
+ * that branch, never edited by hand), to the SDK's own grammar cases, and to
+ * vectors computed apart from viem. The one difference is by design: the SDK
+ * normalises input with ENSIP-15, the plane takes only the stored form.
  */
 
 import { keccak256, stringToBytes } from 'viem';

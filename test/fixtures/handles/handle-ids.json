@@ -1,5 +1,5 @@
 {
-  "source": "keccak256(\"cofferdam-handle-v1:\" || label) per workspace decision 0086 rule 2, computed with a standalone Keccak-256 in Python (not viem or noble), 2026-11-17. Replace with, or check against, cofferdam-sdk's handles-0086.json once claude/handles-sdk lands.",
+  "source": "keccak256(\"cofferdam-handle-v1:\" || label) per workspace decision 0086 rule 2, computed with a standalone Keccak-256 in Python (not viem or noble), 2026-11-17. cofferdam-sdk's shared fixture handleAnchorTypes.json (copied beside this file from claude/handles-sdk 6d8ec4f) agrees on 'ana'; test/handlesGrammar.test.ts reads both.",
   "vectors": {
     "ana": "0x5e86daf1c99f36f82a65adaa1402b04e43da13e329aae43aa512537dc783267c",
     "maria-silva": "0xe376c424f78df3b44147c03041bd705bd9ec07faedca00947912f1019760acbf",
