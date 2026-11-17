@@ -267,20 +267,18 @@
   // under a pseudonym the deployed Worker never derives.
   // ─────────────────────────────────────────────────────────────────
   "d1_databases": [
-    { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "bcaf84d1-c870-4e4e-85e9-6b0dd822ecd5", "migrations_dir": "migrations/work", "remote": true }
+    { "binding": "WORK_DB", "database_name": "cofferdam-work", "database_id": "bcaf84d1-c870-4e4e-85e9-6b0dd822ecd5", "migrations_dir": "migrations/work", "remote": true },
     // The handle registry (workspace decision 0086, rule 4; runbook
     // docs/runbooks/handles-build.md, step 3): handles, the reserved list, the
-    // hold log, share links and the announcement feed. NOT CREATED YET, so
-    // commented out and every handle route answers 503 handles_db_unprovisioned.
+    // hold log, share links and the announcement feed. Created 2026-11-17
+    // (ENAM); unbound, every handle route answers 503 handles_db_unprovisioned.
     // The test registry: `cofferdam-handles-sepolia` holds the test handles until
     // the production cut at the MVP, which creates a fresh `cofferdam-handles`,
     // re-points this binding (the database_id and name only) and archives or
     // deletes the test one (the founder, 2026-11-17; no staging split before then).
-    // To light it up: `wrangler d1 create cofferdam-handles-sepolia`, paste the id below
-    // and uncomment the line (with a comma after WORK_DB's), then
-    // `wrangler d1 migrations apply cofferdam-handles-sepolia --remote`. No "remote": true,
+    // Migrations: `wrangler d1 migrations apply cofferdam-handles-sepolia --remote`. No "remote": true,
     // unlike WORK_DB: wrangler dev then writes a local database, never the live one.
-    // { "binding": "HANDLES_DB", "database_name": "cofferdam-handles-sepolia", "database_id": "<TBD-run-wrangler-d1-create-cofferdam-handles-sepolia>", "migrations_dir": "migrations/handles" }
+    { "binding": "HANDLES_DB", "database_name": "cofferdam-handles-sepolia", "database_id": "1e76a7d6-1c48-4abf-809a-bcacbc2aa66e", "migrations_dir": "migrations/handles" }
   ],
   "vectorize": [
     { "binding": "TOKEN_REGISTRY", "index_name": "token-registry-v2", "remote": true },
@@ -299,14 +297,13 @@
   // ─────────────────────────────────────────────────────────────────
   "r2_buckets": [
     { "binding": "VAULT", "bucket_name": "cofferdam-vault" }
-  ]
+  ],
 
   // The handle registry's scheduled run (src/services/handles/cron.ts): the
   // sweep of expired share links and lapsed holds, then the announcement
   // indexer, which stays off until ANNOUNCEMENTS_FROM_BLOCK is set. Does
-  // nothing while HANDLES_DB is unbound. Uncomment with HANDLES_DB above,
-  // with a comma after the r2_buckets array:
-  // "triggers": { "crons": ["* * * * *"] }
+  // nothing while HANDLES_DB is unbound.
+  "triggers": { "crons": ["* * * * *"] }
 
   // Bindings below are intentionally COMMENTED until their resources
   // are provisioned. Uncomment + fill IDs as we go through Sessions 4-N.
