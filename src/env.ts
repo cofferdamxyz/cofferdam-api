@@ -398,6 +398,34 @@ export interface Env {
   // ── D1 databases (provisioned in later sessions) ────────────────
   // DB: D1Database;
 
+  // ── Handles (workspace decision 0086, runbook handles-build.md step 3) ──
+  /**
+   * `cofferdam-handles`: the handle registry, the reserved list, the hold log,
+   * the share links and the announcement feed (`migrations/handles/`), apart
+   * from `WORK_DB` and from 0083 R10's address map. Unbound, every
+   * `/v1/handles`, `/v1/handshake` and `/v1/announcements` route answers
+   * `503 handles_db_unprovisioned` and the cron does nothing.
+   */
+  HANDLES_DB?: D1Database;
+  /** The handle routes' per-IP ceiling (`handles-ip:`, `handshake-ip:`, `announce-ip:` keys); no IP is stored. */
+  HANDLES_IP_RL?: RateLimit;
+  /** The handle routes' global brake (`handles:global`, `handshake:global`, `announce:global`), first on every one. */
+  HANDLES_GLOBAL_RL?: RateLimit;
+  /**
+   * The first Base Sepolia block the announcement feed indexes, decimal. Unset,
+   * the indexer is off and the feed stays empty; set it once, to a block before
+   * the first Cofferdam announcement (the cursor then lives in `HANDLES_DB`).
+   */
+  ANNOUNCEMENTS_FROM_BLOCK?: string;
+  /**
+   * The plane's own announcers, comma-separated addresses, whose announcements
+   * the feed keeps without a value check (pay-link and self-derived addresses,
+   * decision 0086 rule 5). Unset: none, since none exists yet.
+   */
+  ANNOUNCEMENTS_PLANE_CALLERS?: string;
+  /** A JSON-RPC URL for the feed's reads (a secret when it carries a key); unset, `BASE_SEPOLIA_RPC_URL`. */
+  ANNOUNCEMENTS_RPC_URL?: string;
+
   // ── Service bindings ────────────────────────────────────────────
   /**
    * cofferdam-attester service binding (Session 3+). Exposes the

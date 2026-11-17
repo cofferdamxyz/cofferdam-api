@@ -1,0 +1,9 @@
+{
+  "source": "keccak256(\"cofferdam-handle-v1:\" || label) per workspace decision 0086 rule 2, computed with a standalone Keccak-256 in Python (not viem or noble), 2026-11-17. Replace with, or check against, cofferdam-sdk's handles-0086.json once claude/handles-sdk lands.",
+  "vectors": {
+    "ana": "0x5e86daf1c99f36f82a65adaa1402b04e43da13e329aae43aa512537dc783267c",
+    "maria-silva": "0xe376c424f78df3b44147c03041bd705bd9ec07faedca00947912f1019760acbf",
+    "a1b": "0x5a6a20504eaf320bc4304ec2a147c3b7e7c6a997542b8bee375e19ef2ad5adf6",
+    "0123456789012345678901234567890123456789012345678901234567890123": "0x628ae7a7cc371fe28ce10e3772220ea100279a8d95862470a638b51b6388f9c2"
+  }
+}

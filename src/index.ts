@@ -40,6 +40,10 @@ import { jobsRoutes } from './routes/jobs.js';
 import { workRoutes } from './routes/work.js';
 import { workListingRoutes } from './routes/workListing.js';
 import { redactVaultPath, vaultRoutes } from './routes/vault.js';
+import { announcementsRoutes } from './routes/announcements.js';
+import { handlesRoutes, redactHandlePath } from './routes/handles.js';
+import { handshakeRoutes } from './routes/handshake.js';
+import { runHandlesCron } from './services/handles/cron.js';
 import { identityLogLine, scrubIdentifiers } from './services/identityLog.js';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -64,8 +68,10 @@ app.use('*', cors({
 }));
 
 // Request log to Workers Logs. Cheap; very useful in dev. A Vault path names
-// an account and an object, so its line drops both (routes/vault.ts).
-app.use('*', logger((line) => console.log(redactVaultPath(line))));
+// an account and an object, so its line drops both (routes/vault.ts); a
+// handle path names a handle and a share link its token, so theirs drop
+// those (routes/handles.ts, workspace decision 0086).
+app.use('*', logger((line) => console.log(redactHandlePath(redactVaultPath(line)))));
 
 // ── Root info ──────────────────────────────────────────────────────
 app.get('/', (c) => {
@@ -101,6 +107,7 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/work/extract' },
       { method: 'PUT', path: '/v1/work/listing' },
       { method: 'DELETE', path: '/v1/work/listing' },
+      { method: 'POST', path: '/v1/work/listing/personhood' },
       { method: 'POST', path: '/v1/jobs/intent' },
       { method: 'GET', path: '/v1/privacy/ai' },
       { method: 'PUT', path: '/v1/vault/:account/objects/:kind/:id' },
@@ -111,6 +118,11 @@ app.get('/', (c) => {
       { method: 'DELETE', path: '/v1/vault/:account' },
       { method: 'PUT', path: '/v1/vault/:account/handover/:keyHash' },
       { method: 'GET', path: '/v1/vault/:account/handover/:keyHash' },
+      { method: 'GET', path: '/v1/handles/:label/available' },
+      { method: 'GET', path: '/v1/handles/:label' },
+      { method: 'POST', path: '/v1/handshake/links' },
+      { method: 'GET', path: '/v1/handshake/links/:token' },
+      { method: 'GET', path: '/v1/announcements?after=' },
     ],
     docs: 'https://github.com/cofferdamxyz/cofferdam-api/blob/main/README.md',
   });
@@ -133,6 +145,9 @@ app.route('/v1/work', workRoutes);
 app.route('/v1/work', workListingRoutes);
 app.route('/v1/jobs', jobsRoutes);
 app.route('/v1/vault', vaultRoutes);
+app.route('/v1/handles', handlesRoutes);
+app.route('/v1/handshake', handshakeRoutes);
+app.route('/v1/announcements', announcementsRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ ok: false, error: 'not_found' }, 404));
@@ -167,4 +182,14 @@ app.onError((err, c) => {
   );
 });
 
-export default app;
+/**
+ * The scheduled run (`wrangler.jsonc` `triggers.crons`): the handle
+ * registry's sweep and the announcement indexer (`services/handles/cron.ts`).
+ * The default export stays the Hono app, which the tests call, with the
+ * `scheduled` handler the Workers runtime looks for beside its `fetch`.
+ */
+export default Object.assign(app, {
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
+    ctx.waitUntil(runHandlesCron(env, { now: () => Date.now() }));
+  },
+});
