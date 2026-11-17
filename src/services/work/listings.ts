@@ -106,13 +106,13 @@ export function namespaceOf(region: string, scope: Scope, prefix = ''): string {
 /** The metadata schema of a listing's vector (`jobs-listings-v2`). */
 export const LISTING_METADATA_VERSION = 1;
 /**
- * When a listing's vector began to carry `at` (its record's last publish): this
- * branch's date, 2026-11-17 UTC. A vector without it is taken by the personhood
- * refresh only for a record last published before then; one published later by
- * a plane without `at` (between this date and the deploy) waits as pending
- * until the phone publishes again.
+ * How long after a publish its vector may still be unread in Vectorize. Every
+ * vector this plane writes carries `at` (its record's last publish), so a
+ * vector without it is a publish by a plane before `at`; the personhood refresh
+ * takes one only for a record last published longer ago than this, when that
+ * vector can only be the record's own.
  */
-export const LISTING_AT_SINCE = Date.UTC(2026, 10, 17);
+export const VECTOR_SETTLE_MS = 10 * 60 * 1000;
 
 export interface ListingDraft {
   /** The account's Work pseudonym: opaque here, derived by the publishing route. */
@@ -594,33 +594,48 @@ async function publishWith(deps: PublishDeps, draft: ListingDraft, client: Clien
  * be an older publish's, or not there yet. A vector is rewritten only when its
  * `at` is the record's last publish (`updatedAt`), so a refresh never writes an
  * older publish's values, namespace or cells back over a newer one; a vector
- * from before `at` was stored has none and is taken as it is. Any other is
- * `pending`, and the phone asks again a little later (it also asks after any
- * publish it began before its bind landed, whose own read of the binding may
- * have been the old one). Answers how many listings the pseudonym holds, how
- * many vectors were rewritten and how many are pending.
+ * without `at` (a publish by a plane before it) only once its record's last
+ * publish is `VECTOR_SETTLE_MS` old. Any other is `pending`, and the phone asks
+ * again a little later (it also asks after any publish it began before its
+ * bind landed, whose own read of the binding may have been the old one).
+ *
+ * A publish or an unpublish can still land between the read and the upsert.
+ * So the records are read again after it: a listing taken down meanwhile has
+ * the vector the refresh wrote deleted, and one published again meanwhile is
+ * answered as pending, for the phone to publish again if the refresh's upsert
+ * landed last. Answers how many listings the pseudonym holds, how many vectors
+ * were rewritten and how many are pending.
  */
 export async function refreshPersonhood(
   deps: Pick<PublishDeps, 'index' | 'listings'>,
   pseudonym: string,
   tier: 0 | 1 | 2,
+  now: number,
 ): Promise<{ listings: number; vectors: number; pending: number }> {
   const ids = await deps.listings.setPersonhood(pseudonym, tier);
   if (!ids.length) return { listings: 0, vectors: 0, pending: 0 };
   if (!deps.index.getByIds) return { listings: ids.length, vectors: 0, pending: ids.length };
   const [records, stored] = await Promise.all([deps.listings.get(ids), deps.index.getByIds(ids)]);
-  // A vector without `at` passes only for a record last published before `at` existed; a record gone (an unpublish
-  // meanwhile) passes never, so no deleted listing comes back.
+  // A record gone (an unpublish meanwhile) passes never, so no deleted listing comes back.
   const current = stored.flatMap((v) => {
     const record = records.get(v.id);
     if (!record) return [];
-    const fresh = v.metadata.at === undefined ? record.updatedAt < LISTING_AT_SINCE : v.metadata.at === record.updatedAt;
+    const fresh = v.metadata.at === undefined ? now - record.updatedAt >= VECTOR_SETTLE_MS : v.metadata.at === record.updatedAt;
     return fresh ? [{ vector: v, record }] : [];
   });
   const stale = current.filter(({ vector }) => vector.metadata.tier !== tier);
+  if (!stale.length) return { listings: ids.length, vectors: 0, pending: ids.length - current.length };
   // The namespace is the record's: the index's answer may leave it out, and a vector upserted without it would leave every search.
-  if (stale.length) await deps.index.upsert(stale.map(({ vector, record }) => ({ ...vector, namespace: record.namespace, metadata: { ...vector.metadata, tier } })));
-  return { listings: ids.length, vectors: stale.length, pending: ids.length - current.length };
+  await deps.index.upsert(stale.map(({ vector, record }) => ({ ...vector, namespace: record.namespace, metadata: { ...vector.metadata, tier } })));
+  // A publish or an unpublish that landed meanwhile: the vector of a listing gone goes, a listing published again is pending.
+  const after = await deps.listings.get(stale.map(({ vector }) => vector.id));
+  const gone = stale.filter(({ vector }) => !after.has(vector.id)).map(({ vector }) => vector.id);
+  if (gone.length) await deps.index.deleteByIds(gone);
+  const moved = stale.filter(({ vector, record }) => {
+    const again = after.get(vector.id);
+    return again !== undefined && again.updatedAt !== record.updatedAt;
+  }).length;
+  return { listings: ids.length, vectors: stale.length - gone.length - moved, pending: ids.length - current.length + moved };
 }
 
 /** Looking for work off: the vector and the record go. */

@@ -35,7 +35,7 @@ describe('migrations/handles on local D1 (node:sqlite)', () => {
     const tables = (db.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(
       (t) => t.name,
     );
-    expect(tables).toEqual(['announcement_cursor', 'announcement_gaps', 'announcements', 'handle_holds', 'handles', 'handles_counters', 'reserved_labels', 'share_links']);
+    expect(tables).toEqual(['announcement_cursor', 'announcement_failures', 'announcement_lease', 'announcement_skips', 'announcements', 'handle_holds', 'handles', 'handles_counters', 'reserved_labels', 'share_links']);
     const reserved = (db.sqlite.prepare('SELECT label FROM reserved_labels').all() as { label: string }[]).map((r) => r.label);
     expect(reserved.length).toBeGreaterThan(50);
     expect(reserved.filter((l) => !isStoredHandle(l))).toEqual([]);

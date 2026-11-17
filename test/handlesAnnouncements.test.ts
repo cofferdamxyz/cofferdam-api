@@ -7,7 +7,7 @@
  * D1 store on the real migration, the cron, and `GET /v1/announcements`.
  */
 
-import { encodeAbiParameters, getAddress, pad, toHex, type Hex } from 'viem';
+import { encodeAbiParameters, getAddress, HttpRequestError, pad, RpcRequestError, TimeoutError, toHex, type Hex } from 'viem';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAnnouncementsRoutes, END_OF_BLOCK, FEED_PAGE, readCursor } from '../src/routes/announcements.js';
@@ -17,7 +17,12 @@ import {
   DEFAULT_FEED_TOKENS,
   FeedFull,
   FeedNodeBehind,
+  FEED_LEASE_MS,
+  FeedTransient,
   GAP_AFTER_FAILURES,
+  GAP_AFTER_MS,
+  MAX_KEPT_PER_TX,
+  transportFailure,
   decodeAnnouncement,
   ERC5564_ANNOUNCER,
   FEED_CHAIN_ID,
@@ -200,7 +205,7 @@ describe('indexAnnouncements', () => {
     // The safe head is 1,460; the indexer stops SAFE_HEAD_MARGIN (10) blocks behind it.
     const chain = fakeChain([announcement(1_150, 0, 1, stealth), transfer(1_150, 1, 1, stealth), announcement(1_390, 0, 2, addr(0xc2))], 1_460);
     const run = await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 1_000, planeCallers: new Set(), now: () => 7 });
-    expect(run).toEqual({ chunks: 3, kept: 1, unchecked: 0, gaps: 0, through: 1_450 });
+    expect(run).toEqual({ chunks: 3, kept: 1, unchecked: 0, dropped: 0, gaps: 0, full: false, through: 1_450 });
     const ranges = chain.queries.filter((q) => q.topics[0] === ANNOUNCEMENT_TOPIC).map((q) => [Number(q.fromBlock), Number(q.toBlock)]);
     expect(ranges).toEqual([
       [1_000, 1_199],
@@ -211,7 +216,7 @@ describe('indexAnnouncements', () => {
     expect((await store.page(FEED_CHAIN_ID, null, 10, 1_450)).map((a) => a.stealthAddress)).toEqual([stealth]);
     // The next run starts from the stored cursor, and does nothing until the safe head moves.
     chain.queries.length = 0;
-    expect(await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 8 })).toEqual({ chunks: 0, kept: 0, unchecked: 0, gaps: 0, through: null });
+    expect(await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set(), now: () => 8 })).toEqual({ chunks: 0, kept: 0, unchecked: 0, dropped: 0, gaps: 0, full: false, through: null });
     expect(chain.queries).toEqual([]);
   });
 
@@ -257,26 +262,64 @@ describe('indexAnnouncements', () => {
     expect(await store2.cursor(FEED_CHAIN_ID)).toBe(120);
   });
 
-  it('skips one block as a gap after it fails on three runs in a row, and the feed names it', async () => {
+  it('skips one block as a named gap once the node refused it on three runs over 30 minutes', async () => {
     const db = handlesD1();
     const store = new D1FeedStore(db.d1);
     const stealth = addr(0xe9);
     const chain = fakeChain([announcement(150, 0, 1, stealth), transfer(150, 1, 1, stealth)], 409);
     chain.fail = (q) => q.fromBlock <= 120n && q.toBlock >= 120n;
-    const deps = { chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set<string>(), now: () => 5 };
-    for (let i = 1; i < GAP_AFTER_FAILURES; i++) await expect(indexAnnouncements(deps)).rejects.toThrow('refused');
+    let clock = 0;
+    const deps = { chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set<string>(), now: () => clock };
+    // Three runs within a few minutes are not enough: a short outage never makes a gap.
+    for (let i = 0; i < GAP_AFTER_FAILURES + 1; i++) {
+      clock += 60_000;
+      await expect(indexAnnouncements(deps)).rejects.toThrow('refused');
+    }
     expect(await store.cursor(FEED_CHAIN_ID)).toBe(120);
+    clock += GAP_AFTER_MS;
     const run = await indexAnnouncements(deps);
     expect(run).toMatchObject({ gaps: 1, kept: 1, through: 399 });
-    expect(await store.gaps(FEED_CHAIN_ID, -1, 399, 10)).toEqual([120]);
+    expect(await store.gaps(FEED_CHAIN_ID, -1, 399, 10)).toEqual([{ from: 120, to: 120 }]);
+    expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM announcement_failures').get()).toEqual({ n: 0 });
     // The feed names the gap to every phone, which scans that block against a public node itself.
     const body = (await (await createAnnouncementsRoutes({ store: () => store }).request('/', {}, {} as never)).json()) as any;
-    expect(body.gaps).toEqual([120]);
+    expect(body.gaps).toEqual([{ from: 120, to: 120 }]);
     expect(body.items.map((x: { stealthAddress: string }) => x.stealthAddress)).toEqual([stealth]);
     expect((await (await createAnnouncementsRoutes({ store: () => store }).request('/?after=120:1000000', {}, {} as never)).json()) as any).toMatchObject({ gaps: [] });
   });
 
-  it('forgets a block’s failures once it is read, so only failures in a row make a gap', async () => {
+  it('never counts a transport failure against a block: the run stops, nothing is halved or counted', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    const chain = fakeChain([], 409);
+    chain.fail = () => true;
+    const logs = chain.logs.bind(chain);
+    chain.logs = async (q) => {
+      try {
+        return await logs(q);
+      } catch {
+        throw new FeedTransient('HttpRequestError');
+      }
+    };
+    let clock = 0;
+    const deps = { chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: new Set<string>(), now: () => (clock += GAP_AFTER_MS) };
+    for (let i = 0; i < 5; i++) await expect(indexAnnouncements(deps)).rejects.toThrow(FeedTransient);
+    expect(chain.queries).toHaveLength(5);
+    expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM announcement_failures').get()).toEqual({ n: 0 });
+    expect(await store.gaps(FEED_CHAIN_ID, -1, 1_000, 10)).toEqual([]);
+  });
+
+  it('reads viem’s transport errors as transient, and a node’s own JSON-RPC error as the block’s', () => {
+    const http429 = new HttpRequestError({ url: 'https://node.example', status: 429 });
+    expect(transportFailure(http429)).toBeInstanceOf(FeedTransient);
+    expect(transportFailure(new TimeoutError({ body: {}, url: 'https://node.example' }))).toBeInstanceOf(FeedTransient);
+    const tooMany = new RpcRequestError({ body: {}, url: 'https://node.example', error: { code: -32602, message: 'query returned more than 10000 results' } });
+    expect(transportFailure(tooMany)).toBe(tooMany);
+    const plain = new Error('x');
+    expect(transportFailure(plain)).toBe(plain);
+  });
+
+  it('forgets a block’s failures once it is read, and a run behind the cursor counts or skips nothing', async () => {
     const db = handlesD1();
     const store = new D1FeedStore(db.d1);
     const chain = fakeChain([], 409);
@@ -286,7 +329,53 @@ describe('indexAnnouncements', () => {
     await expect(indexAnnouncements(deps)).rejects.toThrow('refused');
     failing = false;
     await indexAnnouncements(deps);
-    expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM announcement_gaps').get()).toEqual({ n: 0 });
+    expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM announcement_failures').get()).toEqual({ n: 0 });
+    // A stale run (the cursor moved past 120 meanwhile) counts no failure there and names no gap.
+    expect(await store.failed(FEED_CHAIN_ID, 120, 6)).toBeNull();
+    await store.skip(FEED_CHAIN_ID, 120, 120, 'failed', 6);
+    expect(await store.gaps(FEED_CHAIN_ID, -1, 1_000, 10)).toEqual([]);
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(400);
+  });
+
+  it('keeps one announcement per transfer, and none of a transaction past the per-transaction cap', async () => {
+    const x = addr(0xb01);
+    const many = Array.from({ length: MAX_KEPT_PER_TX + 1 }, (_, i) => addr(0xc00 + i));
+    const logs = [
+      // One transfer to x, three announcements naming x in the same transaction: one is kept, the first.
+      announcement(10, 0, 1, x),
+      announcement(10, 1, 1, x),
+      announcement(10, 2, 1, x),
+      transfer(10, 3, 1, x),
+      // A transaction paying five addresses and announcing each: over the cap, none kept.
+      ...many.flatMap((m, i) => [announcement(11, 2 * i, 2, m), transfer(11, 2 * i + 1, 2, m)]),
+    ];
+    const out = await keptAnnouncements(fakeChain(logs, 100), FEED_CHAIN_ID, 10n, 11n, new Set());
+    expect(out.kept.map((a) => [a.stealthAddress, a.logIndex])).toEqual([[x, 0]]);
+    expect(out.dropped).toBe(MAX_KEPT_PER_TX + 1);
+  });
+
+  it('at the feed’s ceiling, skips what it reads as named gaps and goes on, never stops', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1, 1);
+    const [a, b] = [addr(0xd01), addr(0xd02)];
+    const chain = fakeChain([announcement(50, 0, 1, a, PLANE), announcement(250, 0, 2, b, PLANE)], 609);
+    const run = await indexAnnouncements({ chain, store, chainId: FEED_CHAIN_ID, fromBlock: 0, planeCallers: parsePlaneCallers(PLANE), now: () => 1 });
+    expect(run).toMatchObject({ full: true, kept: 1, gaps: 200, through: 599 });
+    expect(await store.cursor(FEED_CHAIN_ID)).toBe(600);
+    expect(await store.gaps(FEED_CHAIN_ID, -1, 599, 10)).toEqual([{ from: 200, to: 399 }]);
+    expect((await store.page(FEED_CHAIN_ID, null, 10, 599)).map((x) => x.stealthAddress)).toEqual([a]);
+  });
+
+  it('holds one run at a time with a lease that expires', async () => {
+    const db = handlesD1();
+    const store = new D1FeedStore(db.d1);
+    expect(await store.lease(FEED_CHAIN_ID, 'one', 1_000)).toBe(true);
+    expect(await store.lease(FEED_CHAIN_ID, 'two', 2_000)).toBe(false);
+    await store.release(FEED_CHAIN_ID, 'two');
+    expect(await store.lease(FEED_CHAIN_ID, 'two', 2_000)).toBe(false);
+    expect(await store.lease(FEED_CHAIN_ID, 'two', 1_000 + FEED_LEASE_MS)).toBe(true);
+    await store.release(FEED_CHAIN_ID, 'two');
+    expect(await store.lease(FEED_CHAIN_ID, 'three', 1_000 + FEED_LEASE_MS)).toBe(true);
   });
 
   it('never takes an empty answer for blocks the node does not hold: the run stops, with no gap', async () => {
@@ -423,7 +512,7 @@ describe('the cron', () => {
     expect(lines.map((l) => JSON.parse(l) as Record<string, unknown>)).toEqual([
       { kind: 'handles', route: 'cron', step: 'sweep', links: 0, holds: 0, holdLog: 0 },
       { kind: 'handles', route: 'cron', step: 'sweep', links: 0, holds: 0, holdLog: 0 },
-      { kind: 'handles', route: 'cron', step: 'announcements', chunks: 1, kept: 1, unchecked: 0, gaps: 0, through: 110 },
+      { kind: 'handles', route: 'cron', step: 'announcements', chunks: 1, kept: 1, unchecked: 0, dropped: 0, gaps: 0, full: false, through: 110 },
     ]);
     expect(lines.join('\n').toLowerCase()).not.toContain(stealth.slice(2).toLowerCase());
   });

@@ -9,7 +9,7 @@ import { createWorkListingRoutes, publishedTier, type ListingRouteDeps } from '.
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
 import { GLOBAL_USAGE_NAME, monthOf } from '../src/services/chatUsageStore.js';
-import { LISTING_AT_SINCE, listingIdOf } from '../src/services/work/listings.js';
+import { listingIdOf, VECTOR_SETTLE_MS } from '../src/services/work/listings.js';
 import { pseudonymKey, workPseudonym } from '../src/services/work/pseudonym.js';
 import type { WorkStores } from '../src/services/work/stores.js';
 import { memoryUsageStore, type FakeCall, type FakeResponses } from './fixtures/work/fakes.js';
@@ -494,7 +494,7 @@ describe('POST /v1/work/listing/personhood (the tier refresh on bind)', () => {
     expect(record.listing_id).toBe(up.listingId);
   });
 
-  it('takes a vector without `at` only for a record last published before `at` existed', async () => {
+  it('takes a vector without `at` only once its record’s last publish has settled', async () => {
     let bound = false;
     const a = await app(STAGING, { accountBound: async () => bound });
     const up = (await (await a.put({ account: fxAccount, ...DRAFT })).json()) as { listingId: string };
@@ -502,11 +502,28 @@ describe('POST /v1/work/listing/personhood (the tier refresh on bind)', () => {
     const { at: _at, ...withoutAt } = v.metadata;
     a.listingIndex.vectors.set(up.listingId, { ...v, metadata: withoutAt });
     bound = true;
-    // Published after LISTING_AT_SINCE: an at-less vector may be an older publish, so it waits.
-    a.db.sqlite.prepare('UPDATE listings SET updated_at = ?').run(LISTING_AT_SINCE + 1);
+    // Published just now: an at-less vector may be an older publish not yet replaced, so it waits.
+    a.db.sqlite.prepare('UPDATE listings SET updated_at = ?').run(now - 1);
     expect(await (await a.personhood({ account: fxAccount })).json()).toMatchObject({ vectors: 0, pending: 1 });
-    a.db.sqlite.prepare('UPDATE listings SET updated_at = ?').run(LISTING_AT_SINCE - 1);
+    a.db.sqlite.prepare('UPDATE listings SET updated_at = ?').run(now - VECTOR_SETTLE_MS);
     expect(await (await a.personhood({ account: fxAccount })).json()).toMatchObject({ vectors: 1, pending: 0 });
+  });
+
+  it('deletes the vector it wrote for a listing taken down meanwhile, and answers one published again as pending', async () => {
+    let bound = false;
+    const a = await app(STAGING, { accountBound: async () => bound });
+    const main = (await (await a.put({ account: fxAccount, ...DRAFT })).json()) as { listingId: string };
+    const helper = (await (await a.put({ account: fxAccount, ...DRAFT, profileId: 'helper', titles: ["Plumber's Helper"] })).json()) as { listingId: string };
+    // Between the refresh's read and its upsert: main is taken down, helper is published again.
+    const upsert = a.listingIndex.upsert.bind(a.listingIndex);
+    a.listingIndex.upsert = async (v) => {
+      await upsert(v);
+      a.db.sqlite.prepare('DELETE FROM listings WHERE listing_id = ?').run(main.listingId);
+      a.db.sqlite.prepare('UPDATE listings SET updated_at = updated_at + 1 WHERE listing_id = ?').run(helper.listingId);
+    };
+    bound = true;
+    expect(await (await a.personhood({ account: fxAccount })).json()).toEqual({ ok: true, personhood: 1, listings: 2, vectors: 0, pending: 1 });
+    expect(a.listingIndex.vectors.has(main.listingId)).toBe(false);
   });
 
   it('touches only the gated account’s listings, answers zero when it holds none, and refuses rather than guess', async () => {

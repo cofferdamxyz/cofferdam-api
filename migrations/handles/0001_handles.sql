@@ -160,15 +160,38 @@ CREATE TABLE announcements (
   PRIMARY KEY (chain_id, block_number, log_index)
 );
 
--- Blocks the indexer could not read: failures in a row, and once skipped, a gap
--- the feed names, so phones scan that block against a public node themselves.
-CREATE TABLE announcement_gaps (
+-- Blocks the indexer could not read because the node answered an error for
+-- them (never a timeout, a rate limit or a store error): failures since the
+-- first, cleared once the block is read.
+CREATE TABLE announcement_failures (
   chain_id INTEGER NOT NULL,
   block_number INTEGER NOT NULL,
   failures INTEGER NOT NULL CHECK (failures >= 1),
+  first_failed_at INTEGER NOT NULL,
   last_failed_at INTEGER NOT NULL,
-  skipped_at INTEGER,
   PRIMARY KEY (chain_id, block_number)
+);
+
+-- Ranges the indexer skipped, which the feed names as gaps so phones scan them
+-- against a public node themselves: a block the node kept refusing ('failed'),
+-- or blocks read while the feed sat at its row ceiling ('full').
+CREATE TABLE announcement_skips (
+  chain_id INTEGER NOT NULL,
+  from_block INTEGER NOT NULL,
+  to_block INTEGER NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('failed', 'full')),
+  skipped_at INTEGER NOT NULL,
+  CHECK (to_block >= from_block),
+  PRIMARY KEY (chain_id, from_block)
+);
+CREATE INDEX announcement_skips_to ON announcement_skips (chain_id, to_block);
+
+-- One indexer run at a time per chain: a lease with an expiry, taken by a
+-- conditional write, so overlapping cron runs never count one failure twice.
+CREATE TABLE announcement_lease (
+  chain_id INTEGER PRIMARY KEY,
+  holder TEXT NOT NULL,
+  until INTEGER NOT NULL
 );
 
 -- The feed's rows, counted like the share links', so the indexer stops at a

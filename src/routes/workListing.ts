@@ -282,11 +282,14 @@ export function createWorkListingRoutes(deps: ListingRouteDeps = defaultWorkRout
       workLog({ event: 'work_listing_binding_unreadable', reason: failureOf(err) });
       return c.json({ ok: false, error: 'binding_check_unavailable', message: 'the personhood binding could not be read on Base; retry shortly' }, 503);
     }
-    // ASSUMPTION(P3, tier refresh): the refresh stands for the phone's claim of personhood 1, so a bound
-    // account's listings publish 1 and an unbound one's 0, as a publish with that claim would (`publishedTier`).
+    // ASSUMPTION(P3, tier refresh): the refresh stands for the phone's claim of personhood 1 on every listing,
+    // so a bound account's listings publish 1 and an unbound one's 0, as a publish with that claim would
+    // (`publishedTier`). The app claims personhood for every Work Profile of a bound account and has no per-profile
+    // opt-out; if one is ever added (an unmarked profile, decision 0060 (5)), the record must keep the claim and
+    // this refresh only lower it or raise a claimed listing.
     const personhood = publishedTier(1, bound);
     try {
-      const done = await refreshPersonhood({ listings: stores.listings, index: stores.listingIndex }, await workPseudonym(key, account), personhood);
+      const done = await refreshPersonhood({ listings: stores.listings, index: stores.listingIndex }, await workPseudonym(key, account), personhood, deps.now());
       workLog({ event: 'work_listing_personhood', personhood, listings: done.listings, vectors: done.vectors, pending: done.pending });
       return c.json({ ok: true, personhood, ...done });
     } catch (err) {
