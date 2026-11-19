@@ -511,7 +511,9 @@ describe('the cron', () => {
     expect(await new D1FeedStore(db.d1).cursor(FEED_CHAIN_ID)).toBe(111);
     expect(lines.map((l) => JSON.parse(l) as Record<string, unknown>)).toEqual([
       { kind: 'handles', route: 'cron', step: 'sweep', links: 0, holds: 0, holdLog: 0 },
+      { kind: 'handles', route: 'cron', step: 'registry-sweep', nonces: 0, events: 0, jobs: 0 },
       { kind: 'handles', route: 'cron', step: 'sweep', links: 0, holds: 0, holdLog: 0 },
+      { kind: 'handles', route: 'cron', step: 'registry-sweep', nonces: 0, events: 0, jobs: 0 },
       { kind: 'handles', route: 'cron', step: 'announcements', chunks: 1, kept: 1, unchecked: 0, dropped: 0, gaps: 0, full: false, through: 110 },
     ]);
     expect(lines.join('\n').toLowerCase()).not.toContain(stealth.slice(2).toLowerCase());
@@ -524,7 +526,7 @@ describe('the cron', () => {
     const chain = fakeChain([], 10);
     chain.fail = () => true;
     await runHandlesCron({ HANDLES_DB: db.d1, ANNOUNCEMENTS_FROM_BLOCK: '0' } as never, { now: () => 1, chain: () => chain });
-    expect(JSON.parse(lines[1]!)).toEqual({ kind: 'handles', route: 'cron', step: 'announcements', error: 'Error' });
+    expect(JSON.parse(lines[2]!)).toEqual({ kind: 'handles', route: 'cron', step: 'announcements', error: 'Error' });
   });
 
   it('reads the start block strictly', () => {

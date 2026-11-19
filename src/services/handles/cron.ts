@@ -3,21 +3,29 @@
 
 /**
  * The handle registry's scheduled run (`wrangler.jsonc` `triggers.crons`,
- * every minute): the sweep of expired share links, lapsed holds and old
- * hold-log rows, then one run of the announcement indexer. Each step logs
- * counts only, and a failure of one does not stop the other.
+ * every minute): the sweep of expired share links, lapsed holds, old hold-log
+ * rows, expired request nonces, old events and finished relay jobs; then one
+ * run of the anchor relay (`relay.ts`), while the anchor and the registrar key
+ * are configured; then one run of the announcement indexer. Each step logs
+ * counts only, and a failure of one does not stop the others.
  */
 
 import { chainRpcUrl } from '../../chain/chains.js';
 import type { Env } from '../../env.js';
 import { D1FeedStore, FEED_CHAIN_ID, indexAnnouncements, parseFeedTokens, parsePlaneCallers, rpcFeedChain, type FeedChain } from './announcements.js';
 import { handlesLog } from './limits.js';
+import { rpcAnchorChain, type AnchorChain } from './anchor.js';
+import { anchorAddressOf } from './config.js';
+import { D1HandleRegistry } from './registry.js';
+import { runRelay } from './relay.js';
 import { D1HandleStore } from './store.js';
 
 export interface HandlesCronDeps {
   now(): number;
   /** The feed's chain (default: JSON-RPC on `ANNOUNCEMENTS_RPC_URL`, else Base Sepolia's URL). */
   chain?(env: Env): FeedChain | null;
+  /** The anchor the relay sends to (default: JSON-RPC on Base Sepolia's URL, or null while unconfigured). */
+  anchor?(env: Env): AnchorChain | null;
 }
 
 /** `ANNOUNCEMENTS_FROM_BLOCK` as a block number, or null (the indexer is off). */
@@ -39,6 +47,24 @@ export async function runHandlesCron(env: Env, deps: HandlesCronDeps): Promise<v
     handlesLog({ route: 'cron', step: 'sweep', ...swept });
   } catch (err) {
     handlesLog({ route: 'cron', step: 'sweep', error: err instanceof Error ? err.name : typeof err });
+  }
+
+  const registry = new D1HandleRegistry(db);
+  try {
+    const swept = await registry.sweep(deps.now());
+    handlesLog({ route: 'cron', step: 'registry-sweep', ...swept });
+  } catch (err) {
+    handlesLog({ route: 'cron', step: 'registry-sweep', error: err instanceof Error ? err.name : typeof err });
+  }
+
+  const anchor = deps.anchor ? deps.anchor(env) : rpcAnchorChain(env, anchorAddressOf(env));
+  if (anchor) {
+    try {
+      const run = await runRelay(registry, anchor, deps.now());
+      handlesLog({ route: 'cron', step: 'relay', ...run });
+    } catch (err) {
+      handlesLog({ route: 'cron', step: 'relay', error: err instanceof Error ? err.name : typeof err });
+    }
   }
 
   const fromBlock = feedStartBlock(env.ANNOUNCEMENTS_FROM_BLOCK);

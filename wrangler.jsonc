@@ -75,6 +75,23 @@
     // cofferdam-attester's CELO_RPC_URL chain (42220).
     "CELO_RPC_URL": "https://forno.celo.org",
     "SQD_PORTAL_URL": "https://portal.sqd.dev/datasets/base-sepolia",
+    // The handle registry's claim, registrar and relay (workspace decision 0086,
+    // src/services/handles/config.ts). The Sepolia test deployment goes without
+    // the three checks no build has yet (App Attest / Play Integrity, 0082's
+    // install proof, the pinned locator); production ignores this list.
+    "HANDLES_SKIP_UNBUILT_GATES": "device-attestation,install-proof,locator-pin",
+    // Short relay delays on the test deployment, so a claim and a release land
+    // within a device test (rule 3's minutes-to-hours and one-to-seven days are
+    // the defaults when unset).
+    "HANDLES_RELAY_DELAY_S": "30,120",
+    "HANDLES_RELEASE_DELAY_S": "60,300",
+    // The quarantine the Sepolia anchor is deployed with (base-contracts
+    // deploy-handle-anchor.ts's default, one day); unset means 0086's 365.
+    "HANDLES_QUARANTINE_DAYS": "1",
+    // Set once the founder deploys CofferdamHandleAnchor on Base Sepolia (after
+    // 0086 questions 15 and 16), with the secrets HANDLE_REGISTRAR_KEY and
+    // HANDLES_MAP_KEY; until then claim and the registrar's routes answer 503.
+    // "HANDLE_ANCHOR_ADDRESS": "0x…",
     // First block the webhook-fed activity store is complete from (decision
     // 0032). Leave unset until the CDP subscription exists; then set it to the
     // head block at creation. ACTIVITY_RPC_URL (the CDP Node URL, carrying a
@@ -241,7 +258,10 @@
     // A share link's upload, the one anonymous write: far lower, on bindings of its own
     // (handshake-put-ip:, handshake-put:global), beside a ceiling on the live links in HANDLES_DB.
     { "name": "HANDSHAKE_PUT_IP_RL", "namespace_id": "1123", "simple": { "limit": 10, "period": 60 } },
-    { "name": "HANDSHAKE_PUT_GLOBAL_RL", "namespace_id": "1124", "simple": { "limit": 120, "period": 60 } }
+    { "name": "HANDSHAKE_PUT_GLOBAL_RL", "namespace_id": "1124", "simple": { "limit": 120, "period": 60 } },
+    // The authenticated handle routes (claim, hold, self, discovery, rename, release and the
+    // registrar's actions), per account after the session and the High check (handles-acct:<account>).
+    { "name": "HANDLES_ACCOUNT_RL", "namespace_id": "1125", "simple": { "limit": 20, "period": 60 } }
   ],
 
   // ─────────────────────────────────────────────────────────────────

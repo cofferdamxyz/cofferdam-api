@@ -131,7 +131,7 @@ export interface HandleStore {
   sweep(now: number): Promise<{ links: number; holds: number; holdLog: number }>;
 }
 
-interface Row {
+export interface Row {
   label: string;
   handle_id: string;
   identity: string;
@@ -148,7 +148,7 @@ interface Row {
   updated_at: number;
 }
 
-function fromRow(r: Row): HandleRow {
+export function fromRow(r: Row): HandleRow {
   return {
     label: r.label,
     handleId: r.handle_id,

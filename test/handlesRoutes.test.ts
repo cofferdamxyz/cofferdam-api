@@ -271,7 +271,8 @@ describe('redactHandlePath', () => {
     expect(redactHandlePath('<-- GET /v1/handles/ana')).toBe('<-- GET /v1/handles/:label');
     expect(redactHandlePath('--> GET /v1/handles/ana/available 200 3ms')).toBe('--> GET /v1/handles/:label/available 200 3ms');
     expect(redactHandlePath('<-- GET /v1/handles/ana/inbox?x=ana')).toBe('<-- GET /v1/handles/:label/inbox');
-    expect(redactHandlePath('<-- GET /v1/handles/search?q=ana')).toBe('<-- GET /v1/handles/:label');
+    // A route word is kept, never its query.
+    expect(redactHandlePath('<-- GET /v1/handles/search?q=ana')).toBe('<-- GET /v1/handles/search');
     expect(redactHandlePath('<-- GET /v1/handles/ana/x/ana')).toBe('<-- GET /v1/handles/:label/…');
     expect(redactHandlePath('<-- GET /v1/handles/%61na/available')).toBe('<-- GET /v1/handles/:label/available');
     // Nothing of an encoded space, newline or slash in a label survives, nor a doubled slash before it.

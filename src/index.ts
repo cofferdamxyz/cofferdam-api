@@ -42,6 +42,7 @@ import { workListingRoutes } from './routes/workListing.js';
 import { redactVaultPath, vaultRoutes } from './routes/vault.js';
 import { announcementsRoutes } from './routes/announcements.js';
 import { handlesRoutes, redactHandlePath } from './routes/handles.js';
+import { handlesWriteRoutes } from './routes/handlesWrite.js';
 import { handshakeRoutes } from './routes/handshake.js';
 import { runHandlesCron } from './services/handles/cron.js';
 import { identityLogLine, scrubIdentifiers } from './services/identityLog.js';
@@ -120,6 +121,20 @@ app.get('/', (c) => {
       { method: 'GET', path: '/v1/vault/:account/handover/:keyHash' },
       { method: 'GET', path: '/v1/handles/:label/available' },
       { method: 'GET', path: '/v1/handles/:label' },
+      { method: 'GET', path: '/v1/handles/search?q=' },
+      { method: 'GET', path: '/v1/handles/:label/inbox' },
+      { method: 'GET', path: '/v1/handles/registrar' },
+      { method: 'POST', path: '/v1/handles/mine' },
+      { method: 'POST', path: '/v1/handles/hold' },
+      { method: 'POST', path: '/v1/handles/claim' },
+      { method: 'POST', path: '/v1/handles/:label/discoverable' },
+      { method: 'POST', path: '/v1/handles/:label/self' },
+      { method: 'POST', path: '/v1/handles/:label/release' },
+      { method: 'POST', path: '/v1/handles/:label/rename' },
+      { method: 'POST', path: '/v1/handles/:label/hold-record' },
+      { method: 'POST', path: '/v1/handles/:label/advance' },
+      { method: 'POST', path: '/v1/handles/:label/unfreeze' },
+      { method: 'POST', path: '/v1/handles/:label/verified' },
       { method: 'POST', path: '/v1/handshake/links' },
       { method: 'GET', path: '/v1/handshake/links/:token' },
       { method: 'GET', path: '/v1/announcements?after=' },
@@ -146,6 +161,7 @@ app.route('/v1/work', workListingRoutes);
 app.route('/v1/jobs', jobsRoutes);
 app.route('/v1/vault', vaultRoutes);
 app.route('/v1/handles', handlesRoutes);
+app.route('/v1/handles', handlesWriteRoutes);
 app.route('/v1/handshake', handshakeRoutes);
 app.route('/v1/announcements', announcementsRoutes);
 
