@@ -60,37 +60,43 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 /** How long a run holds the lease: well past one run, so a stuck run frees it. */
 export const RELAY_LEASE_MS = 5 * 60 * 1000;
 
-export async function runRelay(registry: D1HandleRegistry, chain: AnchorChain, now: number): Promise<RelayRun & { leased: boolean }> {
+/** A run starts no job after this long, well inside the lease. */
+export const RELAY_RUN_BUDGET_MS = 2 * 60 * 1000;
+/** How far a job is pushed back after a node error, so one failing job never holds the head of the queue. */
+export const TRANSIENT_BACKOFF_MS = 60 * 1000;
+/** How often a sent job's receipt is read. */
+export const RECEIPT_RECHECK_MS = 30 * 1000;
+
+export async function runRelay(registry: D1HandleRegistry, chain: AnchorChain, now: number, clock: () => number = Date.now): Promise<RelayRun & { leased: boolean }> {
   const run: RelayRun = { sent: 0, done: 0, failed: 0, waiting: 0 };
   const holder = crypto.randomUUID();
   if (!(await registry.leaseRelay(holder, now, RELAY_LEASE_MS))) return { ...run, leased: false };
   try {
-    await relayJobs(registry, chain, now, run);
+    await relayJobs(registry, chain, now, run, clock);
   } finally {
     await registry.releaseRelay(holder).catch(() => undefined);
   }
   return { ...run, leased: true };
 }
 
-async function relayJobs(registry: D1HandleRegistry, chain: AnchorChain, now: number, run: RelayRun): Promise<void> {
+async function relayJobs(registry: D1HandleRegistry, chain: AnchorChain, now: number, run: RelayRun, clock: () => number): Promise<void> {
+  const started = clock();
   for (const job of await registry.dueJobs(now, RELAY_JOBS_PER_RUN)) {
+    if (clock() - started > RELAY_RUN_BUDGET_MS) break;
     try {
       const outcome = job.state === 'sent' ? await settle(registry, chain, job, now) : await send(registry, chain, job, now);
       run[outcome]++;
     } catch (err) {
-      // A node error: the job stays as it is for the next run.
+      // A node error: the job keeps its state, pushed back so that others get their turn.
       run.waiting++;
       handlesLog({ route: 'relay', job: job.id, kind: job.kind, error: err instanceof Error ? err.name : typeof err });
+      await registry.updateJob(job.id, { state: job.state, notBefore: now + TRANSIENT_BACKOFF_MS, error: job.error }, now).catch(() => undefined);
     }
   }
 }
 
 async function fail(registry: D1HandleRegistry, job: AnchorJob, reason: string, now: number): Promise<'failed'> {
-  await registry.updateJob(job.id, { state: 'failed', error: reason }, now);
-  if (job.kind === 'claim') {
-    await registry.dropUnlandedClaim(job.handleId, job.args.owner!);
-    if (job.args.renameOf) await registry.restoreRenamed(job.args.renameOf, now);
-  }
+  await registry.failJob(job, reason, now);
   handlesLog({ route: 'relay', job: job.id, kind: job.kind, failed: reason });
   return 'failed';
 }
@@ -134,10 +140,11 @@ async function send(registry: D1HandleRegistry, chain: AnchorChain, job: AnchorJ
     } else if (job.kind === 'release') {
       const { owner, deadline, ownerSig, afterClaim } = job.args as Record<string, string>;
       if (afterClaim) {
-        // A rename's release goes only once the new label is on chain; if its claim failed, the label stays.
-        const renamed = await registry.rowById(afterClaim);
-        if (!renamed || renamed.state !== 'active') return fail(registry, job, 'rename_claim_failed', now);
-        if (!renamed.onchain) {
+        // A rename's release goes only once the new label's claim landed; if that claim failed, the old label stays.
+        // Decided on the claim job, not the new label's state now (the user may have released it since).
+        const claim = (await registry.jobsOf(afterClaim)).filter((j) => j.kind === 'claim').at(-1);
+        if (!claim || claim.state === 'failed' || claim.state === 'cancelled') return fail(registry, job, 'rename_claim_failed', now);
+        if (claim.state !== 'done') {
           await registry.updateJob(job.id, { state: 'queued', notBefore: now + RELEASE_RETRY_MS }, now);
           return 'waiting';
         }
@@ -181,7 +188,11 @@ async function send(registry: D1HandleRegistry, chain: AnchorChain, job: AnchorJ
 async function settle(registry: D1HandleRegistry, chain: AnchorChain, job: AnchorJob, now: number): Promise<keyof RelayRun> {
   const status = await chain.receipt(job.txHash!);
   if (status === 'pending') {
-    if (now - job.updatedAt < SENT_STALE_MS) return 'waiting';
+    if (now - job.updatedAt < SENT_STALE_MS) {
+      // Read again later, without holding the head of the queue (`updated_at` keeps the send's time).
+      await registry.pushBack(job.id, now + RECEIPT_RECHECK_MS);
+      return 'waiting';
+    }
     // No receipt for half an hour: read the record again on the next send.
     await registry.updateJob(job.id, { state: 'queued' }, now);
     return 'waiting';
@@ -206,6 +217,6 @@ async function settle(registry: D1HandleRegistry, chain: AnchorChain, job: Ancho
 
 /** A mined advance: the row and the key history follow the new key, and a releasing label's release is queued again. */
 async function followAdvance(registry: D1HandleRegistry, job: AnchorJob, now: number): Promise<'done'> {
-  await registry.settleAdvance(job, now, now + 60_000);
+  await registry.settleAdvance(job, now);
   return 'done';
 }

@@ -318,8 +318,10 @@ export class D1HandleRegistry {
       db
         .prepare(`UPDATE handles SET state = 'releasing', discoverable = 0, inbox_id = NULL, updated_at = ? WHERE handle_id = ? AND identity = ? AND state = 'active'`)
         .bind(w.now, oldHandleId, w.identity),
-      // If the update missed (the old row is not this identity's active one), the identity's
-      // one-handle index refuses the new row's insert below and the whole batch rolls back.
+      // The update must have hit (the old row is this identity's active one, not moved by a
+      // concurrent release): the guard's CHECK fails otherwise and the whole batch rolls back.
+      db.prepare('INSERT INTO batch_guard (ok) SELECT changes()'),
+      db.prepare('DELETE FROM batch_guard'),
       db.prepare("INSERT INTO handle_events (identity, install_tag, kind, at) VALUES (?, ?, 'rename', ?)").bind(w.identity, w.installTag, w.now),
       ...this.claimStatements(w),
       // The old label's release waits for the new label's claim to land, whatever the delays drawn.
@@ -367,18 +369,13 @@ export class D1HandleRegistry {
    * keeps both, so `self` still accepts addresses of the earlier epoch.
    */
   async followOwner(row: HandleRow, owner: Address, metaAddress: Hex, now: number): Promise<void> {
-    await this.db.batch([
-      this.db
-        .prepare(`UPDATE handles SET owner = ?, meta_address = ?, updated_at = ? WHERE handle_id = ? AND identity = ? AND state IN ('active', 'releasing')`)
-        .bind(lower(owner), lower(metaAddress), now, row.handleId, row.identity),
-      this.historyStatement(row.identity, row.handleId, row.serial!, owner, metaAddress, now),
-    ]);
+    await this.db.batch(this.followStatements(row, owner, metaAddress, now));
   }
 
   /** A sent advance, settled by the relay: the row follows only once the transaction is mined. */
   async queueAdvance(
     handleId: string,
-    args: { owner: string; metaAddress: string; releaseDeadline?: string; releaseSig?: string },
+    args: { owner: string; metaAddress: string; releaseDeadline?: string; releaseSig?: string; releaseAt?: string; releaseAfterClaim?: string },
     txHash: Hex,
     now: number,
   ): Promise<void> {
@@ -393,30 +390,62 @@ export class D1HandleRegistry {
    * A mined advance: the row and the key history follow the new key, and a
    * releasing label's release, signed by the new key, is queued again (q13).
    */
-  async settleAdvance(job: AnchorJob, now: number, releaseAt: number): Promise<void> {
+  async settleAdvance(job: AnchorJob, now: number): Promise<void> {
     const row = await this.rowById(job.handleId);
+    const stmts: D1PreparedStatement[] = [];
     if (row) {
-      await this.followOwner(row, job.args.owner as Address, job.args.metaAddress as Hex, now);
+      stmts.push(...this.followStatements(row, job.args.owner as Address, job.args.metaAddress as Hex, now));
       if (row.state === 'releasing' && job.args.releaseSig && job.args.releaseDeadline) {
-        await this.requeueRelease(job.handleId, job.args.owner as Address, job.args.releaseDeadline, job.args.releaseSig as Hex, releaseAt, now);
+        // The release keeps its rename's order and delay (`afterClaim`, `releaseAt`).
+        stmts.push(
+          ...this.requeueStatements(
+            job.handleId,
+            {
+              owner: lower(job.args.owner!),
+              deadline: job.args.releaseDeadline,
+              ownerSig: job.args.releaseSig,
+              ...(job.args.releaseAfterClaim ? { afterClaim: job.args.releaseAfterClaim } : {}),
+            },
+            Number(job.args.releaseAt ?? now),
+            now,
+          ),
+        );
       }
     }
-    await this.updateJob(job.id, { state: 'done' }, now);
+    stmts.push(this.jobDoneStatement(job.id, now));
+    await this.db.batch(stmts);
   }
 
-  /** Settle every sent advance of a record whose receipt the route already read. */
-  async settleAdvances(handleId: string, now: number, releaseDelayMs: number): Promise<void> {
+  /** Settle the sent advance with this transaction hash, whose receipt the route already read. */
+  async settleAdvanceTx(handleId: string, txHash: Hex, now: number): Promise<void> {
     for (const job of await this.jobsOf(handleId)) {
-      if (job.kind === 'advance' && job.state === 'sent') await this.settleAdvance(job, now, now + releaseDelayMs);
+      if (job.kind === 'advance' && job.state === 'sent' && job.txHash?.toLowerCase() === txHash.toLowerCase()) await this.settleAdvance(job, now);
     }
   }
 
-  /** A releasing label moved to a new key (q13's release key): the queued release goes, a new one under the new key is queued. */
-  async requeueRelease(handleId: string, owner: Address, deadline: string, ownerSig: Hex, relayAt: number, now: number): Promise<void> {
-    await this.db.batch([
+  /** The queued release of a label, if one is waiting (a rename's carries `afterClaim`). */
+  async queuedRelease(handleId: string): Promise<AnchorJob | null> {
+    return (await this.jobsOf(handleId)).filter((j) => j.kind === 'release' && j.state === 'queued').at(-1) ?? null;
+  }
+
+  private jobDoneStatement(id: number, now: number): D1PreparedStatement {
+    return this.db.prepare(`UPDATE anchor_jobs SET state = 'done', error = NULL, updated_at = ? WHERE id = ?`).bind(now, id);
+  }
+
+  private followStatements(row: HandleRow, owner: Address, metaAddress: Hex, now: number): D1PreparedStatement[] {
+    return [
+      this.db
+        .prepare(`UPDATE handles SET owner = ?, meta_address = ?, updated_at = ? WHERE handle_id = ? AND identity = ? AND state IN ('active', 'releasing')`)
+        .bind(lower(owner), lower(metaAddress), now, row.handleId, row.identity),
+      this.historyStatement(row.identity, row.handleId, row.serial!, owner, metaAddress, now),
+    ];
+  }
+
+  private requeueStatements(handleId: string, args: Record<string, string>, relayAt: number, now: number): D1PreparedStatement[] {
+    return [
       this.db.prepare(`UPDATE anchor_jobs SET state = 'cancelled', updated_at = ? WHERE handle_id = ? AND kind IN ('release', 'apply') AND state = 'queued'`).bind(now, handleId),
-      this.jobStatement('release', handleId, { owner: lower(owner), deadline, ownerSig }, relayAt, now),
-    ]);
+      this.jobStatement('release', handleId, args, relayAt, now),
+    ];
   }
 
   /**
@@ -424,12 +453,33 @@ export class D1HandleRegistry {
    * queued release is cancelled and the old row is active again, so the user
    * keeps the label they had. A release already sent cannot be called back.
    */
-  async restoreRenamed(oldHandleId: string, now: number): Promise<boolean> {
-    const [cancelled] = await this.db.batch([
+  private restoreStatements(oldHandleId: string, now: number): D1PreparedStatement[] {
+    return [
       this.db.prepare(`UPDATE anchor_jobs SET state = 'cancelled', updated_at = ? WHERE handle_id = ? AND kind = 'release' AND state = 'queued'`).bind(now, oldHandleId),
-      this.db.prepare(`UPDATE handles SET state = 'active', updated_at = ? WHERE handle_id = ? AND state = 'releasing' AND NOT EXISTS (SELECT 1 FROM anchor_jobs WHERE handle_id = ? AND kind IN ('release', 'apply') AND state IN ('sent', 'done'))`).bind(now, oldHandleId, oldHandleId),
-    ]);
-    return Number(cancelled?.meta?.changes ?? 0) > 0;
+      this.db
+        .prepare(
+          `UPDATE handles SET state = 'active', updated_at = ? WHERE handle_id = ? AND state = 'releasing'
+           AND NOT EXISTS (SELECT 1 FROM anchor_jobs WHERE handle_id = ? AND kind IN ('release', 'apply') AND state IN ('sent', 'done'))`,
+        )
+        .bind(now, oldHandleId, oldHandleId),
+    ];
+  }
+
+  /**
+   * A job the anchor refused for good, in one batch, the job's own update last:
+   * a claim's row goes (the label and the identity are free again), and a
+   * rename's claim gives the old label back (its queued release cancelled).
+   */
+  async failJob(job: AnchorJob, reason: string, now: number): Promise<void> {
+    const stmts: D1PreparedStatement[] = [];
+    if (job.kind === 'claim') {
+      stmts.push(
+        this.db.prepare(`DELETE FROM handles WHERE handle_id = ? AND owner = ? AND state = 'active' AND onchain = 0`).bind(job.handleId, lower(job.args.owner!)),
+      );
+      if (job.args.renameOf) stmts.push(...this.restoreStatements(job.args.renameOf, now));
+    }
+    stmts.push(this.db.prepare(`UPDATE anchor_jobs SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`).bind(reason, now, job.id));
+    await this.db.batch(stmts);
   }
 
   // ── Keys and watched addresses (rule 5, q18) ─────────────────────────────
@@ -456,6 +506,7 @@ export class D1HandleRegistry {
     sealed: Uint8Array;
     now: number;
     perIdentity: number;
+    perIdentityPerDay: number;
     ceiling: number;
   }): Promise<'added' | 'ours' | 'theirs' | 'limit' | 'full'> {
     const address = lower(input.address);
@@ -465,9 +516,10 @@ export class D1HandleRegistry {
          SELECT ?1, ?2, ?3, ?4, ?5, ?6
          WHERE (SELECT n FROM handles_counters WHERE name = 'watched_addresses') < ?7
            AND (SELECT COUNT(*) FROM watched_addresses WHERE identity = ?2) < ?8
+           AND (SELECT COUNT(*) FROM watched_addresses WHERE identity = ?2 AND created_at > ?6 - 86400000) < ?9
          ON CONFLICT (address) DO NOTHING`,
       )
-      .bind(address, input.identity, input.handleId, input.source, input.sealed, input.now, input.ceiling, input.perIdentity)
+      .bind(address, input.identity, input.handleId, input.source, input.sealed, input.now, input.ceiling, input.perIdentity, input.perIdentityPerDay)
       .run();
     if (Number(meta.changes) > 0) return 'added';
     const r = await this.db.prepare('SELECT identity FROM watched_addresses WHERE address = ?').bind(address).first<{ identity: string }>();
@@ -478,18 +530,32 @@ export class D1HandleRegistry {
 
   // ── Freezes the registrar signed (q15) ───────────────────────────────────
 
-  async recordFreeze(handleId: string, kind: 'hold' | 'renew' | 'veto' | 'advance' | 'unfreeze', owner: Address, now: number): Promise<void> {
-    await this.db.prepare('INSERT INTO handle_freezes (handle_id, kind, owner, at) VALUES (?, ?, ?, ?)').bind(handleId, kind, lower(owner), now).run();
+  /** Record a registrar-paid send (and, for a veto, what q15 reads); answers the row's id. */
+  async recordFreeze(handleId: string, kind: 'hold' | 'renew' | 'veto' | 'advance' | 'unfreeze', owner: Address, serial: number, now: number): Promise<number> {
+    const { meta } = await this.db
+      .prepare('INSERT INTO handle_freezes (handle_id, kind, owner, serial, at) VALUES (?, ?, ?, ?, ?)')
+      .bind(handleId, kind, lower(owner), serial, now)
+      .run();
+    return Number(meta.last_row_id);
+  }
+
+  /** A veto whose call the simulation refused never left the plane: it no longer counts against unfreeze, only against the budget. */
+  async demoteFreeze(id: number): Promise<void> {
+    await this.db.prepare("UPDATE handle_freezes SET kind = 'hold' WHERE id = ? AND kind = 'veto'").bind(id).run();
   }
 
   /**
-   * Whether the plane ever vetoed a change on this record. ASSUMPTION(0086 q15):
+   * Whether the plane vetoed a change on this record while it had this serial
+   * (one holding: a label released and claimed again starts clean). ASSUMPTION(0086 q15):
    * "never after a veto under the same phrase"; until q19's pinned locator tells
    * one phrase from another, any veto on the record counts, whatever key holds it
    * since (an advance to another key of the same phrase must not reopen it).
    */
-  async vetoed(handleId: string): Promise<boolean> {
-    const r = await this.db.prepare("SELECT 1 AS hit FROM handle_freezes WHERE handle_id = ? AND kind = 'veto' LIMIT 1").bind(handleId).first<{ hit: number }>();
+  async vetoed(handleId: string, serial: number): Promise<boolean> {
+    const r = await this.db
+      .prepare("SELECT 1 AS hit FROM handle_freezes WHERE handle_id = ? AND serial = ? AND kind = 'veto' LIMIT 1")
+      .bind(handleId, serial)
+      .first<{ hit: number }>();
     return r !== null;
   }
 
@@ -542,6 +608,11 @@ export class D1HandleRegistry {
       .run();
   }
 
+  /** Move a job's turn later without touching anything else (its `updated_at` keeps the send's time). */
+  async pushBack(id: number, notBefore: number): Promise<void> {
+    await this.db.prepare('UPDATE anchor_jobs SET not_before = ? WHERE id = ?').bind(notBefore, id).run();
+  }
+
   async queueApply(handleId: string, notBefore: number, now: number): Promise<void> {
     await this.jobStatement('apply', handleId, {}, notBefore, now).run();
   }
@@ -552,11 +623,6 @@ export class D1HandleRegistry {
       .prepare(`UPDATE handles SET onchain = 1, updated_at = ? WHERE handle_id = ? AND owner = ? AND state IN ('active', 'releasing')`)
       .bind(now, handleId, lower(owner))
       .run();
-  }
-
-  /** A claim the anchor refused for good: the row goes, so the label and the identity are free again. */
-  async dropUnlandedClaim(handleId: string, owner: string): Promise<void> {
-    await this.db.prepare(`DELETE FROM handles WHERE handle_id = ? AND owner = ? AND state = 'active' AND onchain = 0`).bind(handleId, lower(owner)).run();
   }
 
   /** A release took effect on chain (rule 3): the row is quarantined from `releasedAt`. */

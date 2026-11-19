@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createHandlesRoutes } from '../src/routes/handles.js';
 import { createHandlesWriteRoutes, REGISTRAR_SENDS_PER_DAY } from '../src/routes/handlesWrite.js';
+import { skipsGate } from '../src/services/handles/config.js';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { TIER } from '../src/services/ceremony.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
@@ -602,6 +603,7 @@ describe('review round 1', () => {
     expect(job).toMatchObject({ state: 'queued', attempts: 0 });
     expect(await json(await w.get('/ana'))).toMatchObject({ onChain: false });
     w.anchor.send = send;
+    w.advance(61_000); // the node error pushed the job back a minute
     await w.relay();
     await w.relay();
     expect(await json(await w.get('/ana'))).toMatchObject({ onChain: true });
@@ -770,13 +772,183 @@ describe('review round 1', () => {
 
   it('bounds the watched addresses per identity and in all, in the insert itself', async () => {
     const w = world();
-    const watch = (address: string, identity: string, perIdentity: number, ceiling: number) =>
-      w.registry.watch({ address: address as Address, identity, handleId: handleIdOf('ana'), source: 'self', sealed: new Uint8Array(40), now: 1, perIdentity, ceiling });
+    const watch = (address: string, identity: string, perIdentity: number, ceiling: number, perIdentityPerDay = 100) =>
+      w.registry.watch({ address: address as Address, identity, handleId: handleIdOf('ana'), source: 'self', sealed: new Uint8Array(40), now: 1, perIdentity, perIdentityPerDay, ceiling });
     expect(await watch('0x' + '01'.repeat(20), 'i1', 1, 10)).toBe('added');
     expect(await watch('0x' + '01'.repeat(20), 'i1', 1, 10)).toBe('ours');
     expect(await watch('0x' + '01'.repeat(20), 'i2', 1, 10)).toBe('theirs');
     expect(await watch('0x' + '02'.repeat(20), 'i1', 1, 10)).toBe('limit');
     expect(await watch('0x' + '03'.repeat(20), 'i3', 5, 1)).toBe('full');
+    expect(await watch('0x' + '04'.repeat(20), 'i4', 5, 10, 0)).toBe('limit');
     expect(contractRevert(new AnchorRevert('X'))).toBeNull();
+  });
+});
+
+// ── review round 2's findings ───────────────────────────────────────────────
+
+async function renameAnaToB(w: World) {
+  const n = nonce();
+  const expiresAt = exp(w);
+  const claim = await claimBody(w, 'ana-b', owner1, META1);
+  const message = { handleId: handleIdOf('ana'), serial: 1n, newLabel: 'ana-b', newHandleId: handleIdOf('ana-b'), newOwner: owner1.address, newMetaAddress: META1, nonce: n, expiresAt: BigInt(expiresAt) };
+  const res = await w.post(
+    '/ana/rename',
+    {
+      newLabel: 'ana-b',
+      newOwner: owner1.address,
+      newMetaAddress: META1,
+      nonce: n,
+      expiresAt,
+      signature: await signRegistry(owner0, 84532, 'RenameHandle', message),
+      claim: { nonce: claim.nonce, expiresAt: claim.expiresAt, signature: claim.signature, serial: claim.serial, ownerClaimSignature: claim.ownerClaimSignature },
+      ...(await releaseSig(w, 'ana')),
+    },
+    { slow: true },
+  );
+  expect(res.status).toBe(201);
+}
+
+describe('review round 2', () => {
+  it("keeps a rename's release after the new claim when the old label is advanced to the release key", async () => {
+    const w = world();
+    await claimed(w);
+    await renameAnaToB(w);
+    const id = handleIdOf('ana');
+    const before = (await w.registry.jobsOf(id)).find((j) => j.kind === 'release' && j.state === 'queued')!;
+    const rec = await w.anchor.record(id);
+    const deadline = Math.floor(w.clock.ms / 1000) + 600;
+    const fields = { handleId: id, newMetaAddress: META0, nonce: rec.nonce, deadline: BigInt(deadline) };
+    const releaseKey = privateKeyToAccount(('0x' + '42'.repeat(32)) as Hex);
+    const anchorDeadline = Math.floor(w.clock.ms / 1000) + 9 * 86_400;
+    const res = await w.post(
+      '/ana/advance',
+      {
+        newOwner: releaseKey.address,
+        newMetaAddress: META0,
+        deadline,
+        ownerSignature: await signAnchor(owner0, 84532, TEST_ANCHOR, 'Advance', { ...fields, newOwner: releaseKey.address }),
+        newOwnerSignature: await signAnchor(releaseKey, 84532, TEST_ANCHOR, 'AdvanceAccept', { ...fields, previousOwner: owner0.address }),
+        anchorDeadline,
+        releaseSignature: await signAnchor(releaseKey, 84532, TEST_ANCHOR, 'Release', { handleId: id, nonce: rec.nonce + 1n, deadline: BigInt(anchorDeadline) }),
+      },
+      { slow: true },
+    );
+    expect(res.status).toBe(200);
+    const after = (await w.registry.jobsOf(id)).filter((j) => j.kind === 'release' && j.state === 'queued');
+    expect(after).toHaveLength(1);
+    expect(after[0]!.args).toMatchObject({ owner: releaseKey.address.toLowerCase(), afterClaim: handleIdOf('ana-b') });
+    expect(after[0]!.notBefore).toBe(before.notBefore);
+    // The new claim fails for good: the old label stays, its release never sent.
+    const idB = handleIdOf('ana-b');
+    w.anchor.records.set(idB, { ...(await w.anchor.record(idB)), owner: getAddress('0x' + '77'.repeat(20)), serial: 1 });
+    w.advance(301_000);
+    await w.relay();
+    await w.relay();
+    expect(w.anchor.sent.filter((s) => s.functionName === 'release')).toEqual([]);
+    expect((await w.registry.row('ana'))!.state).toBe('active');
+  });
+
+  it("sends a rename's release once the new claim landed, even if the new label was released since", async () => {
+    const w = world();
+    await claimed(w);
+    await renameAnaToB(w);
+    w.advance(121_000);
+    await w.relay();
+    await w.relay(); // ana-b on chain
+    w.db.sqlite.prepare("UPDATE handles SET state = 'releasing' WHERE label = 'ana-b'").run();
+    // Past the release's draw (60 to 300 s) and its 10-minute recheck if it ran before the claim landed.
+    w.advance(601_000);
+    await w.relay();
+    expect(w.anchor.sent.map((s) => s.functionName)).toContain('release');
+  });
+
+  it('counts a veto against unfreeze only for the holding it was made in, and not when the simulation refused it', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    expect(await w.registry.vetoed(id, 1)).toBe(false);
+    await w.registry.recordFreeze(id, 'veto', owner0.address, 1, w.clock.ms);
+    expect(await w.registry.vetoed(id, 1)).toBe(true);
+    expect(await w.registry.vetoed(id, 2)).toBe(false);
+    // A veto whose call the simulation refuses (nothing pending any more) is not counted.
+    const id2 = handleIdOf('ana');
+    w.db.sqlite.prepare('DELETE FROM handle_freezes').run();
+    queueChange(w.anchor, id2, owner1.address);
+    const cancel = w.anchor.send.bind(w.anchor);
+    w.anchor.send = async (call) => {
+      if (call.functionName === 'veto') throw new AnchorRevert('NoPendingChange');
+      return cancel(call);
+    };
+    expect(await json(await w.post('/ana/hold-record', { op: 'veto' }, { slow: true }))).toMatchObject({ error: 'anchor_refused', reason: 'NoPendingChange' });
+    expect(await w.registry.vetoed(id2, 1)).toBe(false);
+  });
+
+  it('settles only the advance whose receipt the route read', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    await w.registry.queueAdvance(id, { owner: owner1.address, metaAddress: META1 }, ('0x' + 'aa'.repeat(32)) as Hex, w.clock.ms);
+    await w.registry.queueAdvance(id, { owner: getAddress('0x' + '55'.repeat(20)), metaAddress: META0 }, ('0x' + 'bb'.repeat(32)) as Hex, w.clock.ms);
+    await w.registry.settleAdvanceTx(id, ('0x' + 'aa'.repeat(32)) as Hex, w.clock.ms);
+    expect((await w.registry.row('ana'))!.owner).toBe(owner1.address.toLowerCase());
+    expect((await w.registry.jobsOf(id)).filter((j) => j.kind === 'advance').map((j) => j.state)).toEqual(['done', 'sent']);
+  });
+
+  it('registers addresses only for a handle on chain', async () => {
+    const w = world();
+    expect((await w.post('/claim', await claimBody(w, 'ana'))).status).toBe(201);
+    const v = fixture.stealth.vectors[0]!;
+    const n = nonce();
+    const expiresAt = exp(w);
+    const signature = await signRegistry(owner0, 84532, 'RegisterAddress', {
+      handleId: handleIdOf('ana'),
+      serial: 1n,
+      account: getAddress(v.account),
+      ephemeralPublicKey: v.ephemeralPublicKey as Hex,
+      sharedSecretHash: v.sharedSecretHash as Hex,
+      metaAddress: META0,
+      nonce: n,
+      expiresAt: BigInt(expiresAt),
+    });
+    const res = await w.post('/ana/self', { address: v.account, ephemeralPublicKey: v.ephemeralPublicKey, sharedSecretHash: v.sharedSecretHash, metaAddress: META0, nonce: n, expiresAt, signature });
+    expect(await json(res)).toMatchObject({ error: 'not_on_chain' });
+  });
+
+  it('honours the skip list only in development and staging', () => {
+    const skip = 'device-attestation,install-proof,locator-pin';
+    expect(skipsGate({ ENVIRONMENT: 'staging', HANDLES_SKIP_UNBUILT_GATES: skip } as never, 'locator-pin')).toBe(true);
+    expect(skipsGate({ ENVIRONMENT: 'development', HANDLES_SKIP_UNBUILT_GATES: skip } as never, 'locator-pin')).toBe(true);
+    for (const e of ['production', 'prod', 'mainnet', '', undefined]) {
+      expect(skipsGate({ ENVIRONMENT: e, HANDLES_SKIP_UNBUILT_GATES: skip } as never, 'locator-pin')).toBe(false);
+    }
+  });
+
+  it('refuses a rename whose old row a concurrent release already moved (the batch guard)', async () => {
+    const w = world();
+    await claimed(w);
+    const row = (await w.registry.row('ana'))!;
+    w.db.sqlite.prepare("UPDATE handles SET state = 'releasing' WHERE label = 'ana'").run();
+    const b = await claimBody(w, 'ana-b', owner1, META1);
+    await expect(
+      w.registry.rename({
+        oldHandleId: row.handleId as Hex,
+        claim: {
+          label: 'ana-b',
+          handleId: handleIdOf('ana-b'),
+          identity: row.identity,
+          installTag: 'x',
+          serial: 1,
+          owner: owner1.address,
+          metaAddress: META1,
+          ownerClaimSignature: b.ownerClaimSignature,
+          relayAt: w.clock.ms,
+          now: w.clock.ms,
+          quarantineMs: 1,
+        },
+        release: { owner: owner0.address, deadline: '1', ownerSig: '0x00', relayAt: w.clock.ms },
+      }),
+    ).rejects.toThrow();
+    expect(await w.registry.row('ana-b')).toBeNull();
+    expect(w.db.sqlite.prepare('SELECT COUNT(*) AS n FROM batch_guard').get()).toEqual({ n: 0 });
   });
 });

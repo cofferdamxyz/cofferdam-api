@@ -105,9 +105,13 @@ CREATE TABLE handle_freezes (
   -- daily cap counts these rows (a hold, a renewal, a veto, an advance, an unfreeze).
   kind TEXT NOT NULL CHECK (kind IN ('hold', 'renew', 'veto', 'advance', 'unfreeze')),
   owner TEXT NOT NULL,
+  -- The record's serial when the plane signed: a veto counts against unfreeze only
+  -- for the same holding (a label released and claimed again starts clean).
+  serial INTEGER NOT NULL,
   at INTEGER NOT NULL
 );
-CREATE INDEX handle_freezes_handle ON handle_freezes (handle_id, at);
+CREATE INDEX handle_freezes_handle ON handle_freezes (handle_id, serial, kind);
+CREATE INDEX handle_freezes_at ON handle_freezes (handle_id, at);
 
 -- ── Watched addresses (0083 R9, R10; 0086 rule 5) ─────────────────────────────
 -- The one-time addresses the plane watches for good: those the user's phones
@@ -139,6 +143,11 @@ CREATE TRIGGER watched_addresses_counted_out AFTER DELETE ON watched_addresses
 BEGIN
   UPDATE handles_counters SET n = n - 1 WHERE name = 'watched_addresses';
 END;
+
+-- A batch's guard: `INSERT INTO batch_guard (ok) SELECT changes()` right after an
+-- UPDATE that must hit fails the CHECK when it did not, and the whole batch rolls
+-- back; the batch deletes its row before it ends, so the table stays empty.
+CREATE TABLE batch_guard (ok INTEGER NOT NULL CHECK (ok = 1));
 
 -- The rename's 30-day limit and the hold's relapse block read these.
 CREATE INDEX handles_identity_state ON handles (identity, state);

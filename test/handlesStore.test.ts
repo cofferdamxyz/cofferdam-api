@@ -42,6 +42,7 @@ describe('migrations/handles on local D1 (node:sqlite)', () => {
       'announcement_lease',
       'announcement_skips',
       'announcements',
+      'batch_guard',
       'handle_events',
       'handle_freezes',
       'handle_holds',

@@ -16,7 +16,7 @@
  * `HANDLES_SKIP_UNBUILT_GATES` names those a deployment goes without (a comma
  * list). A gate not named refuses its routes with `503 <gate>_unbuilt`, so
  * nothing passes a check that does not exist by default. `ENVIRONMENT=production`
- * ignores the list: production refuses until each gate is built. The Sepolia test
+ * ignores the list, as does any environment but `development` and `staging`: production refuses until each gate is built. The Sepolia test
  * deployment names all three; with them skipped a handle-scoped request needs the
  * account's High session and the handle key's signature, as 0086 rule 4 first
  * said (q12's recommended install proof is stronger).
@@ -30,9 +30,9 @@ import type { Env } from '../../env.js';
 export const UNBUILT_GATES = ['device-attestation', 'install-proof', 'locator-pin'] as const;
 export type UnbuiltGate = (typeof UNBUILT_GATES)[number];
 
-/** Whether a deployment goes without `gate` (never in production). */
+/** Whether a deployment goes without `gate`: only `development` and `staging` (the Sepolia deployment) may; any other environment, a typo included, enforces it. */
 export function skipsGate(env: Env, gate: UnbuiltGate): boolean {
-  if (env.ENVIRONMENT === 'production') return false;
+  if (env.ENVIRONMENT !== 'development' && env.ENVIRONMENT !== 'staging') return false;
   return (env.HANDLES_SKIP_UNBUILT_GATES ?? '')
     .split(',')
     .map((s) => s.trim())

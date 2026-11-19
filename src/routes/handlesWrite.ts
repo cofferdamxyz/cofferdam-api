@@ -96,9 +96,15 @@ export const RECEIPT_WAIT_MS = 20_000;
 /** Registrar-paid transactions per record per day (hold, renewal, veto, advance, unfreeze). */
 export const REGISTRAR_SENDS_PER_DAY = 6;
 /** Watched addresses per identity: every payment received, for years (0083 R9). */
-export const WATCHED_PER_IDENTITY = 10_000;
-/** Watched addresses in all, about 1 GB at most: past it a registration is refused, and the registry's other tables keep their room. */
-export const WATCHED_CEILING = 1_000_000;
+export const WATCHED_PER_IDENTITY = 2_000;
+/** Watched addresses per identity a day: a phone registers what it derives or finds, a few a day. */
+export const WATCHED_PER_IDENTITY_PER_DAY = 200;
+/**
+ * Watched addresses in all, about 1.5 GB at most: past it a registration is
+ * refused and the registry's other tables keep their room. Filling it takes
+ * 2,500 identities, each with a landed claim, at their full bound.
+ */
+export const WATCHED_CEILING = 5_000_000;
 
 /** An answer the route gives as it is. */
 class Refusal extends Error {
@@ -517,6 +523,8 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     handle('self', async (c) => {
       const a = await admit(c, 'fast', ['install-proof']);
       const row = await followIfChain(c, a, await ownRow(c, a));
+      // Only a handle on chain registers addresses: a queued claim costs nothing to make.
+      if (!row.onchain) refuse(409, 'not_on_chain', { hint: 'the handle is still being set up' });
       const b = a.body;
       const now = deps.now();
       const account = address(b, 'address');
@@ -554,6 +562,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         sealed: await a.keys.seal(plain),
         now,
         perIdentity: WATCHED_PER_IDENTITY,
+        perIdentityPerDay: WATCHED_PER_IDENTITY_PER_DAY,
         ceiling: WATCHED_CEILING,
       });
       handlesLog({ route: 'self', outcome });
@@ -688,8 +697,15 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         call = { functionName: 'veto', args: [id, pendingNonce, deadline, sig] };
       }
       // Recorded before the send: a veto that may land always counts against unfreeze (q15), and every send against the budget.
-      await a.registry.recordFreeze(row.handleId, op, rec.owner, now);
-      const sent = await sendAndWait(chain, call);
+      const freezeId = await a.registry.recordFreeze(row.handleId, op, rec.owner, row.serial!, now);
+      let sent: Awaited<ReturnType<typeof sendAndWait>>;
+      try {
+        sent = await sendAndWait(chain, call);
+      } catch (err) {
+        // The simulation refused it: nothing left the plane, so a veto does not count against unfreeze.
+        if (err instanceof Refusal && err.error === 'anchor_refused' && err.extra.reason !== 'tx_reverted') await a.registry.demoteFreeze(freezeId);
+        throw err;
+      }
       handlesLog({ route: 'hold-record', op, receipt: sent.receipt });
       return c.json({ ok: true, ...sent }, sent.receipt === 'success' ? 200 : 202);
     }),
@@ -720,14 +736,19 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const n = await anchorSigner(HANDLES_CHAIN_ID, chain.anchor, 'AdvanceAccept', { ...fields, previousOwner: rec.owner }, newOwnerSig);
       if (!n || n !== newOwner) refuse(401, 'bad_signature', { field: 'AdvanceAccept' });
       // A releasing label's release, signed by the new key at the nonce the advance leaves.
-      let release: { deadline: string; ownerSig: Hex } | null = null;
+      let release: { deadline: string; ownerSig: Hex; releaseAt: number; afterClaim?: string } | null = null;
       if (row.state === 'releasing') {
+        // A rename's release keeps its order and delay: after the new label's claim, at its drawn time.
+        const queued = await a.registry.queuedRelease(row.handleId);
+        const afterClaim = queued?.args.afterClaim;
+        const range = afterClaim ? releaseDelayRange(c.env) : claimDelayRange(c.env);
         const after = { ...rec, nonce: rec.nonce + 1n, owner: newOwner };
-        release = await releaseInput(b, chain, after, id, newOwner, now, claimDelayRange(c.env)[1]);
+        const signed = await releaseInput(b, chain, after, id, newOwner, now, range[1]);
+        release = { ...signed, releaseAt: queued ? Math.max(queued.notBefore, now) : now + randomDelayMs(range), ...(afterClaim ? { afterClaim } : {}) };
       }
       await registrarBudget(a, row.handleId, now);
       const registrarSig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'RegistrarAdvance', { ...fields, previousOwner: rec.owner, newOwner });
-      await a.registry.recordFreeze(row.handleId, 'advance', rec.owner, now);
+      await a.registry.recordFreeze(row.handleId, 'advance', rec.owner, row.serial!, now);
       let txHash: Hex;
       try {
         txHash = await chain.send({ functionName: 'advance', args: [id, newOwner, newMetaAddress, BigInt(deadline), ownerSig, newOwnerSig, registrarSig] });
@@ -736,10 +757,26 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         throw err;
       }
       // The row follows only once mined: the relay settles the job if the receipt is late.
-      await a.registry.queueAdvance(id, { owner: newOwner, metaAddress: newMetaAddress, ...(release ? { releaseDeadline: release.deadline, releaseSig: release.ownerSig } : {}) }, txHash!, now);
+      await a.registry.queueAdvance(
+        id,
+        {
+          owner: newOwner,
+          metaAddress: newMetaAddress,
+          ...(release
+            ? {
+                releaseDeadline: release.deadline,
+                releaseSig: release.ownerSig,
+                releaseAt: String(release.releaseAt),
+                ...(release.afterClaim ? { releaseAfterClaim: release.afterClaim } : {}),
+              }
+            : {}),
+        },
+        txHash!,
+        now,
+      );
       const receipt = await chain.waitReceipt(txHash!, RECEIPT_WAIT_MS);
       if (receipt === 'reverted') refuse(409, 'anchor_refused', { reason: 'tx_reverted', txHash: txHash! });
-      if (receipt === 'success') await a.registry.settleAdvances(id, now, randomDelayMs(claimDelayRange(c.env)));
+      if (receipt === 'success') await a.registry.settleAdvanceTx(id, txHash!, now);
       return c.json({ ok: true, txHash: txHash!, receipt, owner: newOwner, metaAddress: newMetaAddress }, receipt === 'success' ? 200 : 202);
     }),
   );
@@ -760,7 +797,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       if (rec.frozenUntil * 1000 <= now) refuse(409, 'not_frozen');
       if (rec.frozenUntil !== frozenUntil) refuse(409, 'freeze_changed', { frozenUntil: rec.frozenUntil });
       // ASSUMPTION(0086 q15): never after a veto on this record (see `vetoed`).
-      if (await a.registry.vetoed(row.handleId)) refuse(409, 'vetoed');
+      if (await a.registry.vetoed(row.handleId, row.serial!)) refuse(409, 'vetoed');
       const id = row.handleId as Hex;
       const fields = { handleId: id, frozenUntil: BigInt(frozenUntil), nonce: rec.nonce, deadline: BigInt(deadline) };
       const ownerSig = signature(b, 'ownerSignature');
@@ -768,7 +805,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       if (!o || o.toLowerCase() !== row.owner!.toLowerCase()) refuse(401, 'bad_signature', { field: 'Unfreeze' });
       await registrarBudget(a, row.handleId, now);
       const registrarSig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'RegistrarUnfreeze', fields);
-      await a.registry.recordFreeze(row.handleId, 'unfreeze', rec.owner, now);
+      await a.registry.recordFreeze(row.handleId, 'unfreeze', rec.owner, row.serial!, now);
       const sent = await sendAndWait(chain, { functionName: 'unfreeze', args: [id, BigInt(frozenUntil), BigInt(deadline), ownerSig, registrarSig] });
       return c.json({ ok: true, ...sent }, sent.receipt === 'success' ? 200 : 202);
     }),
