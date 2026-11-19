@@ -64,7 +64,7 @@ export interface Resolution {
   /**
    * False while the anchor's claim is queued for the relay: the owner and the
    * meta-address are the pending ones, which no client can check yet
-   * (ASSUMPTION(0086 q22)). True once the anchor holds the record; the client
+   * (0086 q22 (ruled 2026-11-19 as recommended)). True once the anchor holds the record; the client
    * still checks every field against it (rule 5).
    */
   onChain: boolean;
@@ -72,8 +72,8 @@ export interface Resolution {
 
 /**
  * A row as a payer may see it, or null when the label must answer as absent:
- * no row, a held label (ASSUMPTION(0086 q20): resolves to nothing), a releasing
- * label (ASSUMPTION(0086 q13): resolves to nothing, so no payer derives to it),
+ * no row, a held label (0086 q20 (ruled 2026-11-19 as recommended): resolves to nothing), a releasing
+ * label (0086 q13 (ruled 2026-11-19 as recommended): resolves to nothing, so no payer derives to it),
  * a quarantined or reserved one. Discovery does not matter here: payment
  * resolution works with it off (rule 6).
  */
@@ -87,7 +87,7 @@ export function resolutionOf(row: HandleRow | null): Resolution | null {
     owner: getAddress(row.owner),
     metaAddress: row.metaAddress,
     schemeId: 1,
-    // ASSUMPTION(0086 q22): a queued claim answers its pending owner, marked unchecked.
+    // 0086 q22 (ruled 2026-11-19 as recommended): a queued claim answers its pending owner, marked unchecked.
     onChain: row.onchain,
   };
 }
@@ -96,7 +96,7 @@ export type Availability = { available: true } | { available: false; reason: 'ta
 
 /**
  * Whether a stored-form label may be claimed or held now. A held label is
- * taken until its hold lapses (ASSUMPTION(0086 q20)); a releasing label is
+ * taken until its hold lapses (0086 q20 (ruled 2026-11-19 as recommended)); a releasing label is
  * taken (its old owner still holds it on chain); a quarantined one is taken
  * until 365 days after its release (rule 3). The 30-day block on the same
  * identity re-holding a label it let lapse is the held route's, not this
@@ -217,7 +217,7 @@ export class D1HandleStore implements HandleStore {
   }
 
   async sweep(now: number): Promise<{ links: number; holds: number; holdLog: number }> {
-    // ASSUMPTION(0086 q20): a hold lapses after its 14 days; its row goes, its log row records the lapse.
+    // 0086 q20 (ruled 2026-11-19 as recommended): a hold lapses after its 14 days; its row goes, its log row records the lapse.
     const [links, , holds, holdLog] = await this.db.batch([
       this.db.prepare('DELETE FROM share_links WHERE expires_at <= ?').bind(now),
       this.db

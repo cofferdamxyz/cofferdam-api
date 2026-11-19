@@ -216,7 +216,7 @@ export class D1HandleRegistry {
   // ── Holds (q20) ──────────────────────────────────────────────────────────
 
   /**
-   * Hold `label` for `identity` until `heldUntil`. ASSUMPTION(0086 q20): one
+   * Hold `label` for `identity` until `heldUntil`. 0086 q20 (ruled 2026-11-19 as recommended): one
    * label per identity, so an earlier held label of the identity is let go
    * (its log row `released`); a lapsed hold of the label by anyone is cleared
    * first. A label with any other row is taken: `RegistryConflict`.
@@ -307,7 +307,7 @@ export class D1HandleRegistry {
 
   /**
    * A rename (rule 7): the old row to `releasing` (resolving to nothing, never
-   * discoverable; ASSUMPTION(0086 q13)), the new label claimed, the old label's
+   * discoverable; 0086 q13 (ruled 2026-11-19 as recommended)), the new label claimed, the old label's
    * `release` queued after its own delay.
    */
   async rename(input: {

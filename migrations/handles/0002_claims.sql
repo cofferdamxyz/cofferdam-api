@@ -23,7 +23,7 @@ CREATE TABLE identity_accounts (
 CREATE INDEX identity_accounts_identity ON identity_accounts (identity);
 
 -- ── The keys an identity's handles have had ──────────────────────────────────
--- q18 (ASSUMPTION(0086 q18), recommended): an address registration may name any
+-- q18 (0086 q18 (ruled 2026-11-19 as recommended)): an address registration may name any
 -- meta-address the same identity's handles have had, so an address that reaches
 -- an old epoch's meta-address is still registered. One row per published
 -- (handle, serial, owner, meta-address); never deleted while the registry lives.
@@ -95,7 +95,7 @@ CREATE TABLE relay_lease (
 );
 
 -- ── Freezes the registrar signed (q15) ───────────────────────────────────────
--- ASSUMPTION(0086 q15), recommended: the plane signs `unfreeze` only for a freeze
+-- 0086 q15 (ruled 2026-11-19 as recommended): the plane signs `unfreeze` only for a freeze
 -- with no veto since the record's last owner change; a veto means a key was used
 -- against the user. `owner` is the record's owner when the plane signed.
 CREATE TABLE handle_freezes (
