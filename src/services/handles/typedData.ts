@@ -55,7 +55,7 @@ export const ANCHOR_TYPES = {
   Hold: [f('handleId', 'bytes32'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   RenewHold: [f('handleId', 'bytes32'), f('frozenUntil', 'uint64'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   Veto: [f('handleId', 'bytes32'), f('pendingNonce', 'uint256'), f('nonce', 'uint256'), f('deadline', 'uint64')],
-  // ASSUMPTION(0086 q15): `unfreeze` exists, signed by the owner and a registrar.
+  // 0086 q15 (ruled 2026-11-19 as recommended): `unfreeze` exists, signed by the owner and a registrar.
   Unfreeze: [f('handleId', 'bytes32'), f('frozenUntil', 'uint64'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   RegistrarUnfreeze: [f('handleId', 'bytes32'), f('frozenUntil', 'uint64'), f('nonce', 'uint256'), f('deadline', 'uint64')],
 } as const;

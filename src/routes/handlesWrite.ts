@@ -822,7 +822,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       if (deadline <= Math.floor(now / 1000) || deadline > Math.floor(now / 1000) + 3600) refuse(400, 'bad_request', { field: 'deadline', hint: 'within the hour' });
       if (rec.frozenUntil * 1000 <= now) refuse(409, 'not_frozen');
       if (rec.frozenUntil !== frozenUntil) refuse(409, 'freeze_changed', { frozenUntil: rec.frozenUntil });
-      // ASSUMPTION(0086 q15): never after a veto on this record (see `vetoed`).
+      // 0086 q15 (ruled 2026-11-19 as recommended): never after a veto on this record (see `vetoed`).
       if (await a.registry.vetoed(row.handleId, row.serial!)) refuse(409, 'vetoed');
       const id = row.handleId as Hex;
       const fields = { handleId: id, frozenUntil: BigInt(frozenUntil), nonce: rec.nonce, deadline: BigInt(deadline) };

@@ -577,7 +577,7 @@ export class D1HandleRegistry {
 
   /**
    * Whether the plane vetoed a change on this record while it had this serial
-   * (one holding: a label released and claimed again starts clean). ASSUMPTION(0086 q15):
+   * (one holding: a label released and claimed again starts clean). 0086 q15 (ruled 2026-11-19 as recommended):
    * "never after a veto under the same phrase"; until q19's pinned locator tells
    * one phrase from another, any veto on the record counts, whatever key holds it
    * since (an advance to another key of the same phrase must not reopen it).
