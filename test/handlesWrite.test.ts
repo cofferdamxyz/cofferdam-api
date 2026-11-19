@@ -362,7 +362,7 @@ describe('discovery, search and inbox', () => {
 
 // ── self (rule 5, q18) ──────────────────────────────────────────────────────
 
-describe('POST /v1/handles/:label/self', () => {
+describe('POST /v1/handles/:label/addresses', () => {
   async function selfBody(w: World, v = fixture.stealth.vectors[0]!, meta = fixture.stealth.metaAddress as Hex, key = owner0) {
     const n = nonce();
     const expiresAt = exp(w);
@@ -391,11 +391,11 @@ describe('POST /v1/handles/:label/self', () => {
     const w = world();
     expect(fixture.stealth.metaAddress).toBe(META0);
     await claimed(w);
-    const res = await w.post('/ana/self', await selfBody(w));
+    const res = await w.post('/ana/addresses', await selfBody(w));
     expect(res.status).toBe(201);
     const row = w.db.sqlite.prepare('SELECT address, source, length(sealed) AS n FROM watched_addresses').get() as Record<string, unknown>;
-    expect(row).toEqual({ address: fixture.stealth.vectors[0]!.account.toLowerCase(), source: 'self', n: 12 + 132 + 16 });
-    expect((await w.post('/ana/self', await selfBody(w))).status).toBe(200);
+    expect(row).toEqual({ address: fixture.stealth.vectors[0]!.account.toLowerCase(), source: 'own', n: 12 + 132 + 16 });
+    expect((await w.post('/ana/addresses', await selfBody(w))).status).toBe(200);
   });
 
   it("refuses an address that is not derived for h, a meta-address the identity never had, and another key's signature", async () => {
@@ -403,9 +403,9 @@ describe('POST /v1/handles/:label/self', () => {
     await claimed(w);
     const v = fixture.stealth.vectors[0]!;
     const other = fixture.stealth.vectors[1]!;
-    expect(await json(await w.post('/ana/self', await selfBody(w, { ...v, sharedSecretHash: other.sharedSecretHash })))).toMatchObject({ error: 'not_derived' });
-    expect(await json(await w.post('/ana/self', await selfBody(w, v, META1)))).toMatchObject({ error: 'not_your_meta_address' });
-    expect(await json(await w.post('/ana/self', await selfBody(w, v, META0, owner1)))).toMatchObject({ error: 'bad_signature' });
+    expect(await json(await w.post('/ana/addresses', await selfBody(w, { ...v, sharedSecretHash: other.sharedSecretHash })))).toMatchObject({ error: 'not_derived' });
+    expect(await json(await w.post('/ana/addresses', await selfBody(w, v, META1)))).toMatchObject({ error: 'not_your_meta_address' });
+    expect(await json(await w.post('/ana/addresses', await selfBody(w, v, META0, owner1)))).toMatchObject({ error: 'bad_signature' });
   });
 });
 
@@ -553,7 +553,7 @@ describe('hold, veto, advance and unfreeze', () => {
     expect((await w.post('/ana/advance', body, { slow: true })).status).toBe(200);
     expect((await w.anchor.record(id)).owner).toBe(owner1.address);
     expect(await json(await w.get('/ana'))).toMatchObject({ owner: owner1.address, metaAddress: META1 });
-    // Both epochs' meta-addresses are now the identity's for `self`.
+    // Both epochs' meta-addresses are now the identity's for `addresses`.
     expect(await w.registry.hadMetaAddress((await w.registry.row('ana'))!.identity, META0)).toBe(true);
     expect(await w.registry.hadMetaAddress((await w.registry.row('ana'))!.identity, META1)).toBe(true);
   });
@@ -773,7 +773,7 @@ describe('review round 1', () => {
   it('bounds the watched addresses per identity and in all, in the insert itself', async () => {
     const w = world();
     const watch = (address: string, identity: string, perIdentity: number, ceiling: number, perIdentityPerDay = 100) =>
-      w.registry.watch({ address: address as Address, identity, handleId: handleIdOf('ana'), source: 'self', sealed: new Uint8Array(40), now: 1, perIdentity, perIdentityPerDay, ceiling });
+      w.registry.watch({ address: address as Address, identity, handleId: handleIdOf('ana'), source: 'own', sealed: new Uint8Array(40), now: 1, perIdentity, perIdentityPerDay, ceiling });
     expect(await watch('0x' + '01'.repeat(20), 'i1', 1, 10)).toBe('added');
     expect(await watch('0x' + '01'.repeat(20), 'i1', 1, 10)).toBe('ours');
     expect(await watch('0x' + '01'.repeat(20), 'i2', 1, 10)).toBe('theirs');
@@ -910,7 +910,7 @@ describe('review round 2', () => {
       nonce: n,
       expiresAt: BigInt(expiresAt),
     });
-    const res = await w.post('/ana/self', { address: v.account, ephemeralPublicKey: v.ephemeralPublicKey, sharedSecretHash: v.sharedSecretHash, metaAddress: META0, nonce: n, expiresAt, signature });
+    const res = await w.post('/ana/addresses', { address: v.account, ephemeralPublicKey: v.ephemeralPublicKey, sharedSecretHash: v.sharedSecretHash, metaAddress: META0, nonce: n, expiresAt, signature });
     expect(await json(res)).toMatchObject({ error: 'not_on_chain' });
   });
 

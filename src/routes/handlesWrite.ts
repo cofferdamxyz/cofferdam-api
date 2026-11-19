@@ -11,7 +11,7 @@
  *   POST /v1/handles/hold                      (fast) q20: onboarding's 14-day reservation
  *   POST /v1/handles/claim                     (fast) the claim, queued for the relay
  *   POST /v1/handles/:label/discoverable       (fast) "Let people find me" (rule 6)
- *   POST /v1/handles/:label/self               (fast) a one-time address the phone derived or found (rule 5, q18)
+ *   POST /v1/handles/:label/addresses          (fast) a one-time address the phone derived or found (rule 5, q18)
  *   POST /v1/handles/:label/release            (slow) give the label up (rule 7)
  *   POST /v1/handles/:label/rename             (slow) claim a new label and release this one (rule 7)
  *   POST /v1/handles/:label/hold-record        (slow) the registrar's hold, renewal or veto (rule 3)
@@ -313,7 +313,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     return { row, rec };
   }
 
-  /** Follow the anchor when one is configured (the routes that work without it, discovery and `self`). */
+  /** Follow the anchor when one is configured (the routes that work without it, discovery and `addresses`). */
   async function followIfChain(c: HContext, a: Admitted, row: HandleRow): Promise<HandleRow> {
     const chain = chainOf(c.env);
     if (!chain || !row.onchain) return row;
@@ -458,7 +458,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       if (mine.some((r) => r.state === 'active')) refuse(409, 'identity_has_handle');
       const [row, reserved] = await Promise.all([a.registry.row(label), a.registry.reserved(label)]);
       if (reserved) refuse(409, 'reserved');
-      // ASSUMPTION(0086 q20): only a label with no row, or a lapsed hold, or this identity's own hold, can be held.
+      // 0086 q20 (ruled 2026-11-19 as recommended): only a label with no row, or a lapsed hold, or this identity's own hold, can be held.
       if (row && !(row.state === 'held' && (row.identity === a.identity || (row.heldUntil ?? 0) <= now))) refuse(409, 'taken');
       const since = now - LIMIT_WINDOW_MS;
       if (await a.registry.lapsedRecently(label, a.identity, a.installTag, since)) refuse(409, 'relapse');
@@ -520,11 +520,11 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     }),
   );
 
-  // ── self (rule 5, q18) ───────────────────────────────────────────────────
+  // ── addresses (rule 5, q18) ──────────────────────────────────────────────
 
   routes.post(
-    '/:label/self',
-    handle('self', async (c) => {
+    '/:label/addresses',
+    handle('addresses', async (c) => {
       const a = await admit(c, 'fast', ['install-proof']);
       const row = await followIfChain(c, a, await ownRow(c, a));
       // Only a handle on chain registers addresses: a queued claim costs nothing to make.
@@ -538,7 +538,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const metaAddress = meta(b, 'metaAddress');
       const { nonce, expiresAt } = requestWindow(b, now);
       const factory = oneTimeFactoryOf(c.env) ?? refuse(503, 'factory_misconfigured');
-      // ASSUMPTION(0086 q18): any meta-address this identity's handles have had, signed by the current handle key.
+      // 0086 q18 (ruled 2026-11-19 as recommended): any meta-address this identity's handles have had, signed by the current handle key.
       if (!(await a.registry.hadMetaAddress(a.identity, metaAddress))) refuse(403, 'not_your_meta_address');
       if (!isRegistrationOf(account, metaAddress, sharedSecretHash, factory)) refuse(400, 'not_derived', { hint: 'the address is not the meta-address\'s for h' });
       const message = {
@@ -562,14 +562,14 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         address: account,
         identity: a.identity,
         handleId: row.handleId,
-        source: 'self',
+        source: 'own',
         sealed: await a.keys.seal(plain),
         now,
         perIdentity: WATCHED_PER_IDENTITY,
         perIdentityPerDay: WATCHED_PER_IDENTITY_PER_DAY,
         ceiling: WATCHED_CEILING,
       });
-      handlesLog({ route: 'self', outcome });
+      handlesLog({ route: 'addresses', outcome });
       if (outcome === 'theirs') refuse(409, 'address_taken');
       if (outcome === 'limit') refuse(429, 'watch_limit');
       if (outcome === 'full') refuse(503, 'watch_full');
@@ -694,7 +694,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       // High only (q19: hold, veto and renewal stay High, so a user with only a linked phone can stop a thief).
       const a = await admit(c, 'slow', []);
       const chain = chainOrRefuse(c);
-      // ASSUMPTION(0086 q13): a releasing record is watched and vetoed like an active one.
+      // 0086 q13 (ruled 2026-11-19 as recommended): a releasing record is watched and vetoed like an active one.
       const { row, rec } = await ownOnChain(c, a, chain, ['active', 'releasing']);
       const now = deps.now();
       const op = a.body.op;
@@ -744,7 +744,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     handle('advance', async (c) => {
       const a = await admit(c, 'slow', ['install-proof', 'locator-pin']);
       const chain = chainOrRefuse(c);
-      // ASSUMPTION(0086 q13): a releasing label is moved to the release key by an advance, and its release queued again.
+      // 0086 q13 (ruled 2026-11-19 as recommended): a releasing label is moved to the release key by an advance, and its release queued again.
       const { row, rec } = await ownOnChain(c, a, chain, ['active', 'releasing']);
       const b = a.body;
       const now = deps.now();

@@ -79,7 +79,7 @@ export const REQUEST_MAX_AHEAD_S = 10 * 60;
 export const VERIFIED_TTL_S = 30 * 24 * 60 * 60;
 
 /**
- * The limits, each over 30 days. ASSUMPTION(0086 q20 and rule 4): 0086 asks for
+ * The limits, each over 30 days. 0086 q20 (ruled 2026-11-19 as recommended) and rule 4: 0086 asks for
  * a limit per install and per account without numbers; these are this build's.
  */
 export const LIMITS = {

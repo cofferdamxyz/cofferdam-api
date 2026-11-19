@@ -1,6 +1,6 @@
 -- The handle registry's writes (workspace decision 0086, rules 3 to 9; runbook
 -- docs/runbooks/handles-build.md, step 3, the parts that sign and relay): the
--- identity map's first table, the key history a `self` registration is checked
+-- identity map's first table, the key history an address registration (`addresses`) is checked
 -- against, the registry requests' nonces, the per-identity counters, the anchor
 -- relay's queue, the freezes the registrar signed, and the watched addresses.
 --
@@ -23,7 +23,7 @@ CREATE TABLE identity_accounts (
 CREATE INDEX identity_accounts_identity ON identity_accounts (identity);
 
 -- ── The keys an identity's handles have had ──────────────────────────────────
--- q18 (ASSUMPTION(0086 q18), recommended): a `self` registration may name any
+-- q18 (0086 q18 (ruled 2026-11-19 as recommended)): an address registration may name any
 -- meta-address the same identity's handles have had, so an address that reaches
 -- an old epoch's meta-address is still registered. One row per published
 -- (handle, serial, owner, meta-address); never deleted while the registry lives.
@@ -95,7 +95,7 @@ CREATE TABLE relay_lease (
 );
 
 -- ── Freezes the registrar signed (q15) ───────────────────────────────────────
--- ASSUMPTION(0086 q15), recommended: the plane signs `unfreeze` only for a freeze
+-- 0086 q15 (ruled 2026-11-19 as recommended): the plane signs `unfreeze` only for a freeze
 -- with no veto since the record's last owner change; a veto means a key was used
 -- against the user. `owner` is the record's owner when the plane signed.
 CREATE TABLE handle_freezes (
@@ -115,7 +115,7 @@ CREATE INDEX handle_freezes_at ON handle_freezes (handle_id, at);
 
 -- ── Watched addresses (0083 R9, R10; 0086 rule 5) ─────────────────────────────
 -- The one-time addresses the plane watches for good: those the user's phones
--- derive (`self`) and those a scan of the announcement feed finds (q18). The
+-- derive (`own`, through the `addresses` route) and those a scan of the announcement feed finds (q18). The
 -- address is the key the watcher reads; what would let anyone recompute or spend
 -- it (R, h, the view tag, the meta-address it derives from) is sealed with
 -- AES-256-GCM under a key derived from HANDLES_MAP_KEY. Every read is logged by
@@ -124,7 +124,7 @@ CREATE TABLE watched_addresses (
   address TEXT PRIMARY KEY CHECK (address GLOB '0x*' AND substr(address, 3) NOT GLOB '*[^0-9a-f]*' AND length(address) = 42),
   identity TEXT NOT NULL,
   handle_id TEXT NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('self', 'pay')),
+  source TEXT NOT NULL CHECK (source IN ('own', 'pay')),
   sealed BLOB NOT NULL CHECK (length(sealed) BETWEEN 29 AND 1024),
   created_at INTEGER NOT NULL,
   paid_at INTEGER
@@ -132,7 +132,7 @@ CREATE TABLE watched_addresses (
 CREATE INDEX watched_addresses_identity ON watched_addresses (identity);
 
 -- The watched addresses, counted like the share links, so a registration can be
--- refused past a ceiling: a `self` registration costs nothing to compute, and
+-- refused past a ceiling: an address registration costs nothing to compute, and
 -- no flood of them may fill the database the registry shares.
 INSERT INTO handles_counters (name, n) VALUES ('watched_addresses', 0);
 CREATE TRIGGER watched_addresses_counted_in AFTER INSERT ON watched_addresses
@@ -152,6 +152,7 @@ CREATE TABLE batch_guard (ok INTEGER NOT NULL CHECK (ok = 1));
 -- The rename's 30-day limit and the hold's relapse block read these.
 CREATE INDEX handles_identity_state ON handles (identity, state);
 
--- `POST /v1/handles/mine` is a route word: no one may hold the label, so a
--- lookup of it never reads as someone's handle in the request log.
-INSERT INTO reserved_labels (label, reason) VALUES ('mine', 'route') ON CONFLICT (label) DO NOTHING;
+-- `POST /v1/handles/mine` and `/:label/addresses` are route words: no one may
+-- hold either label, so a lookup of it never reads as someone's handle in the
+-- request log.
+INSERT INTO reserved_labels (label, reason) VALUES ('mine', 'route'), ('addresses', 'route') ON CONFLICT (label) DO NOTHING;

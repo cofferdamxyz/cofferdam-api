@@ -22,21 +22,21 @@
  * `redactHandlePath`.
  *
  * `available` reads the reserved list and the row: a held label is taken
- * until its hold lapses (ASSUMPTION(0086 q20)), a released one until its
+ * until its hold lapses (0086 q20 (ruled 2026-11-19 as recommended)), a released one until its
  * 365-day quarantine ends (rule 3). The lookup answers only an active row:
- * a held, releasing (ASSUMPTION(0086 q13)), quarantined or reserved label
+ * a held, releasing (0086 q13 (ruled 2026-11-19 as recommended)), quarantined or reserved label
  * answers exactly as a label nobody holds. A claim the relay has not landed
  * answers its pending owner and meta-address with `onChain: false`, which the
- * client treats as unchecked (ASSUMPTION(0086 q22)); the client checks every
+ * client treats as unchecked (0086 q22 (ruled 2026-11-19 as recommended)); the client checks every
  * answer against the anchor on Base (rule 5), so the plane's answer is a hint.
  *
  *   GET /v1/handles/search?q=<prefix>  → 200 { ok, results: [{ label, inboxId }] } (rule 6: discoverable, active, 3+ characters, at most 20)
  *   GET /v1/handles/:label/inbox       → 200 { ok, label, inboxId } | 404 (not discoverable answers as absent)
  *   GET /v1/handles/registrar          → 200 { ok, chainId, anchor, registrar } | 503 anchor_unconfigured
  *
- * The authenticated routes (claim, hold, discovery, `self`, rename, release,
+ * The authenticated routes (claim, hold, discovery, `addresses`, rename, release,
  * the registrar's actions) are `routes/handlesWrite.ts`.
- * ASSUMPTION(0086 q18): there is no pending route, so none is built later.
+ * 0086 q18 (ruled 2026-11-19 as recommended): there is no pending route, so none is built later.
  */
 
 import { Hono, type Context } from 'hono';
@@ -84,7 +84,7 @@ function unavailable(c: HandlesContext, route: string, err: unknown): Response {
 }
 
 /** The words a path under `/v1/handles/:label/` may end in that a log line keeps. */
-const HANDLE_ROUTE_WORDS = new Set(['available', 'inbox', 'self', 'discoverable', 'release', 'rename', 'hold-record', 'advance', 'unfreeze', 'verified']);
+const HANDLE_ROUTE_WORDS = new Set(['available', 'inbox', 'addresses', 'discoverable', 'release', 'rename', 'hold-record', 'advance', 'unfreeze', 'verified']);
 /** The words a path `/v1/handles/<word>` may be that are routes, not labels (each is on the reserved list or not a valid label's route). */
 const HANDLE_TOP_WORDS = new Set(['mine', 'hold', 'claim', 'search', 'registrar']);
 

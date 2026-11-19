@@ -216,7 +216,7 @@ export class D1HandleRegistry {
   // ── Holds (q20) ──────────────────────────────────────────────────────────
 
   /**
-   * Hold `label` for `identity` until `heldUntil`. ASSUMPTION(0086 q20): one
+   * Hold `label` for `identity` until `heldUntil`. 0086 q20 (ruled 2026-11-19 as recommended): one
    * label per identity, so an earlier held label of the identity is let go
    * (its log row `released`); a lapsed hold of the label by anyone is cleared
    * first. A label with any other row is taken: `RegistryConflict`.
@@ -307,7 +307,7 @@ export class D1HandleRegistry {
 
   /**
    * A rename (rule 7): the old row to `releasing` (resolving to nothing, never
-   * discoverable; ASSUMPTION(0086 q13)), the new label claimed, the old label's
+   * discoverable; 0086 q13 (ruled 2026-11-19 as recommended)), the new label claimed, the old label's
    * `release` queued after its own delay.
    */
   async rename(input: {
@@ -369,7 +369,7 @@ export class D1HandleRegistry {
   /**
    * The row follows the anchor's owner and meta-address (an advance once mined,
    * an owner change applied on chain, the Safe's rekey), and the key history
-   * keeps both, so `self` still accepts addresses of the earlier epoch.
+   * keeps both, so `addresses` still accepts addresses of the earlier epoch.
    */
   async followOwner(row: HandleRow, owner: Address, metaAddress: Hex, now: number): Promise<void> {
     await this.db.batch(this.followStatements(row, owner, metaAddress, now));
@@ -533,7 +533,7 @@ export class D1HandleRegistry {
     address: Address;
     identity: string;
     handleId: string;
-    source: 'self' | 'pay';
+    source: 'own' | 'pay';
     sealed: Uint8Array;
     now: number;
     perIdentity: number;

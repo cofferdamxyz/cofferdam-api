@@ -128,7 +128,7 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/handles/hold' },
       { method: 'POST', path: '/v1/handles/claim' },
       { method: 'POST', path: '/v1/handles/:label/discoverable' },
-      { method: 'POST', path: '/v1/handles/:label/self' },
+      { method: 'POST', path: '/v1/handles/:label/addresses' },
       { method: 'POST', path: '/v1/handles/:label/release' },
       { method: 'POST', path: '/v1/handles/:label/rename' },
       { method: 'POST', path: '/v1/handles/:label/hold-record' },
