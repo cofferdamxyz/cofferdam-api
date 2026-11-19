@@ -54,8 +54,10 @@
       // One instance: the backend is stateless but every client must reach the
       // same deployment; scale out by raising this and the DO instance names.
       "max_instances": 1,
-      // 1/2 vCPU, 4 GiB. `basic` (1/4 vCPU, 1 GiB) is enough for M0.
-      "instance_type": "standard-1",
+      // 1/4 vCPU, 1 GiB, 4 GB disk: enough for testing (the founder's pick of
+      // 2026-11-19, about $7 a month always on). `standard-1` (1/2 vCPU, 4 GiB)
+      // when real traffic arrives.
+      "instance_type": "basic",
       // Keep the container near the database: each publish is several round
       // trips under a 5 s statement timeout. PlanetScale region: AWS us-east-1.
       "constraints": { "regions": ["ENAM"] }
