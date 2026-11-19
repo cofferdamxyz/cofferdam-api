@@ -76,6 +76,9 @@ export function memoryAnchor(clock: { now: number }, registrarKey: Hex = fixture
     async receipt(hash) {
       return receipts.get(hash) ?? 'success';
     },
+    async waitReceipt(hash) {
+      return receipts.get(hash) ?? 'success';
+    },
     async send(call) {
       const r = { ...rec(call.args[0]) };
       const id = call.args[0];

@@ -18,11 +18,11 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createHandlesRoutes } from '../src/routes/handles.js';
-import { createHandlesWriteRoutes } from '../src/routes/handlesWrite.js';
+import { createHandlesWriteRoutes, REGISTRAR_SENDS_PER_DAY } from '../src/routes/handlesWrite.js';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { TIER } from '../src/services/ceremony.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
-import { CHANGE_KIND } from '../src/services/handles/anchor.js';
+import { AnchorRevert, CHANGE_KIND, contractRevert } from '../src/services/handles/anchor.js';
 import { handleIdOf } from '../src/services/handles/grammar.js';
 import { D1HandleRegistry } from '../src/services/handles/registry.js';
 import { runRelay } from '../src/services/handles/relay.js';
@@ -490,6 +490,7 @@ describe('release and rename', () => {
     await w.relay();
     expect(w.anchor.sent.map((s) => s.functionName).sort()).toEqual(['claim', 'claim', 'release']);
     // A second rename within 30 days is refused.
+    await w.relay();
     expect(await json(await w.post('/ana-b/rename', body, { slow: true }))).toMatchObject({ error: 'rename_limit' });
   });
 });
@@ -578,5 +579,198 @@ describe('GET /v1/handles/registrar', () => {
   it('names the chain, the anchor and the registrar, or 503 while unconfigured', async () => {
     const w = world();
     expect((await w.get('/registrar')).status).toBe(503);
+  });
+});
+
+// ── review round 1's findings ───────────────────────────────────────────────
+
+describe('review round 1', () => {
+  it('takes only a contract revert for the contract refusing; a node error is rethrown and leaves the job queued', async () => {
+    expect(contractRevert(new Error('fetch failed'))).toBeNull();
+    const w = world();
+    expect((await w.post('/claim', await claimBody(w, 'ana'))).status).toBe(201);
+    const send = w.anchor.send.bind(w.anchor);
+    w.anchor.send = async () => {
+      throw new Error('HTTP request failed: 503');
+    };
+    w.advance(121_000);
+    for (let i = 0; i < 5; i++) await w.relay();
+    const [job] = await w.registry.jobsOf(handleIdOf('ana'));
+    expect(job).toMatchObject({ state: 'queued', attempts: 0 });
+    expect(await json(await w.get('/ana'))).toMatchObject({ onChain: false });
+    w.anchor.send = send;
+    await w.relay();
+    await w.relay();
+    expect(await json(await w.get('/ana'))).toMatchObject({ onChain: true });
+  });
+
+  it('gives the old label back when a rename\'s claim fails for good', async () => {
+    const w = world();
+    await claimed(w);
+    const n = nonce();
+    const expiresAt = exp(w);
+    const claim = await claimBody(w, 'ana-b', owner1, META1);
+    const message = { handleId: handleIdOf('ana'), serial: 1n, newLabel: 'ana-b', newHandleId: handleIdOf('ana-b'), newOwner: owner1.address, newMetaAddress: META1, nonce: n, expiresAt: BigInt(expiresAt) };
+    const res = await w.post(
+      '/ana/rename',
+      {
+        newLabel: 'ana-b',
+        newOwner: owner1.address,
+        newMetaAddress: META1,
+        nonce: n,
+        expiresAt,
+        signature: await signRegistry(owner0, 84532, 'RenameHandle', message),
+        claim: { nonce: claim.nonce, expiresAt: claim.expiresAt, signature: claim.signature, serial: claim.serial, ownerClaimSignature: claim.ownerClaimSignature },
+        ...(await releaseSig(w, 'ana')),
+      },
+      { slow: true },
+    );
+    expect(res.status).toBe(201);
+    // Someone else's key owns the new label on chain before the relay sends.
+    const id = handleIdOf('ana-b');
+    w.anchor.records.set(id, { ...(await w.anchor.record(id)), owner: getAddress('0x' + '77'.repeat(20)), serial: 1 });
+    w.advance(121_000);
+    await w.relay();
+    expect((await w.get('/ana-b')).status).toBe(404);
+    expect(await json(await w.get('/ana'))).toMatchObject({ owner: owner0.address, onChain: true });
+    expect((await w.registry.jobsOf(handleIdOf('ana'))).filter((j) => j.kind === 'release').map((j) => j.state)).toEqual(['cancelled']);
+  });
+
+  it('refuses unfreeze after a veto even once the record advanced to another key', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    queueChange(w.anchor, id, owner1.address);
+    expect((await w.post('/ana/hold-record', { op: 'veto' }, { slow: true })).status).toBe(200);
+    let rec = await w.anchor.record(id);
+    const deadline = Math.floor(w.clock.ms / 1000) + 600;
+    const fields = { handleId: id, newMetaAddress: META1, nonce: rec.nonce, deadline: BigInt(deadline) };
+    expect(
+      (
+        await w.post(
+          '/ana/advance',
+          {
+            newOwner: owner1.address,
+            newMetaAddress: META1,
+            deadline,
+            ownerSignature: await signAnchor(owner0, 84532, TEST_ANCHOR, 'Advance', { ...fields, newOwner: owner1.address }),
+            newOwnerSignature: await signAnchor(owner1, 84532, TEST_ANCHOR, 'AdvanceAccept', { ...fields, previousOwner: owner0.address }),
+          },
+          { slow: true },
+        )
+      ).status,
+    ).toBe(200);
+    rec = await w.anchor.record(id);
+    const ownerSignature = await signAnchor(owner1, 84532, TEST_ANCHOR, 'Unfreeze', { handleId: id, frozenUntil: BigInt(rec.frozenUntil), nonce: rec.nonce, deadline: BigInt(deadline) });
+    expect(await json(await w.post('/ana/unfreeze', { frozenUntil: rec.frozenUntil, deadline, ownerSignature }, { slow: true }))).toMatchObject({ error: 'vetoed' });
+  });
+
+  it('vetoes a change on a releasing label, and an advance to the release key queues its release again', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    const n = nonce();
+    const expiresAt = exp(w);
+    const signature = await signRegistry(owner0, 84532, 'ReleaseHandle', { handleId: id, serial: 1n, nonce: n, expiresAt: BigInt(expiresAt) });
+    expect((await w.post('/ana/release', { nonce: n, expiresAt, signature, ...(await releaseSig(w, 'ana')) }, { slow: true })).status).toBe(200);
+    // A removed phone with the old key cancels the queued release and queues a transfer (q13).
+    queueChange(w.anchor, id, getAddress('0x' + '66'.repeat(20)));
+    expect((await w.post('/ana/hold-record', { op: 'veto' }, { slow: true })).status).toBe(200);
+    // The phrase phone moves the old record to the release key (here owner1) and signs its release at the nonce the advance leaves.
+    const rec = await w.anchor.record(id);
+    const deadline = Math.floor(w.clock.ms / 1000) + 600;
+    const fields = { handleId: id, newMetaAddress: META1, nonce: rec.nonce, deadline: BigInt(deadline) };
+    const anchorDeadline = Math.floor(w.clock.ms / 1000) + 9 * 86_400;
+    const res = await w.post(
+      '/ana/advance',
+      {
+        newOwner: owner1.address,
+        newMetaAddress: META1,
+        deadline,
+        ownerSignature: await signAnchor(owner0, 84532, TEST_ANCHOR, 'Advance', { ...fields, newOwner: owner1.address }),
+        newOwnerSignature: await signAnchor(owner1, 84532, TEST_ANCHOR, 'AdvanceAccept', { ...fields, previousOwner: owner0.address }),
+        anchorDeadline,
+        releaseSignature: await signAnchor(owner1, 84532, TEST_ANCHOR, 'Release', { handleId: id, nonce: rec.nonce + 1n, deadline: BigInt(anchorDeadline) }),
+      },
+      { slow: true },
+    );
+    expect(res.status).toBe(200);
+    const releases = (await w.registry.jobsOf(id)).filter((j) => j.kind === 'release');
+    expect(releases.at(-1)).toMatchObject({ state: 'queued', args: expect.objectContaining({ owner: owner1.address.toLowerCase() }) });
+    // The freeze from the veto must lapse before the release can be queued on chain.
+    w.anchor.records.set(id, { ...(await w.anchor.record(id)), frozenUntil: 0 });
+    w.advance(121_000);
+    await w.relay();
+    expect((await w.anchor.record(id)).pendingKind).toBe(CHANGE_KIND.Release);
+  });
+
+  it('moves the row only once the advance is mined: a late receipt answers 202 and the relay settles it', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    const rec = await w.anchor.record(id);
+    const deadline = Math.floor(w.clock.ms / 1000) + 600;
+    const fields = { handleId: id, newMetaAddress: META1, nonce: rec.nonce, deadline: BigInt(deadline) };
+    const wait = w.anchor.waitReceipt.bind(w.anchor);
+    w.anchor.waitReceipt = async () => 'pending';
+    const res = await w.post(
+      '/ana/advance',
+      {
+        newOwner: owner1.address,
+        newMetaAddress: META1,
+        deadline,
+        ownerSignature: await signAnchor(owner0, 84532, TEST_ANCHOR, 'Advance', { ...fields, newOwner: owner1.address }),
+        newOwnerSignature: await signAnchor(owner1, 84532, TEST_ANCHOR, 'AdvanceAccept', { ...fields, previousOwner: owner0.address }),
+      },
+      { slow: true },
+    );
+    w.anchor.waitReceipt = wait;
+    expect(res.status).toBe(202);
+    expect((await w.registry.row('ana'))!.owner).toBe(owner0.address.toLowerCase());
+    await w.relay();
+    expect((await w.registry.row('ana'))!.owner).toBe(owner1.address.toLowerCase());
+  });
+
+  it('follows an owner change the chain applied without the plane, before checking a signature', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    w.anchor.records.set(id, { ...(await w.anchor.record(id)), owner: owner1.address, metaAddress: META1 });
+    const n = nonce();
+    const expiresAt = exp(w);
+    const signature = await signRegistry(owner1, 84532, 'SetDiscoverable', { handleId: id, serial: 1n, discoverable: true, inboxId: INBOX, nonce: n, expiresAt: BigInt(expiresAt) });
+    expect((await w.post('/ana/discoverable', { discoverable: true, inboxId: INBOX, nonce: n, expiresAt, signature })).status).toBe(200);
+    expect(await json(await w.get('/ana'))).toMatchObject({ owner: owner1.address, metaAddress: META1 });
+  });
+
+  it('caps the registrar-paid sends on one record per day', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    expect((await w.post('/ana/hold-record', { op: 'hold' }, { slow: true })).status).toBe(200);
+    for (let i = 1; i < REGISTRAR_SENDS_PER_DAY; i++) expect((await w.post('/ana/hold-record', { op: 'renew' }, { slow: true })).status).toBe(200);
+    expect(await json(await w.post('/ana/hold-record', { op: 'renew' }, { slow: true }))).toMatchObject({ error: 'registrar_limit' });
+    expect((await w.anchor.record(id)).frozenUntil).toBeGreaterThan(0);
+  });
+
+  it('lets an identity hold its own held label again', async () => {
+    const w = world();
+    const b = await claimBody(w, 'ana');
+    const hold = { label: 'ana', owner: b.owner, metaAddress: b.metaAddress, nonce: b.nonce, expiresAt: b.expiresAt, signature: b.signature };
+    expect((await w.post('/hold', hold)).status).toBe(201);
+    const b2 = await claimBody(w, 'ana');
+    expect((await w.post('/hold', { ...hold, nonce: b2.nonce, signature: b2.signature })).status).toBe(201);
+  });
+
+  it('bounds the watched addresses per identity and in all, in the insert itself', async () => {
+    const w = world();
+    const watch = (address: string, identity: string, perIdentity: number, ceiling: number) =>
+      w.registry.watch({ address: address as Address, identity, handleId: handleIdOf('ana'), source: 'self', sealed: new Uint8Array(40), now: 1, perIdentity, ceiling });
+    expect(await watch('0x' + '01'.repeat(20), 'i1', 1, 10)).toBe('added');
+    expect(await watch('0x' + '01'.repeat(20), 'i1', 1, 10)).toBe('ours');
+    expect(await watch('0x' + '01'.repeat(20), 'i2', 1, 10)).toBe('theirs');
+    expect(await watch('0x' + '02'.repeat(20), 'i1', 1, 10)).toBe('limit');
+    expect(await watch('0x' + '03'.repeat(20), 'i3', 5, 1)).toBe('full');
+    expect(contractRevert(new AnchorRevert('X'))).toBeNull();
   });
 });

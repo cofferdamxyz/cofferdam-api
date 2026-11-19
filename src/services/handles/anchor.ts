@@ -18,7 +18,7 @@
  * relay and the tests share it; `rpcAnchorChain` is the deployed one.
  */
 
-import { createPublicClient, createWalletClient, http, type Address, type Hex } from 'viem';
+import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, http, type Address, type Hex } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
 
@@ -189,6 +189,8 @@ export interface AnchorChain {
   /** Simulate, then sign and send; resolves with the transaction hash. A revert in the simulation throws `AnchorRevert`. */
   send(call: AnchorCall): Promise<Hex>;
   receipt(hash: Hex): Promise<ReceiptStatus>;
+  /** The receipt, waited for up to `timeoutMs`; `pending` when it does not come in time. */
+  waitReceipt(hash: Hex, timeoutMs: number): Promise<ReceiptStatus>;
 }
 
 /** A call the simulation refused: the contract's error name only, never its arguments. */
@@ -210,13 +212,17 @@ export function registrarOf(env: Env): PrivateKeyAccount | null {
   }
 }
 
-/** A viem error's revert name, or its class; never its message (which carries the call's arguments). */
-function revertName(err: unknown): string {
-  const e = err as { walk?: (fn: (e: unknown) => boolean) => unknown; name?: string };
-  const inner = e?.walk?.((x) => typeof (x as { data?: { errorName?: unknown } })?.data?.errorName === 'string') as
-    | { data?: { errorName?: string } }
-    | undefined;
-  return inner?.data?.errorName ?? (err instanceof Error ? err.name : 'unknown');
+/**
+ * A simulation's contract revert as `AnchorRevert` with the error's name, never
+ * its message (which carries the call's arguments); null for anything else (a
+ * node or transport error), which the caller rethrows so that a node outage is
+ * never taken for the contract's refusal.
+ */
+export function contractRevert(err: unknown): AnchorRevert | null {
+  if (!(err instanceof BaseError)) return null;
+  const reverted = err.walk((e) => e instanceof ContractFunctionRevertedError);
+  if (!(reverted instanceof ContractFunctionRevertedError)) return null;
+  return new AnchorRevert(reverted.data?.errorName ?? 'reverted');
 }
 
 /** The deployed anchor through JSON-RPC (`BASE_SEPOLIA_RPC_URL`), or null while the anchor or the key is missing. */
@@ -250,7 +256,7 @@ export function rpcAnchorChain(env: Env, anchor: Address | null): AnchorChain | 
       try {
         ({ request } = await publicClient.simulateContract({ address: anchor, abi: HANDLE_ANCHOR_ABI, account: registrar, ...call } as never));
       } catch (err) {
-        throw new AnchorRevert(revertName(err));
+        throw contractRevert(err) ?? err;
       }
       return sendWithRetry({
         sign: async () => wallet.signTransaction(await wallet.prepareTransactionRequest(request as never)),
@@ -260,6 +266,14 @@ export function rpcAnchorChain(env: Env, anchor: Address | null): AnchorChain | 
     async receipt(hash) {
       try {
         const r = await publicClient.getTransactionReceipt({ hash });
+        return r.status === 'success' ? 'success' : 'reverted';
+      } catch {
+        return 'pending';
+      }
+    },
+    async waitReceipt(hash, timeoutMs) {
+      try {
+        const r = await publicClient.waitForTransactionReceipt({ hash, timeout: timeoutMs, pollingInterval: 1_000 });
         return r.status === 'success' ? 'success' : 'reverted';
       } catch {
         return 'pending';

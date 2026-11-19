@@ -63,7 +63,7 @@ import { D1HandleRegistry, RegistryConflict } from '../services/handles/registry
 import { isCompressedPoint, isRegistrationOf, oneTimeFactoryOf, splitMetaAddress } from '../services/handles/stealth.js';
 import { quarantineMs, type HandleRow } from '../services/handles/store.js';
 import { anchorSigner, registrySigner, signAnchor, signRegistry, type RegistryPrimaryType } from '../services/handles/typedData.js';
-import type { ReplayStore } from '../services/popReplayStore.js';
+import { envReplayStore, type ReplayStore } from '../services/popReplayStore.js';
 import type { PasskeySession, SessionTier } from '../services/sessionAttestation.js';
 import { checkSession, isRefusal } from '../services/sessionGate.js';
 import { readAccountBound } from './workListing.js';
@@ -90,6 +90,15 @@ export const defaultHandlesWriteDeps: HandlesWriteDeps = {
 };
 
 type HContext = Context<{ Bindings: Env }>;
+
+/** How long a registrar route waits for its transaction's receipt, as the AA relay does. */
+export const RECEIPT_WAIT_MS = 20_000;
+/** Registrar-paid transactions per record per day (hold, renewal, veto, advance, unfreeze). */
+export const REGISTRAR_SENDS_PER_DAY = 6;
+/** Watched addresses per identity: every payment received, for years (0083 R9). */
+export const WATCHED_PER_IDENTITY = 10_000;
+/** Watched addresses in all, about 1 GB at most: past it a registration is refused, and the registry's other tables keep their room. */
+export const WATCHED_CEILING = 1_000_000;
 
 /** An answer the route gives as it is. */
 class Refusal extends Error {
@@ -214,7 +223,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         requiredTier: tier,
         v1MaxAgeMs: tier === 'slow' ? Math.min(deps.attestationMaxAgeMs, 10 * 60 * 1000) : deps.attestationMaxAgeMs,
         now: deps.now(),
-        replay: deps.replayStore ? deps.replayStore(c.env) : null,
+        replay: (deps.replayStore ?? envReplayStore)(c.env),
       },
     );
     if (isRefusal(result)) throw new Refusal(result.status, result.body.error, { ...result.body, ok: undefined, error: undefined });
@@ -279,20 +288,42 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     if (!opts.frozenOk && rec.frozenUntil * 1000 > nowMs) refuse(409, 'frozen', { frozenUntil: rec.frozenUntil });
   }
 
+  /**
+   * The identity's row on chain, following the anchor first: when the record's
+   * owner moved (an advance mined late, an owner change applied after its 72
+   * hours, the Safe's rekey) the row and the key history follow it, so no
+   * route checks a signature against a key the chain no longer has.
+   */
+  async function ownOnChain(c: HContext, a: Admitted, chain: AnchorChain, states: readonly HandleRow['state'][] = ['active']) {
+    let row = await ownRow(c, a, states);
+    const rec = await chain.record(row.handleId as Hex);
+    if (!row.onchain || rec.owner === ZERO_ADDRESS) refuse(409, 'not_on_chain', { hint: 'the handle is still being set up' });
+    if (rec.owner.toLowerCase() !== (row.owner ?? '').toLowerCase()) {
+      await a.registry.followOwner(row, rec.owner, rec.metaAddress, deps.now());
+      row = (await a.registry.row(row.label))!;
+    }
+    return { row, rec };
+  }
+
+  /** Follow the anchor when one is configured (the routes that work without it, discovery and `self`). */
+  async function followIfChain(c: HContext, a: Admitted, row: HandleRow): Promise<HandleRow> {
+    const chain = chainOf(c.env);
+    if (!chain || !row.onchain) return row;
+    const rec = await chain.record(row.handleId as Hex);
+    if (rec.owner === ZERO_ADDRESS || rec.owner.toLowerCase() === (row.owner ?? '').toLowerCase()) return row;
+    await a.registry.followOwner(row, rec.owner, rec.metaAddress, deps.now());
+    return (await a.registry.row(row.label))!;
+  }
+
   /** Is `label` claimable now by `identity`, on the row and the reserved list? */
   async function claimable(registry: D1HandleRegistry, c: HContext, label: string, identity: string, now: number): Promise<void> {
-    const [row, reserved] = await Promise.all([registry.row(label), registryReserved(c.env, label)]);
+    const [row, reserved] = await Promise.all([registry.row(label), registry.reserved(label)]);
     if (reserved) refuse(409, 'reserved');
     if (!row) return;
     if (row.state === 'held' && (row.identity === identity || (row.heldUntil ?? 0) <= now)) return;
     if (row.state === 'quarantined' && (row.releasedAt ?? now) + quarantineMs(c.env.HANDLES_QUARANTINE_DAYS) <= now) return;
     if (row.state === 'reserved') refuse(409, 'reserved');
     refuse(409, 'taken');
-  }
-
-  async function registryReserved(env: Env, label: string): Promise<boolean> {
-    const r = await env.HANDLES_DB!.prepare('SELECT 1 AS hit FROM reserved_labels WHERE label = ?').bind(label).first<{ hit: number }>();
-    return r !== null;
   }
 
   async function claimLimits(a: Admitted, now: number, kind: 'claim' | 'rename'): Promise<void> {
@@ -310,12 +341,9 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
    * request by the new key, its `OwnerClaim` over the anchor's next serial, the
    * label free (or held by this identity), and the anchor record unowned.
    */
-  async function claimInput(c: HContext, a: Admitted, b: Body, chain: AnchorChain, now: number) {
-    const label = labelOf(b.label ?? b.newLabel);
+  async function claimInput(c: HContext, a: Admitted, input: { label: string; owner: Address; metaAddress: Hex; claim: Body }, chain: AnchorChain, now: number) {
+    const { label, owner, metaAddress, claim } = input;
     const handleId = handleIdOf(label);
-    const owner = address(b, b.label !== undefined ? 'owner' : 'newOwner');
-    const metaAddress = meta(b, b.label !== undefined ? 'metaAddress' : 'newMetaAddress');
-    const claim = (b.label !== undefined ? b : (b.claim as Body | undefined)) ?? refuse(400, 'bad_request', { field: 'claim' });
     const { nonce, expiresAt } = requestWindow(claim, now);
     const sig = signature(claim, 'signature');
     const serial = uint(claim, 'serial', 2 ** 32 - 1);
@@ -325,12 +353,13 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     if (!regSigner || regSigner !== owner) refuse(401, 'bad_signature', { field: 'RegistryClaim' });
     const ownerSigner = await anchorSigner(HANDLES_CHAIN_ID, chain.anchor, 'OwnerClaim', { handleId, metaAddress, serial: BigInt(serial) }, ownerClaimSignature);
     if (!ownerSigner || ownerSigner !== owner) refuse(401, 'bad_signature', { field: 'OwnerClaim' });
+    // Taken before any other refusal, so a refused request's signature is spent and never reused.
+    if (!(await a.registry.takeNonce(nonce, expiresAt * 1000))) refuse(409, 'replayed');
 
     await claimable(a.registry, c, label, a.identity, now);
     const rec = await chain.record(handleId);
     if (rec.owner !== ZERO_ADDRESS) refuse(409, 'taken');
     if (rec.serial + 1 !== serial) refuse(409, 'serial_mismatch', { serial: rec.serial + 1 });
-    if (!(await a.registry.takeNonce(nonce, expiresAt * 1000))) refuse(409, 'replayed');
     return {
       label,
       handleId,
@@ -412,10 +441,12 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const sig = signature(b, 'signature');
       const signer = await registrySigner(HANDLES_CHAIN_ID, 'RegistryClaim', { label, handleId, owner, metaAddress, nonce, expiresAt: BigInt(expiresAt) }, sig);
       if (!signer || signer !== owner) refuse(401, 'bad_signature', { field: 'RegistryClaim' });
+      // Taken before any other refusal: a refused hold's signature is spent, never reusable as a claim's.
+      if (!(await a.registry.takeNonce(nonce, expiresAt * 1000))) refuse(409, 'replayed');
 
       const mine = await a.registry.rowsOf(a.identity);
       if (mine.some((r) => r.state === 'active')) refuse(409, 'identity_has_handle');
-      const [row, reserved] = await Promise.all([a.registry.row(label), registryReserved(c.env, label)]);
+      const [row, reserved] = await Promise.all([a.registry.row(label), a.registry.reserved(label)]);
       if (reserved) refuse(409, 'reserved');
       // ASSUMPTION(0086 q20): only a label with no row, or a lapsed hold, or this identity's own hold, can be held.
       if (row && !(row.state === 'held' && (row.identity === a.identity || (row.heldUntil ?? 0) <= now))) refuse(409, 'taken');
@@ -424,7 +455,6 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       if ((await a.registry.countHolds('identity', a.identity, since)) >= LIMITS.holdsPerIdentity) refuse(429, 'hold_limit');
       const perInstall = (await a.registry.countEvents('install_tag', a.installTag, ['claim'], since)) + (await a.registry.countHolds('install_tag', a.installTag, since));
       if (perInstall >= LIMITS.perInstall) refuse(429, 'hold_limit');
-      if (!(await a.registry.takeNonce(nonce, expiresAt * 1000))) refuse(409, 'replayed');
 
       const heldUntil = now + HOLD_MS;
       try {
@@ -447,7 +477,8 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const now = deps.now();
       if ((await a.registry.rowsOf(a.identity)).some((r) => r.state === 'active')) refuse(409, 'identity_has_handle');
       await claimLimits(a, now, 'claim');
-      const { write } = await claimInput(c, a, a.body, chain, now);
+      const b = a.body;
+      const { write } = await claimInput(c, a, { label: labelOf(b.label), owner: address(b, 'owner'), metaAddress: meta(b, 'metaAddress'), claim: b }, chain, now);
       try {
         await a.registry.claim(write);
       } catch (err) {
@@ -464,7 +495,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     '/:label/discoverable',
     handle('discoverable', async (c) => {
       const a = await admit(c, 'fast', ['install-proof']);
-      const row = await ownRow(c, a);
+      const row = await followIfChain(c, a, await ownRow(c, a));
       const b = a.body;
       const now = deps.now();
       const discoverable = b.discoverable === true ? true : b.discoverable === false ? false : refuse(400, 'bad_request', { field: 'discoverable' });
@@ -485,7 +516,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     '/:label/self',
     handle('self', async (c) => {
       const a = await admit(c, 'fast', ['install-proof']);
-      const row = await ownRow(c, a);
+      const row = await followIfChain(c, a, await ownRow(c, a));
       const b = a.body;
       const now = deps.now();
       const account = address(b, 'address');
@@ -515,9 +546,20 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       plain.set(hexToBytes(sharedSecretHash), 33);
       plain[65] = parseInt(sharedSecretHash.slice(2, 4), 16);
       plain.set(hexToBytes(metaAddress), 66);
-      const outcome = await a.registry.watch({ address: account, identity: a.identity, handleId: row.handleId, source: 'self', sealed: await a.keys.seal(plain), now });
+      const outcome = await a.registry.watch({
+        address: account,
+        identity: a.identity,
+        handleId: row.handleId,
+        source: 'self',
+        sealed: await a.keys.seal(plain),
+        now,
+        perIdentity: WATCHED_PER_IDENTITY,
+        ceiling: WATCHED_CEILING,
+      });
       handlesLog({ route: 'self', outcome });
       if (outcome === 'theirs') refuse(409, 'address_taken');
+      if (outcome === 'limit') refuse(429, 'watch_limit');
+      if (outcome === 'full') refuse(503, 'watch_full');
       return c.json({ ok: true, address: account }, outcome === 'added' ? 201 : 200);
     }),
   );
@@ -528,14 +570,13 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     '/:label/release',
     handle('release', async (c) => {
       const a = await admit(c, 'slow', ['install-proof', 'locator-pin']);
-      const row = await ownRow(c, a, ['active', 'releasing']);
       const chain = chainOrRefuse(c);
+      const { row, rec } = await ownOnChain(c, a, chain, ['active', 'releasing']);
       const b = a.body;
       const now = deps.now();
       if (row.state === 'releasing' && (await a.registry.releaseInFlight(row.handleId))) refuse(409, 'releasing');
       const { nonce, expiresAt } = requestWindow(b, now);
       await signedBy('ReleaseHandle', { handleId: row.handleId, serial: BigInt(row.serial!), nonce, expiresAt: BigInt(expiresAt) }, signature(b, 'signature'), row.owner!, a, expiresAt);
-      const rec = await chain.record(row.handleId as Hex);
       onChainAs(rec, row, now);
       const range = claimDelayRange(c.env);
       const release = await releaseInput(b, chain, rec, row.handleId as Hex, row.owner!, now, range[1]);
@@ -550,8 +591,8 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     '/:label/rename',
     handle('rename', async (c) => {
       const a = await admit(c, 'slow', ['install-proof', 'locator-pin']);
-      const row = await ownRow(c, a);
       const chain = chainOrRefuse(c);
+      const { row, rec } = await ownOnChain(c, a, chain);
       const b = a.body;
       const now = deps.now();
       await claimLimits(a, now, 'rename');
@@ -573,13 +614,13 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         expiresAt: BigInt(expiresAt),
       };
       await signedBy('RenameHandle', message, signature(b, 'signature'), row.owner!, a, expiresAt);
-      const rec = await chain.record(row.handleId as Hex);
       onChainAs(rec, row, now);
       const range = releaseDelayRange(c.env);
       const release = await releaseInput(b, chain, rec, row.handleId as Hex, row.owner!, now, range[1]);
-      const { write } = await claimInput(c, a, b, chain, now);
+      const claimBodyIn = b.claim && typeof b.claim === 'object' && !Array.isArray(b.claim) ? (b.claim as Body) : refuse(400, 'bad_request', { field: 'claim' });
+      const { write } = await claimInput(c, a, { label: newLabel, owner: newOwner, metaAddress: newMetaAddress, claim: claimBodyIn }, chain, now);
       try {
-        await a.registry.rename({ oldHandleId: row.handleId as Hex, claim: write, release: { owner: row.owner as Address, ...release, relayAt: now + randomDelayMs(range) } });
+        await a.registry.rename({ oldHandleId: row.handleId as Hex, claim: { ...write, renameOf: row.handleId as Hex }, release: { owner: row.owner as Address, ...release, relayAt: now + randomDelayMs(range) } });
       } catch (err) {
         if (err instanceof RegistryConflict) refuse(409, 'taken');
         throw err;
@@ -595,47 +636,62 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
 
   // ── the registrar's hold, renewal and veto (rule 3) ──────────────────────
 
+  /** The registrar-paid sends on one record in a day: a High session cannot drain the registrar's gas. */
+  async function registrarBudget(a: Admitted, handleId: string, now: number): Promise<void> {
+    if ((await a.registry.registrarSends(handleId, now - 24 * 60 * 60 * 1000)) >= REGISTRAR_SENDS_PER_DAY) refuse(429, 'registrar_limit');
+  }
+
+  /** Send a registrar call, wait for its receipt (as the AA relay does), and answer by it. */
+  async function sendAndWait(chain: AnchorChain, call: Parameters<AnchorChain['send']>[0]): Promise<{ txHash: Hex; receipt: 'success' | 'pending' }> {
+    let txHash: Hex;
+    try {
+      txHash = await chain.send(call);
+    } catch (err) {
+      if (err instanceof AnchorRevert) refuse(409, 'anchor_refused', { reason: err.reason });
+      throw err;
+    }
+    const receipt = await chain.waitReceipt(txHash!, RECEIPT_WAIT_MS);
+    if (receipt === 'reverted') return refuse(409, 'anchor_refused', { reason: 'tx_reverted', txHash: txHash! });
+    return { txHash: txHash!, receipt };
+  }
+
   routes.post(
     '/:label/hold-record',
     handle('hold-record', async (c) => {
       // High only (q19: hold, veto and renewal stay High, so a user with only a linked phone can stop a thief).
       const a = await admit(c, 'slow', []);
-      const row = await ownRow(c, a);
       const chain = chainOrRefuse(c);
+      // ASSUMPTION(0086 q13): a releasing record is watched and vetoed like an active one.
+      const { row, rec } = await ownOnChain(c, a, chain, ['active', 'releasing']);
       const now = deps.now();
       const op = a.body.op;
-      const rec = await chain.record(row.handleId as Hex);
-      if (!row.onchain || rec.owner.toLowerCase() !== row.owner!.toLowerCase()) refuse(409, 'not_on_chain');
+      if (op !== 'hold' && op !== 'renew' && op !== 'veto') return refuse(400, 'bad_request', { field: 'op', hint: 'hold, renew or veto' });
+      await registrarBudget(a, row.handleId, now);
       const deadline = BigInt(Math.floor(now / 1000) + 600);
       const id = row.handleId as Hex;
-      let txHash: Hex;
-      try {
-        if (op === 'hold') {
-          if (rec.pendingKind !== CHANGE_KIND.None) refuse(409, 'change_pending', { pendingNonce: rec.pendingNonce.toString() });
-          if (rec.frozenUntil * 1000 > now) refuse(409, 'frozen', { frozenUntil: rec.frozenUntil });
-          const sig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'Hold', { handleId: id, nonce: rec.nonce, deadline });
-          txHash = await chain.send({ functionName: 'hold', args: [id, deadline, sig] });
-        } else if (op === 'renew') {
-          if (rec.frozenUntil * 1000 <= now) refuse(409, 'not_frozen');
-          const frozenUntil = BigInt(rec.frozenUntil);
-          const sig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'RenewHold', { handleId: id, frozenUntil, nonce: rec.nonce, deadline });
-          txHash = await chain.send({ functionName: 'renewHold', args: [id, frozenUntil, deadline, sig] });
-        } else if (op === 'veto') {
-          if (rec.pendingKind === CHANGE_KIND.None) refuse(409, 'no_pending_change');
-          const pendingNonce = typeof a.body.pendingNonce === 'string' && /^\d{1,20}$/.test(a.body.pendingNonce) ? BigInt(a.body.pendingNonce) : rec.pendingNonce;
-          if (pendingNonce !== rec.pendingNonce) refuse(409, 'pending_changed', { pendingNonce: rec.pendingNonce.toString() });
-          const sig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'Veto', { handleId: id, pendingNonce, nonce: rec.nonce, deadline });
-          txHash = await chain.send({ functionName: 'veto', args: [id, pendingNonce, deadline, sig] });
-        } else {
-          return refuse(400, 'bad_request', { field: 'op', hint: 'hold, renew or veto' });
-        }
-      } catch (err) {
-        if (err instanceof AnchorRevert) refuse(409, 'anchor_refused', { reason: err.reason });
-        throw err;
+      let call: Parameters<AnchorChain['send']>[0];
+      if (op === 'hold') {
+        if (rec.pendingKind !== CHANGE_KIND.None) refuse(409, 'change_pending', { pendingNonce: rec.pendingNonce.toString() });
+        if (rec.frozenUntil * 1000 > now) refuse(409, 'frozen', { frozenUntil: rec.frozenUntil });
+        const sig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'Hold', { handleId: id, nonce: rec.nonce, deadline });
+        call = { functionName: 'hold', args: [id, deadline, sig] };
+      } else if (op === 'renew') {
+        if (rec.frozenUntil * 1000 <= now) refuse(409, 'not_frozen');
+        const frozenUntil = BigInt(rec.frozenUntil);
+        const sig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'RenewHold', { handleId: id, frozenUntil, nonce: rec.nonce, deadline });
+        call = { functionName: 'renewHold', args: [id, frozenUntil, deadline, sig] };
+      } else {
+        if (rec.pendingKind === CHANGE_KIND.None) refuse(409, 'no_pending_change');
+        const pendingNonce = typeof a.body.pendingNonce === 'string' && /^\d{1,20}$/.test(a.body.pendingNonce) ? BigInt(a.body.pendingNonce) : rec.pendingNonce;
+        if (pendingNonce !== rec.pendingNonce) refuse(409, 'pending_changed', { pendingNonce: rec.pendingNonce.toString() });
+        const sig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'Veto', { handleId: id, pendingNonce, nonce: rec.nonce, deadline });
+        call = { functionName: 'veto', args: [id, pendingNonce, deadline, sig] };
       }
+      // Recorded before the send: a veto that may land always counts against unfreeze (q15), and every send against the budget.
       await a.registry.recordFreeze(row.handleId, op, rec.owner, now);
-      handlesLog({ route: 'hold-record', op });
-      return c.json({ ok: true, txHash });
+      const sent = await sendAndWait(chain, call);
+      handlesLog({ route: 'hold-record', op, receipt: sent.receipt });
+      return c.json({ ok: true, ...sent }, sent.receipt === 'success' ? 200 : 202);
     }),
   );
 
@@ -645,17 +701,16 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     '/:label/advance',
     handle('advance', async (c) => {
       const a = await admit(c, 'slow', ['install-proof', 'locator-pin']);
-      const row = await ownRow(c, a);
       const chain = chainOrRefuse(c);
+      // ASSUMPTION(0086 q13): a releasing label is moved to the release key by an advance, and its release queued again.
+      const { row, rec } = await ownOnChain(c, a, chain, ['active', 'releasing']);
       const b = a.body;
       const now = deps.now();
       const newOwner = address(b, 'newOwner');
       const newMetaAddress = meta(b, 'newMetaAddress');
       const deadline = uint(b, 'deadline');
       if (deadline <= Math.floor(now / 1000) || deadline > Math.floor(now / 1000) + 3600) refuse(400, 'bad_request', { field: 'deadline', hint: 'within the hour' });
-      const rec = await chain.record(row.handleId as Hex);
       // An advance is open on a frozen record and clears a pending change (rule 3).
-      onChainAs(rec, row, now, { frozenOk: true, pendingOk: true });
       const id = row.handleId as Hex;
       const fields = { handleId: id, newMetaAddress, nonce: rec.nonce, deadline: BigInt(deadline) };
       const ownerSig = signature(b, 'ownerSignature');
@@ -664,7 +719,15 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       if (!o || o.toLowerCase() !== row.owner!.toLowerCase()) refuse(401, 'bad_signature', { field: 'Advance' });
       const n = await anchorSigner(HANDLES_CHAIN_ID, chain.anchor, 'AdvanceAccept', { ...fields, previousOwner: rec.owner }, newOwnerSig);
       if (!n || n !== newOwner) refuse(401, 'bad_signature', { field: 'AdvanceAccept' });
+      // A releasing label's release, signed by the new key at the nonce the advance leaves.
+      let release: { deadline: string; ownerSig: Hex } | null = null;
+      if (row.state === 'releasing') {
+        const after = { ...rec, nonce: rec.nonce + 1n, owner: newOwner };
+        release = await releaseInput(b, chain, after, id, newOwner, now, claimDelayRange(c.env)[1]);
+      }
+      await registrarBudget(a, row.handleId, now);
       const registrarSig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'RegistrarAdvance', { ...fields, previousOwner: rec.owner, newOwner });
+      await a.registry.recordFreeze(row.handleId, 'advance', rec.owner, now);
       let txHash: Hex;
       try {
         txHash = await chain.send({ functionName: 'advance', args: [id, newOwner, newMetaAddress, BigInt(deadline), ownerSig, newOwnerSig, registrarSig] });
@@ -672,8 +735,12 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         if (err instanceof AnchorRevert) refuse(409, 'anchor_refused', { reason: err.reason });
         throw err;
       }
-      await a.registry.advanced(id, a.identity, row.serial!, newOwner, newMetaAddress, now);
-      return c.json({ ok: true, txHash, owner: newOwner, metaAddress: newMetaAddress });
+      // The row follows only once mined: the relay settles the job if the receipt is late.
+      await a.registry.queueAdvance(id, { owner: newOwner, metaAddress: newMetaAddress, ...(release ? { releaseDeadline: release.deadline, releaseSig: release.ownerSig } : {}) }, txHash!, now);
+      const receipt = await chain.waitReceipt(txHash!, RECEIPT_WAIT_MS);
+      if (receipt === 'reverted') refuse(409, 'anchor_refused', { reason: 'tx_reverted', txHash: txHash! });
+      if (receipt === 'success') await a.registry.settleAdvances(id, now, randomDelayMs(claimDelayRange(c.env)));
+      return c.json({ ok: true, txHash: txHash!, receipt, owner: newOwner, metaAddress: newMetaAddress }, receipt === 'success' ? 200 : 202);
     }),
   );
 
@@ -683,33 +750,27 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     '/:label/unfreeze',
     handle('unfreeze', async (c) => {
       const a = await admit(c, 'slow', ['install-proof', 'locator-pin']);
-      const row = await ownRow(c, a);
       const chain = chainOrRefuse(c);
+      const { row, rec } = await ownOnChain(c, a, chain, ['active', 'releasing']);
       const b = a.body;
       const now = deps.now();
       const frozenUntil = uint(b, 'frozenUntil');
       const deadline = uint(b, 'deadline');
       if (deadline <= Math.floor(now / 1000) || deadline > Math.floor(now / 1000) + 3600) refuse(400, 'bad_request', { field: 'deadline', hint: 'within the hour' });
-      const rec = await chain.record(row.handleId as Hex);
-      onChainAs(rec, row, now, { frozenOk: true });
       if (rec.frozenUntil * 1000 <= now) refuse(409, 'not_frozen');
       if (rec.frozenUntil !== frozenUntil) refuse(409, 'freeze_changed', { frozenUntil: rec.frozenUntil });
-      // ASSUMPTION(0086 q15): never after a veto under this owner key (a key was used against the user).
-      if (await a.registry.vetoedUnder(row.handleId, rec.owner)) refuse(409, 'vetoed');
+      // ASSUMPTION(0086 q15): never after a veto on this record (see `vetoed`).
+      if (await a.registry.vetoed(row.handleId)) refuse(409, 'vetoed');
       const id = row.handleId as Hex;
       const fields = { handleId: id, frozenUntil: BigInt(frozenUntil), nonce: rec.nonce, deadline: BigInt(deadline) };
       const ownerSig = signature(b, 'ownerSignature');
       const o = await anchorSigner(HANDLES_CHAIN_ID, chain.anchor, 'Unfreeze', fields, ownerSig);
       if (!o || o.toLowerCase() !== row.owner!.toLowerCase()) refuse(401, 'bad_signature', { field: 'Unfreeze' });
+      await registrarBudget(a, row.handleId, now);
       const registrarSig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'RegistrarUnfreeze', fields);
-      let txHash: Hex;
-      try {
-        txHash = await chain.send({ functionName: 'unfreeze', args: [id, BigInt(frozenUntil), BigInt(deadline), ownerSig, registrarSig] });
-      } catch (err) {
-        if (err instanceof AnchorRevert) refuse(409, 'anchor_refused', { reason: err.reason });
-        throw err;
-      }
-      return c.json({ ok: true, txHash });
+      await a.registry.recordFreeze(row.handleId, 'unfreeze', rec.owner, now);
+      const sent = await sendAndWait(chain, { functionName: 'unfreeze', args: [id, BigInt(frozenUntil), BigInt(deadline), ownerSig, registrarSig] });
+      return c.json({ ok: true, ...sent }, sent.receipt === 'success' ? 200 : 202);
     }),
   );
 
@@ -719,9 +780,8 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     '/:label/verified',
     handle('verified', async (c) => {
       const a = await admit(c, 'fast', []);
-      const row = await ownRow(c, a);
       const chain = chainOrRefuse(c);
-      if (!row.onchain) refuse(409, 'not_on_chain');
+      const { row } = await ownOnChain(c, a, chain);
       let bound: boolean;
       try {
         bound = await boundOf(c.env, a.account, a.session.chainId);

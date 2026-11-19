@@ -17,9 +17,14 @@
  *   anchor's delay has passed.
  * - **apply:** `applyChange` once the release is ripe and the record is not
  *   frozen; then the row is `quarantined` from the release's block time.
+ * - **advance:** sent at once by its route; settled here, so the row follows
+ *   the new key only once the transaction is mined.
  *
  * A transient failure (a node error, a pending receipt) leaves the job for the
- * next run; a contract revert is final after `MAX_ATTEMPTS`. Nothing here logs a
+ * next run; only a contract revert counts, and it is final after
+ * `MAX_ATTEMPTS`. A rename's claim that fails for good gives the old label back
+ * (its queued release is cancelled). One run at a time: a D1 lease, so two runs
+ * never send the same job. Nothing here logs a
  * label or an account: the log line carries the job's kind, its id and the
  * revert's name.
  */
@@ -51,8 +56,22 @@ export interface RelayRun {
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
-export async function runRelay(registry: D1HandleRegistry, chain: AnchorChain, now: number): Promise<RelayRun> {
+/** How long a run holds the lease: well past one run, so a stuck run frees it. */
+export const RELAY_LEASE_MS = 5 * 60 * 1000;
+
+export async function runRelay(registry: D1HandleRegistry, chain: AnchorChain, now: number): Promise<RelayRun & { leased: boolean }> {
   const run: RelayRun = { sent: 0, done: 0, failed: 0, waiting: 0 };
+  const holder = crypto.randomUUID();
+  if (!(await registry.leaseRelay(holder, now, RELAY_LEASE_MS))) return { ...run, leased: false };
+  try {
+    await relayJobs(registry, chain, now, run);
+  } finally {
+    await registry.releaseRelay(holder).catch(() => undefined);
+  }
+  return { ...run, leased: true };
+}
+
+async function relayJobs(registry: D1HandleRegistry, chain: AnchorChain, now: number, run: RelayRun): Promise<void> {
   for (const job of await registry.dueJobs(now, RELAY_JOBS_PER_RUN)) {
     try {
       const outcome = job.state === 'sent' ? await settle(registry, chain, job, now) : await send(registry, chain, job, now);
@@ -63,12 +82,14 @@ export async function runRelay(registry: D1HandleRegistry, chain: AnchorChain, n
       handlesLog({ route: 'relay', job: job.id, kind: job.kind, error: err instanceof Error ? err.name : typeof err });
     }
   }
-  return run;
 }
 
 async function fail(registry: D1HandleRegistry, job: AnchorJob, reason: string, now: number): Promise<'failed'> {
   await registry.updateJob(job.id, { state: 'failed', error: reason }, now);
-  if (job.kind === 'claim') await registry.dropUnlandedClaim(job.handleId, job.args.owner!);
+  if (job.kind === 'claim') {
+    await registry.dropUnlandedClaim(job.handleId, job.args.owner!);
+    if (job.args.renameOf) await registry.restoreRenamed(job.args.renameOf, now);
+  }
   handlesLog({ route: 'relay', job: job.id, kind: job.kind, failed: reason });
   return 'failed';
 }
@@ -84,6 +105,11 @@ async function reverted(registry: D1HandleRegistry, job: AnchorJob, reason: stri
 async function send(registry: D1HandleRegistry, chain: AnchorChain, job: AnchorJob, now: number): Promise<keyof RelayRun> {
   const rec = await chain.record(job.handleId);
   const nowS = Math.floor(now / 1000);
+  if (job.kind === 'advance') {
+    // Requeued after its receipt went missing: the chain says whether it landed.
+    if (same(rec.owner, job.args.owner!)) return followAdvance(registry, job, now);
+    return fail(registry, job, 'advance_not_landed', now);
+  }
   let txHash: Hex;
   try {
     if (job.kind === 'claim') {
@@ -150,7 +176,12 @@ async function settle(registry: D1HandleRegistry, chain: AnchorChain, job: Ancho
     await registry.updateJob(job.id, { state: 'queued' }, now);
     return 'waiting';
   }
-  if (status === 'reverted') return reverted(registry, job, 'tx_reverted', now);
+  if (status === 'reverted') {
+    // An advance's three signatures are good once: it is not sent again.
+    if (job.kind === 'advance') return fail(registry, job, 'tx_reverted', now);
+    return reverted(registry, job, 'tx_reverted', now);
+  }
+  if (job.kind === 'advance') return followAdvance(registry, job, now);
   const rec = await chain.record(job.handleId);
   if (job.kind === 'claim') {
     await registry.markOnChain(job.handleId, job.args.owner!, now);
@@ -160,5 +191,11 @@ async function settle(registry: D1HandleRegistry, chain: AnchorChain, job: Ancho
     await registry.markReleased(job.handleId, rec.releasedAt * 1000, now);
   }
   await registry.updateJob(job.id, { state: 'done' }, now);
+  return 'done';
+}
+
+/** A mined advance: the row and the key history follow the new key, and a releasing label's release is queued again. */
+async function followAdvance(registry: D1HandleRegistry, job: AnchorJob, now: number): Promise<'done'> {
+  await registry.settleAdvance(job, now, now + 60_000);
   return 'done';
 }

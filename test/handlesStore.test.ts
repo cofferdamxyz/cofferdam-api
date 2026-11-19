@@ -50,6 +50,7 @@ describe('migrations/handles on local D1 (node:sqlite)', () => {
       'handles_counters',
       'identity_accounts',
       'registry_nonces',
+      'relay_lease',
       'reserved_labels',
       'share_links',
       'watched_addresses',

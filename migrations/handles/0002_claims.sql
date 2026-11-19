@@ -69,7 +69,9 @@ CREATE INDEX handle_events_at ON handle_events (at);
 -- and queues `apply` once a release's delay has passed.
 CREATE TABLE anchor_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT NOT NULL CHECK (kind IN ('claim', 'release', 'apply')),
+  -- claim, release and apply wait their delay; advance is sent at once by its route and
+  -- settled here (the row follows the chain only once the transaction is mined).
+  kind TEXT NOT NULL CHECK (kind IN ('claim', 'release', 'apply', 'advance')),
   handle_id TEXT NOT NULL CHECK (length(handle_id) = 66),
   args TEXT NOT NULL,
   not_before INTEGER NOT NULL,
@@ -84,6 +86,14 @@ CREATE TABLE anchor_jobs (
 CREATE INDEX anchor_jobs_due ON anchor_jobs (not_before) WHERE state IN ('queued', 'sent');
 CREATE INDEX anchor_jobs_handle ON anchor_jobs (handle_id, state);
 
+-- One relay run at a time: the cron runs every minute and a run that overlaps
+-- another (a slow node) sends nothing, so no job is sent twice.
+CREATE TABLE relay_lease (
+  name TEXT PRIMARY KEY,
+  holder TEXT NOT NULL,
+  until INTEGER NOT NULL
+);
+
 -- ── Freezes the registrar signed (q15) ───────────────────────────────────────
 -- ASSUMPTION(0086 q15), recommended: the plane signs `unfreeze` only for a freeze
 -- with no veto since the record's last owner change; a veto means a key was used
@@ -91,7 +101,9 @@ CREATE INDEX anchor_jobs_handle ON anchor_jobs (handle_id, state);
 CREATE TABLE handle_freezes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   handle_id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('hold', 'renew', 'veto')),
+  -- Every transaction the registrar pays for on a user's request: the per-handle
+  -- daily cap counts these rows (a hold, a renewal, a veto, an advance, an unfreeze).
+  kind TEXT NOT NULL CHECK (kind IN ('hold', 'renew', 'veto', 'advance', 'unfreeze')),
   owner TEXT NOT NULL,
   at INTEGER NOT NULL
 );
@@ -114,6 +126,19 @@ CREATE TABLE watched_addresses (
   paid_at INTEGER
 );
 CREATE INDEX watched_addresses_identity ON watched_addresses (identity);
+
+-- The watched addresses, counted like the share links, so a registration can be
+-- refused past a ceiling: a `self` registration costs nothing to compute, and
+-- no flood of them may fill the database the registry shares.
+INSERT INTO handles_counters (name, n) VALUES ('watched_addresses', 0);
+CREATE TRIGGER watched_addresses_counted_in AFTER INSERT ON watched_addresses
+BEGIN
+  UPDATE handles_counters SET n = n + 1 WHERE name = 'watched_addresses';
+END;
+CREATE TRIGGER watched_addresses_counted_out AFTER DELETE ON watched_addresses
+BEGIN
+  UPDATE handles_counters SET n = n - 1 WHERE name = 'watched_addresses';
+END;
 
 -- The rename's 30-day limit and the hold's relapse block read these.
 CREATE INDEX handles_identity_state ON handles (identity, state);
