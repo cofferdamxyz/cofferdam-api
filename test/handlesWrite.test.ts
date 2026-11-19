@@ -485,13 +485,16 @@ describe('release and rename', () => {
     expect(signer).toBe(w.anchor.registrar.address);
     expect((await w.get('/ana')).status).toBe(404);
     expect(await json(await w.get('/ana-b'))).toMatchObject({ onChain: false });
-    // The release waits its own delay (60 to 300 s), after the new claim's.
+    // The release waits its own delay (60 to 300 s) and for the new label's claim to land.
     w.advance(301_000);
-    await w.relay();
-    expect(w.anchor.sent.map((s) => s.functionName).sort()).toEqual(['claim', 'claim', 'release']);
-    // A second rename within 30 days is refused.
-    await w.relay();
+    await w.relay(); // the new claim is sent; the release waits for it
+    expect(w.anchor.sent.map((s) => s.functionName)).toEqual(['claim', 'claim']);
+    await w.relay(); // the new claim's receipt
+    // A second rename within 30 days is refused (asked inside the slow session's life).
     expect(await json(await w.post('/ana-b/rename', body, { slow: true }))).toMatchObject({ error: 'rename_limit' });
+    w.advance(601_000);
+    await w.relay();
+    expect(w.anchor.sent.map((s) => s.functionName)).toEqual(['claim', 'claim', 'release']);
   });
 });
 
@@ -633,7 +636,10 @@ describe('review round 1', () => {
     await w.relay();
     expect((await w.get('/ana-b')).status).toBe(404);
     expect(await json(await w.get('/ana'))).toMatchObject({ owner: owner0.address, onChain: true });
-    expect((await w.registry.jobsOf(handleIdOf('ana'))).filter((j) => j.kind === 'release').map((j) => j.state)).toEqual(['cancelled']);
+    // Cancelled while queued, or failed when its turn came after the claim's failure: never sent.
+    const [release] = (await w.registry.jobsOf(handleIdOf('ana'))).filter((j) => j.kind === 'release');
+    expect(['cancelled', 'failed']).toContain(release!.state);
+    expect(w.anchor.sent.map((s) => s.functionName)).toEqual(['claim']);
   });
 
   it('refuses unfreeze after a veto even once the record advanced to another key', async () => {

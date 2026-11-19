@@ -322,7 +322,8 @@ export class D1HandleRegistry {
       // one-handle index refuses the new row's insert below and the whole batch rolls back.
       db.prepare("INSERT INTO handle_events (identity, install_tag, kind, at) VALUES (?, ?, 'rename', ?)").bind(w.identity, w.installTag, w.now),
       ...this.claimStatements(w),
-      this.jobStatement('release', oldHandleId, { owner: lower(release.owner), deadline: release.deadline, ownerSig: release.ownerSig }, release.relayAt, w.now),
+      // The old label's release waits for the new label's claim to land, whatever the delays drawn.
+      this.jobStatement('release', oldHandleId, { owner: lower(release.owner), deadline: release.deadline, ownerSig: release.ownerSig, afterClaim: w.handleId }, release.relayAt, w.now),
     ]);
   }
 

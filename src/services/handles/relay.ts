@@ -13,7 +13,8 @@
  *   record another key owns, or whose serial moved, fails the job and drops the
  *   row, so the label and the identity are free again.
  * - **release:** the owner's `Release`, signed at the request; waits while the
- *   label's claim has not landed. Once mined, `apply` is queued for when the
+ *   label's claim has not landed, and a rename's waits for the new label's
+ *   claim to land first (it fails, keeping the old label, if that claim did). Once mined, `apply` is queued for when the
  *   anchor's delay has passed.
  * - **apply:** `applyChange` once the release is ripe and the record is not
  *   frozen; then the row is `quarantined` from the release's block time.
@@ -131,7 +132,16 @@ async function send(registry: D1HandleRegistry, chain: AnchorChain, job: AnchorJ
       });
       txHash = await chain.send({ functionName: 'claim', args: [job.handleId, owner as Hex, metaAddress as Hex, deadline, registrarSig, ownerSig as Hex] });
     } else if (job.kind === 'release') {
-      const { owner, deadline, ownerSig } = job.args as Record<string, string>;
+      const { owner, deadline, ownerSig, afterClaim } = job.args as Record<string, string>;
+      if (afterClaim) {
+        // A rename's release goes only once the new label is on chain; if its claim failed, the label stays.
+        const renamed = await registry.rowById(afterClaim);
+        if (!renamed || renamed.state !== 'active') return fail(registry, job, 'rename_claim_failed', now);
+        if (!renamed.onchain) {
+          await registry.updateJob(job.id, { state: 'queued', notBefore: now + RELEASE_RETRY_MS }, now);
+          return 'waiting';
+        }
+      }
       if (same(rec.owner, ZERO_ADDRESS)) {
         // The claim has not landed yet (or the label is already released).
         if (rec.releasedAt > 0) return fail(registry, job, 'released', now);
