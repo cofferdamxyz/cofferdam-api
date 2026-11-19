@@ -441,6 +441,44 @@ export interface Env {
    * Base Sepolia's MockUSDC and Circle USDC (decision 0086 q18, ruling F).
    */
   ANNOUNCEMENTS_TOKENS?: string;
+  /**
+   * `CofferdamHandleAnchor` on Base Sepolia (decision 0086 rule 3), once the
+   * founder deploys it. Unset, the claim and every route that signs or relays
+   * answers `503 anchor_unconfigured`, and the relay sends nothing.
+   */
+  HANDLE_ANCHOR_ADDRESS?: string;
+  /**
+   * Secret: the registrar's private key (0x and 64 hex), on the anchor's
+   * Safe-owned registrar list; it signs the registrar's typed data and pays the
+   * gas of the calls the relay sends (ASSUMPTION(0086 ruling P)). The founder
+   * sets it with `wrangler secret put HANDLE_REGISTRAR_KEY`; no session reads it.
+   */
+  HANDLE_REGISTRAR_KEY?: string;
+  /**
+   * Secret: 32 bytes as 64 hex, the key of the identity map's tags and of the
+   * watched addresses' seals (`services/handles/mapKey.ts`). Unset, every
+   * authenticated handle route answers `503 handles_map_key_unprovisioned`.
+   */
+  HANDLES_MAP_KEY?: string;
+  /**
+   * The unbuilt gates this deployment goes without, comma-separated:
+   * `device-attestation`, `install-proof`, `locator-pin`
+   * (`services/handles/config.ts`). Ignored under `ENVIRONMENT=production`.
+   */
+  HANDLES_SKIP_UNBUILT_GATES?: string;
+  /** A claim's relay delay as `min,max` seconds (rule 3: minutes to hours); unset, 600,10800. */
+  HANDLES_RELAY_DELAY_S?: string;
+  /** A rename's release delay as `min,max` seconds (rule 3: one to seven days); unset, 86400,604800. */
+  HANDLES_RELEASE_DELAY_S?: string;
+  /**
+   * The one-time account factory the `self` check computes addresses under
+   * (0083 rule 4), with its init code hash. Both unset: the shared fixture's
+   * placeholder (ASSUMPTION(0086 ruling A)); one without the other refuses.
+   */
+  ONE_TIME_FACTORY?: string;
+  ONE_TIME_INIT_CODE_HASH?: string;
+  /** The authenticated handle routes' per-account bucket (`handles-acct:<account>`), counted after the gate. */
+  HANDLES_ACCOUNT_RL?: RateLimit;
 
   // ── Service bindings ────────────────────────────────────────────
   /**

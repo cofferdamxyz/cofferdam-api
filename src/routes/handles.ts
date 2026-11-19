@@ -30,9 +30,12 @@
  * client treats as unchecked (ASSUMPTION(0086 q22)); the client checks every
  * answer against the anchor on Base (rule 5), so the plane's answer is a hint.
  *
- * Not built here (they wait on the SDK's typed data, the anchor, device
- * attestation and device sync): claim, the hold, `self`, search, inbox,
- * discovery, rename, release, hold and veto, the pay link and the relay.
+ *   GET /v1/handles/search?q=<prefix>  → 200 { ok, results: [{ label, inboxId }] } (rule 6: discoverable, active, 3+ characters, at most 20)
+ *   GET /v1/handles/:label/inbox       → 200 { ok, label, inboxId } | 404 (not discoverable answers as absent)
+ *   GET /v1/handles/registrar          → 200 { ok, chainId, anchor, registrar } | 503 anchor_unconfigured
+ *
+ * The authenticated routes (claim, hold, discovery, `self`, rename, release,
+ * the registrar's actions) are `routes/handlesWrite.ts`.
  * ASSUMPTION(0086 q18): there is no pending route, so none is built later.
  */
 
@@ -42,6 +45,18 @@ import type { Env } from '../env.js';
 import { readHandle } from '../services/handles/grammar.js';
 import { handlesLog, publicLimit } from '../services/handles/limits.js';
 import { availabilityOf, D1HandleStore, quarantineMs, resolutionOf, type HandleStore } from '../services/handles/store.js';
+import { registrarOf } from '../services/handles/anchor.js';
+import { anchorAddressOf, HANDLES_CHAIN_ID } from '../services/handles/config.js';
+import { D1HandleRegistry } from '../services/handles/registry.js';
+
+/** Search answers at most this many handles (rule 6). */
+export const SEARCH_LIMIT = 20;
+
+/** A search prefix: 3 to 64 of the stored grammar's characters, upper case and a leading `@` accepted. */
+export function readHandlePrefix(raw: string | undefined): string | null {
+  const q = raw?.trim().replace(/^@/, '').toLowerCase();
+  return q && /^[a-z0-9-]{3,64}$/.test(q) ? q : null;
+}
 
 export interface HandlesRouteDeps {
   /** The registry, or null when `HANDLES_DB` is not bound (default: from the env). */
@@ -69,7 +84,9 @@ function unavailable(c: HandlesContext, route: string, err: unknown): Response {
 }
 
 /** The words a path under `/v1/handles/:label/` may end in that a log line keeps. */
-const HANDLE_ROUTE_WORDS = new Set(['available', 'inbox', 'self']);
+const HANDLE_ROUTE_WORDS = new Set(['available', 'inbox', 'self', 'discoverable', 'release', 'rename', 'hold-record', 'advance', 'unfreeze', 'verified']);
+/** The words a path `/v1/handles/<word>` may be that are routes, not labels (each is on the reserved list or not a valid label's route). */
+const HANDLE_TOP_WORDS = new Set(['mine', 'hold', 'claim', 'search', 'registrar']);
 
 /** `/v1/handles/…` or `/v1/handshake/links/…`, with any run of slashes, in a decoded word. */
 const HANDLES_PREFIX = /\/+v1\/+handles(?:\/|$)/i;
@@ -97,6 +114,7 @@ export function redactHandlePath(line: string): string {
     if (!at) return HANDLES_PREFIX.test(word) ? '/v1/handles/:label' : word;
     const parts = path.slice(at.index + at[0].length).split(/[?#]/)[0]!.split('/').filter(Boolean);
     if (!parts.length) return '/v1/handles';
+    if (parts.length === 1 && HANDLE_TOP_WORDS.has(parts[0]!)) return `/v1/handles/${parts[0]}`;
     const known = parts.length === 2 && HANDLE_ROUTE_WORDS.has(parts[1]!) ? `/${parts[1]}` : parts.length > 1 ? '/…' : '';
     return `/v1/handles/:label${known}`;
   });
@@ -109,6 +127,51 @@ export function createHandlesRoutes(deps: HandlesRouteDeps = defaultHandlesRoute
   routes.use('*', async (c, next) => {
     await next();
     c.res.headers.set('cache-control', 'no-store');
+  });
+
+  // Before `/:label`: `search` and `registrar` are route words (both on the reserved list).
+  routes.get('/search', async (c) => {
+    const limited = await publicLimit(c, 'handles');
+    if (limited) return limited;
+    const q = readHandlePrefix(c.req.query('q'));
+    if (!q) return c.json({ ok: false, error: 'bad_query', hint: 'at least 3 of a-z, 0-9 and -' }, 400);
+    const db = c.env.HANDLES_DB;
+    if (!db) return unprovisioned(c);
+    try {
+      const results = await new D1HandleRegistry(db).search(q, SEARCH_LIMIT);
+      handlesLog({ route: 'search', found: results.length });
+      return c.json({ ok: true, results });
+    } catch (err) {
+      return unavailable(c, 'search', err);
+    }
+  });
+
+  routes.get('/registrar', async (c) => {
+    const limited = await publicLimit(c, 'handles');
+    if (limited) return limited;
+    const anchor = anchorAddressOf(c.env);
+    const registrar = registrarOf(c.env);
+    if (!anchor || !registrar) return c.json({ ok: false, error: 'anchor_unconfigured' }, 503);
+    return c.json({ ok: true, chainId: HANDLES_CHAIN_ID, anchor, registrar: registrar.address });
+  });
+
+  routes.get('/:label/inbox', async (c) => {
+    const limited = await publicLimit(c, 'handles');
+    if (limited) return limited;
+    const label = readHandle(c.req.param('label'));
+    if (!label) return badLabel(c);
+    const store = storeOf(c.env);
+    if (!store) return unprovisioned(c);
+    try {
+      // Rule 6: only while discoverable; otherwise exactly as a label nobody holds.
+      const row = await store.row(label);
+      const found = row?.state === 'active' && row.discoverable && row.inboxId;
+      handlesLog({ route: 'inbox', found: Boolean(found) });
+      if (!found) return c.json({ ok: false, error: 'not_found' }, 404);
+      return c.json({ ok: true, label, inboxId: row.inboxId });
+    } catch (err) {
+      return unavailable(c, 'inbox', err);
+    }
   });
 
   routes.get('/:label/available', async (c) => {
