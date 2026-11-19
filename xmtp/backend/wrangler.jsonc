@@ -13,6 +13,10 @@
  *   XMTP_R2_ENDPOINT           https://<account id>.r2.cloudflarestorage.com
  *   XMTP_R2_ACCESS_KEY_ID      R2 API token, Object Write on the bucket only
  *   XMTP_R2_SECRET_ACCESS_KEY
+ *   XMTP_TLS_CERT              PEM chain for xmtp.cofferdam.xyz, publicly trusted
+ *                              (Let's Encrypt, DNS-01); Spectrum on a Pro zone
+ *                              passes TLS through, so the container serves it
+ *   XMTP_TLS_KEY               its PEM private key (Caddy only, never the backend)
  */
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
@@ -30,8 +34,9 @@
   "preview_urls": false,
 
   "vars": {
-    // "off" until the Spectrum application for inbound TCP exists and points at
-    // this Worker; then "tcp". See docs/runbooks/xmtp-backend.md (workspace).
+    // "off" until the Spectrum application (xmtp.cofferdam.xyz, TCP 443, Worker
+    // origin; public beta since 2026-11-19) points at this Worker; then "tcp".
+    // See docs/runbooks/xmtp-backend.md (workspace).
     "INGRESS": "off",
     // "on" keeps the container up around the clock; "off" pauses it (src/index.ts).
     // Paused 2026-11-04 until inbound TCP exists: nothing could reach it, and the

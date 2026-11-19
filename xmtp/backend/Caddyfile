@@ -1,0 +1,34 @@
+# TLS in front of the XMTP backend (workspace decision 0042, amended 2026-11-19).
+#
+# Spectrum on a Pro zone passes TCP through without ending TLS, so the container
+# ends it: Caddy serves xmtp.cofferdam.xyz's certificate on :8443, advertises h2
+# over ALPN, and forwards gRPC (unary and streaming) to the backend's plaintext
+# listener as h2c. ./start.sh writes the certificate and key from the
+# XMTP_TLS_CERT and XMTP_TLS_KEY secrets before Caddy starts.
+#
+# Decision 0039: no access log (a site `log` directive would add one), no admin
+# endpoint, no ACME (the certificate comes from the secrets, never from here).
+{
+	admin off
+	auto_https off
+	persist_config off
+	# Spectrum carries TCP only: no HTTP/3 (UDP) listener.
+	servers {
+		protocols h1 h2
+	}
+	log {
+		output stderr
+		level ERROR
+	}
+}
+
+:8443 {
+	tls /run/xmtp-tls/cert.pem /run/xmtp-tls/key.pem
+	reverse_proxy h2c://127.0.0.1:5050 {
+		# Stream every frame as it arrives (gRPC server streams stay open).
+		flush_interval -1
+		transport http {
+			versions h2c
+		}
+	}
+}

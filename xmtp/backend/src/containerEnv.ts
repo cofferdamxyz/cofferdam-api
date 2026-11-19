@@ -21,6 +21,14 @@ export interface BackendEnv {
   /** Secret. R2 API token, Object Write on the attachments bucket only. */
   XMTP_R2_ACCESS_KEY_ID?: string;
   XMTP_R2_SECRET_ACCESS_KEY?: string;
+  /**
+   * Secret. PEM chain for the Spectrum hostname (leaf first), publicly trusted:
+   * Spectrum on a Pro zone passes TLS through, so the container's Caddy serves it
+   * (../Caddyfile, ../start.sh; decision 0042, amended 2026-11-19).
+   */
+  XMTP_TLS_CERT?: string;
+  /** Secret. The certificate's PEM private key. Only Caddy reads it; the backend never gets it. */
+  XMTP_TLS_KEY?: string;
 }
 
 export const BACKEND_ENV_NAMES = [
@@ -33,10 +41,13 @@ export const BACKEND_ENV_NAMES = [
   'XMTP_R2_SECRET_ACCESS_KEY',
 ] as const satisfies readonly (keyof BackendEnv)[];
 
+/** The container's TLS material, read by ../start.sh, never by backend.toml. */
+export const TLS_ENV_NAMES = ['XMTP_TLS_CERT', 'XMTP_TLS_KEY'] as const satisfies readonly (keyof BackendEnv)[];
+
 export function containerEnv(env: BackendEnv): Record<string, string> {
   const out: Record<string, string> = {};
   const missing: string[] = [];
-  for (const name of BACKEND_ENV_NAMES) {
+  for (const name of [...BACKEND_ENV_NAMES, ...TLS_ENV_NAMES]) {
     const value = env[name];
     if (typeof value === 'string' && value.length > 0) out[name] = value;
     else missing.push(name);
@@ -52,6 +63,12 @@ export function containerEnv(env: BackendEnv): Record<string, string> {
     throw new Error('xmtp-backend: drop sslrootcert=system from XMTP_DATABASE_URL (sqlx reads it as a file); keep sslmode=verify-full');
   }
   if (out.XMTP_APP_API_KEY!.length < 32) throw new Error('xmtp-backend: XMTP_APP_API_KEY must be 32+ characters');
+  if (!/^-----BEGIN CERTIFICATE-----/.test(out.XMTP_TLS_CERT!.trim())) {
+    throw new Error('xmtp-backend: XMTP_TLS_CERT must be a PEM certificate chain');
+  }
+  if (!/^-----BEGIN (EC |RSA )?PRIVATE KEY-----/.test(out.XMTP_TLS_KEY!.trim())) {
+    throw new Error('xmtp-backend: XMTP_TLS_KEY must be a PEM private key');
+  }
   return out;
 }
 

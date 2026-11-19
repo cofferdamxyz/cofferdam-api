@@ -9,13 +9,16 @@
  * the container is always on (the backend's tailer and push dispatcher must keep
  * running even with no client connected).
  *
- * Ingress is a slot: Cloudflare's inbound TCP for Workers is a private beta
- * (a Spectrum application whose target is this Worker). When the beta is on and
- * `INGRESS` is "tcp", Spectrum ends TLS (ALPN h2) and hands the plaintext stream
- * to `connect()` below, which splices it to the container's port 5050 as h2c.
- * Nothing adds a PROXY protocol header, so no client IP reaches the backend
- * (decision 0039). Until then `connect()` refuses every socket and the Worker
- * has no route, no workers.dev URL and no HTTP surface.
+ * Ingress is Cloudflare's inbound TCP for Workers (public beta since
+ * 2026-11-19): a Spectrum application on `xmtp.cofferdam.xyz:443` whose origin
+ * is this Worker. On a Pro zone Spectrum passes TLS through, so when `INGRESS`
+ * is "tcp" `connect()` below splices the client's still-encrypted stream to the
+ * container's port 8443, where Caddy ends TLS (ALPN h2) and forwards h2c to the
+ * backend on 127.0.0.1:5050 (../Caddyfile, ../start.sh; decision 0042, amended
+ * 2026-11-19). Nothing adds a PROXY protocol header, so no client IP reaches the
+ * backend (decision 0039); the Worker reads none either. Otherwise `connect()`
+ * refuses every socket, and the Worker has no route, no workers.dev URL and no
+ * HTTP surface.
  *
  * `RUN` is the on/off switch (paused 2026-11-04: with ingress off no phone can
  * reach the backend, yet the cron kept the object and its container up around
@@ -28,7 +31,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
 import { containerEnv, envFingerprint, running, type BackendEnv } from './containerEnv.js';
-import { openUpstream, splice } from './socket.js';
+import { PASSTHROUGH, openUpstream, splice } from './socket.js';
 
 export interface Env extends BackendEnv {
   XMTP_BACKEND: DurableObjectNamespace<XmtpBackend>;
@@ -38,8 +41,8 @@ export interface Env extends BackendEnv {
   RUN?: string;
 }
 
-/** The backend's plaintext listener (backend.toml `server.listen`). */
-export const BACKEND_PORT = 5050;
+/** Caddy's TLS listener in front of the backend (../Caddyfile); the backend itself is on 5050. */
+const INGRESS_PORT = 8443;
 const INSTANCE = 'primary';
 const KEEPALIVE_MS = 60_000;
 /** Storage key: a fingerprint of the environment the running container was started with. */
@@ -105,7 +108,7 @@ export class XmtpBackend extends DurableObject<Env> {
     return { running: this.ctx.container?.running ?? false };
   }
 
-  /** A client stream from the Worker's `connect()`, spliced to port 5050. */
+  /** A client stream from the Worker's `connect()`, spliced to Caddy's port 8443. */
   override async connect(socket: Socket): Promise<void> {
     if (!running(this.env)) {
       await socket.close();
@@ -113,7 +116,7 @@ export class XmtpBackend extends DurableObject<Env> {
     }
     await this.ensureStarted();
     const upstream = await openUpstream(() =>
-      this.ctx.container!.getTcpPort(BACKEND_PORT).connect(`10.0.0.1:${BACKEND_PORT}`),
+      this.ctx.container!.getTcpPort(INGRESS_PORT).connect(`10.0.0.1:${INGRESS_PORT}`, PASSTHROUGH),
     );
     await splice(socket, upstream);
   }
@@ -125,7 +128,7 @@ export default {
       await socket.close();
       return;
     }
-    const upstream = env.XMTP_BACKEND.getByName(INSTANCE).connect(`xmtp-backend:${BACKEND_PORT}`);
+    const upstream = env.XMTP_BACKEND.getByName(INSTANCE).connect(`xmtp-backend:${INGRESS_PORT}`, PASSTHROUGH);
     await splice(socket, upstream);
   },
 

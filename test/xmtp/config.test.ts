@@ -6,8 +6,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { BACKEND_ENV_NAMES, containerEnv, envFingerprint, running } from '../../xmtp/backend/src/containerEnv.js';
-import { openUpstream } from '../../xmtp/backend/src/socket.js';
+import { BACKEND_ENV_NAMES, TLS_ENV_NAMES, containerEnv, envFingerprint, running } from '../../xmtp/backend/src/containerEnv.js';
+import { PASSTHROUGH, openUpstream } from '../../xmtp/backend/src/socket.js';
 
 const root = join(__dirname, '../../xmtp');
 const toml = readFileSync(join(root, 'backend/backend.toml'), 'utf8');
@@ -96,6 +96,8 @@ describe('the container environment', () => {
     XMTP_R2_ENDPOINT: 'https://acct.r2.cloudflarestorage.com',
     XMTP_R2_ACCESS_KEY_ID: 'id',
     XMTP_R2_SECRET_ACCESS_KEY: 'secret',
+    XMTP_TLS_CERT: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+    XMTP_TLS_KEY: '-----BEGIN EC PRIVATE KEY-----\nMHc\n-----END EC PRIVATE KEY-----\n',
   };
   it('names what is missing', () => {
     expect(() => containerEnv({ ...full, XMTP_APP_API_KEY: undefined })).toThrow(/XMTP_APP_API_KEY/);
@@ -114,12 +116,29 @@ describe('the container environment', () => {
     ).toThrow(/sslrootcert=system/);
     expect(() => containerEnv({ ...full, XMTP_DATABASE_URL: 'postgresql://u:p@aws-us-east-1-5.pg.psdb.cloud:5432/postgres?sslmode=verify-full' })).not.toThrow();
   });
+  it('needs the TLS pair, as PEM, and keeps it out of backend.toml', () => {
+    expect(() => containerEnv({ ...full, XMTP_TLS_KEY: undefined })).toThrow(/XMTP_TLS_KEY/);
+    expect(() => containerEnv({ ...full, XMTP_TLS_CERT: 'not a pem' })).toThrow(/PEM certificate/);
+    expect(() => containerEnv({ ...full, XMTP_TLS_KEY: 'not a pem' })).toThrow(/PEM private key/);
+    expect(() => containerEnv({ ...full, XMTP_TLS_KEY: '-----BEGIN PRIVATE KEY-----\nMIG\n-----END PRIVATE KEY-----' })).not.toThrow();
+    for (const name of TLS_ENV_NAMES) expect(BACKEND_ENV_NAMES as readonly string[]).not.toContain(name);
+  });
   it('passes a complete set through', () => {
     expect(containerEnv(full)).toEqual(full);
   });
 });
 
 describe('the ingress splice', () => {
+  it('passes the client\'s TLS through, half-open, as the inbound-TCP example does', () => {
+    expect(PASSTHROUGH).toEqual({ allowHalfOpen: true, secureTransport: 'off' });
+    const index = readFileSync(join(root, 'backend/src/index.ts'), 'utf8');
+    expect(index.match(/\.connect\(`[^`]+`, PASSTHROUGH\)/g)).toHaveLength(2);
+    expect(index).toMatch(/INGRESS_PORT = 8443/);
+    // workerd refuses a main module that exports anything but handlers and classes.
+    expect(index.match(/^export (const|let|function) /gm)).toBeNull();
+    expect(readFileSync(join(root, 'backend/Caddyfile'), 'utf8')).toMatch(/^:8443 \{/m);
+  });
+
   it('retries the container port while it boots, then gives up at the deadline', async () => {
     let attempts = 0;
     const sock = (ok: boolean) =>

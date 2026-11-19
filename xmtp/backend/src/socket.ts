@@ -3,6 +3,13 @@
 
 /** Socket plumbing for the ingress slot, kept apart from the runtime imports so it is testable. */
 
+/**
+ * Options for both hops of the ingress (Worker to object, object to container),
+ * as Cloudflare's inbound-TCP example sets them: the bytes are the client's TLS,
+ * so neither hop adds its own, and each direction may end on its own (half-open).
+ */
+export const PASSTHROUGH: SocketOptions = { allowHalfOpen: true, secureTransport: 'off' };
+
 /** Migrations run before the listener binds; give a cold start this long. */
 export const UPSTREAM_DEADLINE_MS = 45_000;
 
