@@ -25,7 +25,7 @@ import { TIER } from '../src/services/ceremony.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
 import { AnchorRevert, CHANGE_KIND, contractRevert } from '../src/services/handles/anchor.js';
 import { handleIdOf } from '../src/services/handles/grammar.js';
-import { D1HandleRegistry } from '../src/services/handles/registry.js';
+import { D1HandleRegistry, RegistryConflict } from '../src/services/handles/registry.js';
 import { runRelay } from '../src/services/handles/relay.js';
 import { D1HandleStore } from '../src/services/handles/store.js';
 import { registrySigner, signAnchor, signRegistry } from '../src/services/handles/typedData.js';
@@ -947,8 +947,72 @@ describe('review round 2', () => {
         },
         release: { owner: owner0.address, deadline: '1', ownerSig: '0x00', relayAt: w.clock.ms },
       }),
-    ).rejects.toThrow();
+    ).rejects.toEqual(new RegistryConflict('changed'));
     expect(await w.registry.row('ana-b')).toBeNull();
     expect(w.db.sqlite.prepare('SELECT COUNT(*) AS n FROM batch_guard').get()).toEqual({ n: 0 });
+  });
+});
+
+// ── review round 3's findings ───────────────────────────────────────────────
+
+describe('review round 3', () => {
+  it("re-signs a releasing label's queued release around a veto, and the release goes out once the freeze ends", async () => {
+    const w = world();
+    await claimed(w);
+    await renameAnaToB(w);
+    w.advance(121_000);
+    await w.relay();
+    await w.relay(); // ana-b on chain
+    const id = handleIdOf('ana');
+    // A removed phone queues a transfer of the releasing label; the user vetoes it and signs the release again.
+    queueChange(w.anchor, id, getAddress('0x' + '66'.repeat(20)));
+    const rec = await w.anchor.record(id);
+    const anchorDeadline = Math.floor(w.clock.ms / 1000) + 30 * 86_400;
+    const res = await w.post(
+      '/ana/hold-record',
+      {
+        op: 'veto',
+        anchorDeadline,
+        releaseSignature: await signAnchor(owner0, 84532, TEST_ANCHOR, 'Release', { handleId: id, nonce: rec.nonce + 1n, deadline: BigInt(anchorDeadline) }),
+      },
+      { slow: true },
+    );
+    expect(await json(res)).toMatchObject({ ok: true, release: 'requeued' });
+    const queued = (await w.registry.jobsOf(id)).filter((j) => j.kind === 'release' && j.state === 'queued');
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.args.afterClaim).toBe(handleIdOf('ana-b'));
+    // The relay waits out the freeze, then sends the release.
+    w.anchor.records.set(id, { ...(await w.anchor.record(id)), frozenUntil: w.anchor.clock.now + 60 });
+    w.advance(601_000);
+    await w.relay();
+    expect(w.anchor.sent.filter((c) => c.functionName === 'release')).toHaveLength(1);
+  });
+
+  it('cancels the stale release when a veto carries no new signature, and /release works on the frozen releasing label', async () => {
+    const w = world();
+    await claimed(w);
+    await renameAnaToB(w);
+    const id = handleIdOf('ana');
+    queueChange(w.anchor, id, getAddress('0x' + '66'.repeat(20)));
+    expect(await json(await w.post('/ana/hold-record', { op: 'veto' }, { slow: true }))).toMatchObject({ ok: true, release: 'resign' });
+    expect((await w.registry.jobsOf(id)).filter((j) => j.kind === 'release' && j.state === 'queued')).toEqual([]);
+    const n = nonce();
+    const expiresAt = exp(w);
+    const signature = await signRegistry(owner0, 84532, 'ReleaseHandle', { handleId: id, serial: 1n, nonce: n, expiresAt: BigInt(expiresAt) });
+    const rec = await w.anchor.record(id);
+    const anchorDeadline = rec.frozenUntil + 9 * 86_400;
+    const releaseSignature = await signAnchor(owner0, 84532, TEST_ANCHOR, 'Release', { handleId: id, nonce: rec.nonce, deadline: BigInt(anchorDeadline) });
+    expect((await w.post('/ana/release', { nonce: n, expiresAt, signature, anchorDeadline, releaseSignature }, { slow: true })).status).toBe(200);
+  });
+
+  it('refuses a rename or a release while an advance is unmined', async () => {
+    const w = world();
+    await claimed(w);
+    const id = handleIdOf('ana');
+    await w.registry.queueAdvance(id, { owner: owner1.address, metaAddress: META1 }, ('0x' + 'cc'.repeat(32)) as Hex, w.clock.ms);
+    const n = nonce();
+    const expiresAt = exp(w);
+    const signature = await signRegistry(owner0, 84532, 'ReleaseHandle', { handleId: id, serial: 1n, nonce: n, expiresAt: BigInt(expiresAt) });
+    expect(await json(await w.post('/ana/release', { nonce: n, expiresAt, signature, ...(await releaseSig(w, 'ana')) }, { slow: true }))).toMatchObject({ error: 'advance_pending' });
   });
 });

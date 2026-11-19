@@ -90,7 +90,8 @@ async function relayJobs(registry: D1HandleRegistry, chain: AnchorChain, now: nu
       // A node error: the job keeps its state, pushed back so that others get their turn.
       run.waiting++;
       handlesLog({ route: 'relay', job: job.id, kind: job.kind, error: err instanceof Error ? err.name : typeof err });
-      await registry.updateJob(job.id, { state: job.state, notBefore: now + TRANSIENT_BACKOFF_MS, error: job.error }, now).catch(() => undefined);
+      // Only the turn moves: a route may have cancelled or requeued the job meanwhile, and that stands.
+      await registry.pushBack(job.id, now + TRANSIENT_BACKOFF_MS).catch(() => undefined);
     }
   }
 }
@@ -156,6 +157,11 @@ async function send(registry: D1HandleRegistry, chain: AnchorChain, job: AnchorJ
         return 'waiting';
       }
       if (!same(rec.owner, owner!)) return fail(registry, job, 'owner_changed', now);
+      if (rec.frozenUntil * 1000 > now) {
+        // The anchor queues no change on a frozen record: wait for the freeze to end.
+        await registry.updateJob(job.id, { state: 'queued', notBefore: rec.frozenUntil * 1000 + 1000 }, now);
+        return 'waiting';
+      }
       if (rec.pendingKind === CHANGE_KIND.Release) {
         await registry.queueApply(job.handleId, rec.pendingReadyAt * 1000, now);
         await registry.updateJob(job.id, { state: 'done' }, now);

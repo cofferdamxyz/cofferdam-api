@@ -21,22 +21,25 @@ import { fromRow, type HandleRow, type Row } from './store.js';
 
 /** A write that lost a race on a unique key: the label, the identity's one handle, an address. */
 export class RegistryConflict extends Error {
-  constructor(message = 'registry conflict') {
-    super(message);
+  /** `taken`: a unique key (the label, the identity's one handle); `changed`: a batch guard (a row moved meanwhile). */
+  constructor(readonly kind: 'taken' | 'changed' = 'taken') {
+    super(`registry conflict: ${kind}`);
     this.name = 'RegistryConflict';
   }
 }
 
-function isConstraint(err: unknown): boolean {
+function constraintKind(err: unknown): 'taken' | 'changed' | null {
   const m = err instanceof Error ? `${err.message} ${String((err as { cause?: unknown }).cause ?? '')}` : String(err);
-  return /UNIQUE constraint failed|PRIMARY KEY|SQLITE_CONSTRAINT/i.test(m);
+  if (/CHECK constraint failed/i.test(m)) return 'changed';
+  return /UNIQUE constraint failed|PRIMARY KEY|SQLITE_CONSTRAINT/i.test(m) ? 'taken' : null;
 }
 
 async function batchOrConflict(db: D1Database, stmts: D1PreparedStatement[]): Promise<void> {
   try {
     await db.batch(stmts);
   } catch (err) {
-    if (isConstraint(err)) throw new RegistryConflict();
+    const kind = constraintKind(err);
+    if (kind) throw new RegistryConflict(kind);
     throw err;
   }
 }
@@ -421,6 +424,34 @@ export class D1HandleRegistry {
     for (const job of await this.jobsOf(handleId)) {
       if (job.kind === 'advance' && job.state === 'sent' && job.txHash?.toLowerCase() === txHash.toLowerCase()) await this.settleAdvance(job, now);
     }
+  }
+
+  /**
+   * A releasing label's queued release made stale by a registrar call that
+   * raised the record's nonce (a hold, renewal, veto or unfreeze): requeued
+   * with the owner's new signature (keeping a rename's `afterClaim` and its
+   * time), or, without one, cancelled, so the relay does not spend its tries
+   * and the user signs `/release` again.
+   */
+  async resignRelease(handleId: string, fresh: { owner: Address; deadline: string; ownerSig: Hex; relayAt: number } | null, now: number): Promise<void> {
+    const queued = await this.queuedRelease(handleId);
+    if (!queued) return;
+    if (!fresh) {
+      await this.db.prepare(`UPDATE anchor_jobs SET state = 'cancelled', error = 'resign', updated_at = ? WHERE id = ? AND state = 'queued'`).bind(now, queued.id).run();
+      return;
+    }
+    const args: Record<string, string> = { owner: lower(fresh.owner), deadline: fresh.deadline, ownerSig: fresh.ownerSig };
+    if (queued.args.afterClaim) args.afterClaim = queued.args.afterClaim;
+    await this.db.batch(this.requeueStatements(handleId, args, Math.max(queued.notBefore, fresh.relayAt), now));
+  }
+
+  /** Whether an advance of the record is sent and not yet settled. */
+  async advancePending(handleId: string): Promise<boolean> {
+    const r = await this.db
+      .prepare(`SELECT 1 AS hit FROM anchor_jobs WHERE handle_id = ? AND kind = 'advance' AND state IN ('queued', 'sent') LIMIT 1`)
+      .bind(handleId)
+      .first<{ hit: number }>();
+    return r !== null;
   }
 
   /** The queued release of a label, if one is waiting (a rename's carries `afterClaim`). */

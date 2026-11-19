@@ -93,6 +93,8 @@ type HContext = Context<{ Bindings: Env }>;
 
 /** How long a registrar route waits for its transaction's receipt, as the AA relay does. */
 export const RECEIPT_WAIT_MS = 20_000;
+/** A release re-signed beside a hold or a veto waits out the freeze it sets: 0086's 14 days. */
+export const RELEASE_FREEZE_MARGIN_S = 14 * 24 * 60 * 60;
 /** Registrar-paid transactions per record per day (hold, renewal, veto, advance, unfreeze). */
 export const REGISTRAR_SENDS_PER_DAY = 6;
 /** Watched addresses per identity: every payment received, for years (0083 R9). */
@@ -397,9 +399,11 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
   });
 
   /** The owner's anchor `Release`, at the record's nonce now, valid past the relay's longest delay plus a day. */
-  async function releaseInput(b: Body, chain: AnchorChain, rec: AnchorRecord, handleId: Hex, owner: string, now: number, maxDelayS: number) {
+  async function releaseInput(b: Body, chain: AnchorChain, rec: AnchorRecord, handleId: Hex, owner: string, now: number, maxDelayS: number, coverFreeze = false) {
     const deadline = uint(b, 'anchorDeadline');
-    if (deadline < Math.floor(now / 1000) + maxDelayS + 86_400) refuse(400, 'deadline_too_soon', { hint: 'cover the relay delay plus a day' });
+    // The release waits out a freeze: cover the record's, or 0086's 14 days ahead when this call sets one.
+    const start = Math.max(Math.floor(now / 1000), rec.frozenUntil, coverFreeze ? Math.floor(now / 1000) + RELEASE_FREEZE_MARGIN_S : 0);
+    if (deadline < start + maxDelayS + 86_400) refuse(400, 'deadline_too_soon', { hint: 'cover any freeze and the relay delay, plus a day' });
     const ownerSig = signature(b, 'releaseSignature');
     const got = await anchorSigner(HANDLES_CHAIN_ID, chain.anchor, 'Release', { handleId, nonce: rec.nonce, deadline: BigInt(deadline) }, ownerSig);
     if (!got || got.toLowerCase() !== owner.toLowerCase()) refuse(401, 'bad_signature', { field: 'Release' });
@@ -584,9 +588,11 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const b = a.body;
       const now = deps.now();
       if (row.state === 'releasing' && (await a.registry.releaseInFlight(row.handleId))) refuse(409, 'releasing');
+      if (await a.registry.advancePending(row.handleId)) refuse(409, 'advance_pending', { hint: 'wait for the advance to land' });
       const { nonce, expiresAt } = requestWindow(b, now);
       await signedBy('ReleaseHandle', { handleId: row.handleId, serial: BigInt(row.serial!), nonce, expiresAt: BigInt(expiresAt) }, signature(b, 'signature'), row.owner!, a, expiresAt);
-      onChainAs(rec, row, now);
+      // A releasing label may be frozen (a veto during its release): the release waits the freeze out.
+      onChainAs(rec, row, now, { frozenOk: row.state === 'releasing' });
       const range = claimDelayRange(c.env);
       const release = await releaseInput(b, chain, rec, row.handleId as Hex, row.owner!, now, range[1]);
       await a.registry.release({ handleId: row.handleId as Hex, identity: a.identity, installTag: a.installTag, owner: row.owner as Address, ...release, relayAt: now + randomDelayMs(range), now });
@@ -605,6 +611,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const b = a.body;
       const now = deps.now();
       await claimLimits(a, now, 'rename');
+      if (await a.registry.advancePending(row.handleId)) refuse(409, 'advance_pending', { hint: 'wait for the advance to land' });
       const newLabel = labelOf(b.newLabel);
       if (newLabel === row.label) refuse(400, 'bad_request', { field: 'newLabel' });
       const newHandleId = handleIdOf(newLabel);
@@ -631,7 +638,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       try {
         await a.registry.rename({ oldHandleId: row.handleId as Hex, claim: { ...write, renameOf: row.handleId as Hex }, release: { owner: row.owner as Address, ...release, relayAt: now + randomDelayMs(range) } });
       } catch (err) {
-        if (err instanceof RegistryConflict) refuse(409, 'taken');
+        if (err instanceof RegistryConflict) refuse(409, err.kind === 'changed' ? 'changed' : 'taken');
         throw err;
       }
       const statement = { oldHandleId: row.handleId, newHandleId, newSerial: BigInt(write.serial), newOwner, issuedAt: BigInt(Math.floor(now / 1000)) };
@@ -662,6 +669,23 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     const receipt = await chain.waitReceipt(txHash!, RECEIPT_WAIT_MS);
     if (receipt === 'reverted') return refuse(409, 'anchor_refused', { reason: 'tx_reverted', txHash: txHash! });
     return { txHash: txHash!, receipt };
+  }
+
+  /**
+   * A registrar call raises the record's nonce, which voids a releasing
+   * label's queued release (signed at the old nonce). The body may carry the
+   * owner's fresh `Release` at the nonce the call leaves (`anchorDeadline`,
+   * `releaseSignature`); else the queued release is cancelled and the answer
+   * asks for `/release` again. Read before the send, applied after it.
+   */
+  async function releaseAfterCall(c: HContext, a: Admitted, chain: AnchorChain, row: HandleRow, rec: AnchorRecord, now: number, setsFreeze: boolean) {
+    if (row.state !== 'releasing' || !(await a.registry.queuedRelease(row.handleId))) return null;
+    if (a.body.releaseSignature === undefined) return { fresh: null };
+    const queued = await a.registry.queuedRelease(row.handleId);
+    const range = queued?.args.afterClaim ? releaseDelayRange(c.env) : claimDelayRange(c.env);
+    const after = { ...rec, nonce: rec.nonce + 1n };
+    const signed = await releaseInput(a.body, chain, after, row.handleId as Hex, rec.owner, now, range[1], setsFreeze);
+    return { fresh: { owner: rec.owner, ...signed, relayAt: now + randomDelayMs(range) } };
   }
 
   routes.post(
@@ -696,6 +720,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         const sig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'Veto', { handleId: id, pendingNonce, nonce: rec.nonce, deadline });
         call = { functionName: 'veto', args: [id, pendingNonce, deadline, sig] };
       }
+      const resign = await releaseAfterCall(c, a, chain, row, rec, now, true);
       // Recorded before the send: a veto that may land always counts against unfreeze (q15), and every send against the budget.
       const freezeId = await a.registry.recordFreeze(row.handleId, op, rec.owner, row.serial!, now);
       let sent: Awaited<ReturnType<typeof sendAndWait>>;
@@ -706,8 +731,9 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         if (err instanceof Refusal && err.error === 'anchor_refused' && err.extra.reason !== 'tx_reverted') await a.registry.demoteFreeze(freezeId);
         throw err;
       }
+      if (resign) await a.registry.resignRelease(row.handleId, resign.fresh, now);
       handlesLog({ route: 'hold-record', op, receipt: sent.receipt });
-      return c.json({ ok: true, ...sent }, sent.receipt === 'success' ? 200 : 202);
+      return c.json({ ok: true, ...sent, ...(resign ? { release: resign.fresh ? 'requeued' : 'resign' } : {}) }, sent.receipt === 'success' ? 200 : 202);
     }),
   );
 
@@ -804,10 +830,12 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const o = await anchorSigner(HANDLES_CHAIN_ID, chain.anchor, 'Unfreeze', fields, ownerSig);
       if (!o || o.toLowerCase() !== row.owner!.toLowerCase()) refuse(401, 'bad_signature', { field: 'Unfreeze' });
       await registrarBudget(a, row.handleId, now);
+      const resign = await releaseAfterCall(c, a, chain, row, rec, now, false);
       const registrarSig = await signAnchor(chain.registrar, chain.chainId, chain.anchor, 'RegistrarUnfreeze', fields);
       await a.registry.recordFreeze(row.handleId, 'unfreeze', rec.owner, row.serial!, now);
       const sent = await sendAndWait(chain, { functionName: 'unfreeze', args: [id, BigInt(frozenUntil), BigInt(deadline), ownerSig, registrarSig] });
-      return c.json({ ok: true, ...sent }, sent.receipt === 'success' ? 200 : 202);
+      if (resign) await a.registry.resignRelease(row.handleId, resign.fresh, now);
+      return c.json({ ok: true, ...sent, ...(resign ? { release: resign.fresh ? 'requeued' : 'resign' } : {}) }, sent.receipt === 'success' ? 200 : 202);
     }),
   );
 
