@@ -471,7 +471,7 @@ export interface Env {
   /** A rename's release delay as `min,max` seconds (rule 3: one to seven days); unset, 86400,604800. */
   HANDLES_RELEASE_DELAY_S?: string;
   /**
-   * The one-time account factory the `self` check computes addresses under
+   * The one-time account factory the `addresses` check computes addresses under
    * (0083 rule 4), with its init code hash. Both unset: the shared fixture's
    * placeholder (ASSUMPTION(0086 ruling A)); one without the other refuses.
    */

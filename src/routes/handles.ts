@@ -34,7 +34,7 @@
  *   GET /v1/handles/:label/inbox       → 200 { ok, label, inboxId } | 404 (not discoverable answers as absent)
  *   GET /v1/handles/registrar          → 200 { ok, chainId, anchor, registrar } | 503 anchor_unconfigured
  *
- * The authenticated routes (claim, hold, discovery, `self`, rename, release,
+ * The authenticated routes (claim, hold, discovery, `addresses`, rename, release,
  * the registrar's actions) are `routes/handlesWrite.ts`.
  * ASSUMPTION(0086 q18): there is no pending route, so none is built later.
  */
@@ -84,7 +84,7 @@ function unavailable(c: HandlesContext, route: string, err: unknown): Response {
 }
 
 /** The words a path under `/v1/handles/:label/` may end in that a log line keeps. */
-const HANDLE_ROUTE_WORDS = new Set(['available', 'inbox', 'self', 'discoverable', 'release', 'rename', 'hold-record', 'advance', 'unfreeze', 'verified']);
+const HANDLE_ROUTE_WORDS = new Set(['available', 'inbox', 'addresses', 'discoverable', 'release', 'rename', 'hold-record', 'advance', 'unfreeze', 'verified']);
 /** The words a path `/v1/handles/<word>` may be that are routes, not labels (each is on the reserved list or not a valid label's route). */
 const HANDLE_TOP_WORDS = new Set(['mine', 'hold', 'claim', 'search', 'registrar']);
 

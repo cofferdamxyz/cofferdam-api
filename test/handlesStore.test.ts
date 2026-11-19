@@ -59,7 +59,7 @@ describe('migrations/handles on local D1 (node:sqlite)', () => {
     const reserved = (db.sqlite.prepare('SELECT label FROM reserved_labels').all() as { label: string }[]).map((r) => r.label);
     expect(reserved.length).toBeGreaterThan(50);
     expect(reserved.filter((l) => !isStoredHandle(l))).toEqual([]);
-    for (const word of ['cofferdam', 'available', 'search', 'claim', 'inbox', 'self', 'pending', 'support', 'admin']) expect(reserved).toContain(word);
+    for (const word of ['cofferdam', 'available', 'search', 'claim', 'inbox', 'self', 'addresses', 'pending', 'support', 'admin']) expect(reserved).toContain(word);
   });
 
   it('holds one label per identity, held or active, and lets a releasing one stand beside the new (a rename)', () => {

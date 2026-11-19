@@ -3,7 +3,7 @@
 
 /**
  * The plane's half of ERC-5564 scheme 1 (workspace decision 0086, rule 5): the
- * check a `self` registration passes, with no ephemeral secret and no viewing
+ * check an address registration (`addresses`) passes, with no ephemeral secret and no viewing
  * key. The signer is P = S + h·G, S the meta-address's spending key and h the
  * shared-secret hash; the address an announcement names is the one-time account
  * a factory gives that signer (CREATE2, the signer left-padded to 32 bytes as the
@@ -91,7 +91,7 @@ export function oneTimeAccount(signer: Address, factory: OneTimeFactory): Addres
 
 /**
  * Whether `account` is the one-time account of `metaAddress` for h: the
- * `self` route's P = S + h·G check (rule 5). The handle key's signature and
+ * `addresses` route's P = S + h·G check (rule 5). The handle key's signature and
  * whether the meta-address is the identity's are checked by the route.
  */
 export function isRegistrationOf(account: Address, metaAddress: string, sharedSecretHash: Hex, factory: OneTimeFactory): boolean {

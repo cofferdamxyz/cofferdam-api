@@ -369,7 +369,7 @@ export class D1HandleRegistry {
   /**
    * The row follows the anchor's owner and meta-address (an advance once mined,
    * an owner change applied on chain, the Safe's rekey), and the key history
-   * keeps both, so `self` still accepts addresses of the earlier epoch.
+   * keeps both, so `addresses` still accepts addresses of the earlier epoch.
    */
   async followOwner(row: HandleRow, owner: Address, metaAddress: Hex, now: number): Promise<void> {
     await this.db.batch(this.followStatements(row, owner, metaAddress, now));
@@ -533,7 +533,7 @@ export class D1HandleRegistry {
     address: Address;
     identity: string;
     handleId: string;
-    source: 'self' | 'pay';
+    source: 'own' | 'pay';
     sealed: Uint8Array;
     now: number;
     perIdentity: number;

@@ -11,7 +11,7 @@
  *   POST /v1/handles/hold                      (fast) q20: onboarding's 14-day reservation
  *   POST /v1/handles/claim                     (fast) the claim, queued for the relay
  *   POST /v1/handles/:label/discoverable       (fast) "Let people find me" (rule 6)
- *   POST /v1/handles/:label/self               (fast) a one-time address the phone derived or found (rule 5, q18)
+ *   POST /v1/handles/:label/addresses          (fast) a one-time address the phone derived or found (rule 5, q18)
  *   POST /v1/handles/:label/release            (slow) give the label up (rule 7)
  *   POST /v1/handles/:label/rename             (slow) claim a new label and release this one (rule 7)
  *   POST /v1/handles/:label/hold-record        (slow) the registrar's hold, renewal or veto (rule 3)
@@ -313,7 +313,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     return { row, rec };
   }
 
-  /** Follow the anchor when one is configured (the routes that work without it, discovery and `self`). */
+  /** Follow the anchor when one is configured (the routes that work without it, discovery and `addresses`). */
   async function followIfChain(c: HContext, a: Admitted, row: HandleRow): Promise<HandleRow> {
     const chain = chainOf(c.env);
     if (!chain || !row.onchain) return row;
@@ -520,11 +520,11 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     }),
   );
 
-  // ── self (rule 5, q18) ───────────────────────────────────────────────────
+  // ── addresses (rule 5, q18) ──────────────────────────────────────────────
 
   routes.post(
-    '/:label/self',
-    handle('self', async (c) => {
+    '/:label/addresses',
+    handle('addresses', async (c) => {
       const a = await admit(c, 'fast', ['install-proof']);
       const row = await followIfChain(c, a, await ownRow(c, a));
       // Only a handle on chain registers addresses: a queued claim costs nothing to make.
@@ -562,14 +562,14 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         address: account,
         identity: a.identity,
         handleId: row.handleId,
-        source: 'self',
+        source: 'own',
         sealed: await a.keys.seal(plain),
         now,
         perIdentity: WATCHED_PER_IDENTITY,
         perIdentityPerDay: WATCHED_PER_IDENTITY_PER_DAY,
         ceiling: WATCHED_CEILING,
       });
-      handlesLog({ route: 'self', outcome });
+      handlesLog({ route: 'addresses', outcome });
       if (outcome === 'theirs') refuse(409, 'address_taken');
       if (outcome === 'limit') refuse(429, 'watch_limit');
       if (outcome === 'full') refuse(503, 'watch_full');

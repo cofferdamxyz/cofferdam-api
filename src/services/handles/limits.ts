@@ -12,7 +12,7 @@
  * passes limits of its own (`HANDSHAKE_PUT_IP_RL`, `HANDSHAKE_PUT_GLOBAL_RL`),
  * far lower, so uploads cannot spend the fetches' brake. Any daily bound is a
  * per-handle counter in `HANDLES_DB` (none is built yet: the routes that would
- * count one, the pay link and `self`, wait on step 3's signer parts).
+ * count one, the pay link and `addresses`, wait on step 3's signer parts).
  *
  * A limiter that throws lets the request through, as every limiter in the
  * plane does (`routes/vault.ts`): the binding is a brake, not a gate.
