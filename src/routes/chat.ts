@@ -307,6 +307,7 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       fallbackLanguage: headerLanguage(c.req.header('accept-language')),
       profile: parsed.profile,
       language: parsed.language,
+      context: parsed.context,
       onTurn: store
         ? (usage) => {
             const at = deps.now();

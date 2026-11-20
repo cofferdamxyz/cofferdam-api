@@ -13,6 +13,7 @@ import {
   CLARIFY_TEXT,
   FIXED_TEXT,
   answerSystem,
+  HELP_RULE,
   CHAT_LIMITS,
   isStrictBlock,
   keepsAmount,
@@ -247,6 +248,14 @@ describe('parseChatRequest', () => {
     expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), language: 'pt' }).language).toBe('pt');
     expect(parseChatRequest({ account: ACCOUNT, messages: user('hi') }).language).toBeNull();
     expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), language: 'fr' })).toThrow(/language must be/);
+  });
+
+  it("reads a help sheet's notes, trimmed, and refuses notes that are not text or too long", () => {
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi') }).context).toBeNull();
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), context: '  Notes.  ' }).context).toBe('Notes.');
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), context: '  ' }).context).toBeNull();
+    expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), context: ['x'] })).toThrow(/context must be text/);
+    expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), context: 'x'.repeat(CHAT_LIMITS.contextChars + 1) })).toThrow(/context is too long/);
   });
 });
 
@@ -595,6 +604,9 @@ describe("the saved Work Profile's facts (workspace decision 0076)", () => {
     expect(answerSystem(PROFILE, 'pt').endsWith('Reply in Brazilian Portuguese.')).toBe(true);
     expect(answerSystem(null, 'en')).toBe(answerSystem());
     expect(answerSystem(null)).toBe(answerSystem());
+    // A help sheet's notes follow the facts under their rule, before a Work Profile's facts.
+    expect(answerSystem(null, null, 'Notes.')).toBe(`${answerSystem()}\n\n${HELP_RULE}\n\nNotes.`);
+    expect(answerSystem(PROFILE, null, 'Notes.')).toBe(`${answerSystem(null, null, 'Notes.')}\n\n${PROFILE_RULE}\n\n${PROFILE}\n\n${profileClose(null)}`);
   });
 
   it('reaches the everyday and Thinking answers, never the router or a log line', async () => {
