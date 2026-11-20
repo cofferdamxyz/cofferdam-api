@@ -28,9 +28,11 @@
  *     | gas_limit_exceeded | fee_too_high | prefund_too_high | simulation_failed
  *     (with the EntryPoint's AAxx reason) | execution_reverted (with the
  *     revert's error name; nothing sent), 422 user_op_reverted (mined, and the
- *     op's call reverted; with `txHash` and the error name), 429 rate_limited,
- *     503 relayer_not_configured | preflight_unavailable (the node cannot run
- *     `eth_simulateV1`), 502 relay_failed.
+ *     op's call reverted; with `txHash` and the error name), 429 rate_limited
+ *     (the relay's limits, or the node refused every send as rate-limited:
+ *     nothing was sent), 503 relayer_not_configured | preflight_unavailable
+ *     (the node cannot run `eth_simulateV1`), 502 relay_failed (the send may
+ *     have reached the node).
  *
  *   The op is self-authenticating (the EntryPoint verifies the passkey
  *   signature), so there is no session gate; the paymaster's deposit is what
@@ -75,7 +77,7 @@ import {
   type UserOpPolicy,
 } from '../services/userOp.js';
 import { identityLogLine } from '../services/identityLog.js';
-import { sendWithRetry } from '../services/relaySend.js';
+import { SendRefusedError, sendWithRetry } from '../services/relaySend.js';
 import {
   GAS_PRICE_ORACLE,
   GAS_PRICE_ORACLE_ABI,
@@ -437,6 +439,11 @@ export async function submitUserOperation(
       onAttemptError: (attempt, cls, reason) => logRelay('aa_send_refused', op, { attempt, class: cls, reason }),
     });
   } catch (err) {
+    // Refused as rate-limited on every attempt: the node took nothing, so the client may report a plain failure
+    // (a 4xx) instead of searching for an op that was never sent (`relay_failed`, 502, may have been sent).
+    if (err instanceof SendRefusedError && err.rateLimited) {
+      throw new UserOpSubmitError('rate_limited', "Base's node is busy and nothing was sent; retry shortly");
+    }
     throw new UserOpSubmitError('relay_failed', revertReason(err));
   }
 
