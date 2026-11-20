@@ -45,7 +45,7 @@ describe('the EIP-712 types match the shared fixture', () => {
   });
 
   it('recovers every signed vector to its signer', async () => {
-    expect(fixture.signed.length).toBe(20);
+    expect(fixture.signed.length).toBe(23);
     for (const s of fixture.signed) {
       const message = messageOf(s.primaryType, s.message as Record<string, unknown>);
       const got =
@@ -60,7 +60,7 @@ describe('the EIP-712 types match the shared fixture', () => {
     const registrar = privateKeyToAccount(fixture.keys.registrar.privateKey as Hex);
     expect(registrar.address).toBe(getAddress(fixture.keys.registrar.address));
     const theirs = fixture.signed.filter((s) => s.signer === 'registrar');
-    expect(theirs.map((s) => s.primaryType).sort()).toEqual(['Hold', 'RegistrarAdvance', 'RegistrarClaim', 'RegistrarUnfreeze', 'RenewHold', 'Veto']);
+    expect(theirs.map((s) => s.primaryType).sort()).toEqual(['Hold', 'RegistrarAdvance', 'RegistrarCancel', 'RegistrarClaim', 'RegistrarSetMetaAddress', 'RegistrarTransferOwner', 'RegistrarUnfreeze', 'RenewHold', 'Veto']);
     for (const s of theirs) {
       const sig = await signAnchor(registrar, CHAIN, ANCHOR, s.primaryType as AnchorPrimaryType, messageOf(s.primaryType, s.message as Record<string, unknown>));
       expect(sig, s.primaryType).toBe(s.signature);

@@ -455,6 +455,16 @@ export interface Env {
    */
   HANDLE_REGISTRAR_KEY?: string;
   /**
+   * Secret: the key that signs the plane's own statements, the rename's
+   * same-identity statement (0086 rule 7) and the Verified statement (rule 9),
+   * 0x and 64 hex, never the registrar key (the review of 2026-11-19, M5: a
+   * stolen registrar key must not mint them). Clients check the statements
+   * against the address `GET /v1/handles/registrar` names as `statements`. The
+   * founder sets it with `wrangler secret put HANDLE_STATEMENT_KEY`; unset, a
+   * rename and the Verified route answer `503 statement_key_unprovisioned`.
+   */
+  HANDLE_STATEMENT_KEY?: string;
+  /**
    * Secret: 32 bytes as 64 hex, the key of the identity map's tags and of the
    * watched addresses' seals (`services/handles/mapKey.ts`). Unset, every
    * authenticated handle route answers `503 handles_map_key_unprovisioned`.
@@ -463,11 +473,18 @@ export interface Env {
   /**
    * The unbuilt gates this deployment goes without, comma-separated:
    * `device-attestation`, `install-proof`, `locator-pin`
-   * (`services/handles/config.ts`). Ignored under `ENVIRONMENT=production`.
+   * (`services/handles/config.ts`). Honoured only under `ENVIRONMENT`
+   * `development` or `staging` and only while the handles chain is Base Sepolia.
    */
   HANDLES_SKIP_UNBUILT_GATES?: string;
   /** A claim's relay delay as `min,max` seconds (rule 3: minutes to hours); unset, 600,10800. */
   HANDLES_RELAY_DELAY_S?: string;
+  /**
+   * Seconds a claim lands at least after its account's deployment (rule 3: never
+   * the same hour); unset, 3600. The Sepolia test deployment shortens it so a
+   * device test finishes in a session.
+   */
+  HANDLES_DEPLOY_GAP_S?: string;
   /** A rename's release delay as `min,max` seconds (rule 3: one to seven days); unset, 86400,604800. */
   HANDLES_RELEASE_DELAY_S?: string;
   /**

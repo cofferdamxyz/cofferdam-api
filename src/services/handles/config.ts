@@ -16,7 +16,11 @@
  * `HANDLES_SKIP_UNBUILT_GATES` names those a deployment goes without (a comma
  * list). A gate not named refuses its routes with `503 <gate>_unbuilt`, so
  * nothing passes a check that does not exist by default. `ENVIRONMENT=production`
- * ignores the list, as does any environment but `development` and `staging`: production refuses until each gate is built. The Sepolia test
+ * ignores the list, as does any environment but `development` and `staging`,
+ * and so does any handles chain but Base Sepolia, whatever `ENVIRONMENT` says
+ * (the review of 2026-11-19, M6: the production cut moves the chain, and a
+ * forgotten `staging` must not carry the skips to Base mainnet). Production
+ * refuses until each gate is built. The Sepolia test
  * deployment names all three; with them skipped a handle-scoped request needs the
  * account's High session and the handle key's signature, as 0086 rule 4 first
  * said (q12's recommended install proof is stronger).
@@ -30,17 +34,22 @@ import type { Env } from '../../env.js';
 export const UNBUILT_GATES = ['device-attestation', 'install-proof', 'locator-pin'] as const;
 export type UnbuiltGate = (typeof UNBUILT_GATES)[number];
 
-/** Whether a deployment goes without `gate`: only `development` and `staging` (the Sepolia deployment) may; any other environment, a typo included, enforces it. */
-export function skipsGate(env: Env, gate: UnbuiltGate): boolean {
+/** The chain the anchor and the registry's typed data name: Base Sepolia until the production cut. */
+export const HANDLES_CHAIN_ID: number = BASE_SEPOLIA_CHAIN_ID;
+
+/**
+ * Whether a deployment goes without `gate`: only `development` and `staging`
+ * (the Sepolia deployment) may, and only on Base Sepolia; any other environment
+ * (a typo included) or chain enforces it.
+ */
+export function skipsGate(env: Env, gate: UnbuiltGate, chainId: number = HANDLES_CHAIN_ID): boolean {
+  if (chainId !== BASE_SEPOLIA_CHAIN_ID) return false;
   if (env.ENVIRONMENT !== 'development' && env.ENVIRONMENT !== 'staging') return false;
   return (env.HANDLES_SKIP_UNBUILT_GATES ?? '')
     .split(',')
     .map((s) => s.trim())
     .includes(gate);
 }
-
-/** The chain the anchor and the registry's typed data name: Base Sepolia until the production cut. */
-export const HANDLES_CHAIN_ID = BASE_SEPOLIA_CHAIN_ID;
 
 /** `HANDLE_ANCHOR_ADDRESS`, or null while the anchor is not deployed. */
 export function anchorAddressOf(env: Env): Address | null {
@@ -62,6 +71,16 @@ export const claimDelayRange = (env: Env) => delayRange(env.HANDLES_RELAY_DELAY_
 /** A rename's release delay (rule 3: one to seven days): `HANDLES_RELEASE_DELAY_S`, else that. */
 export const releaseDelayRange = (env: Env) => delayRange(env.HANDLES_RELEASE_DELAY_S, [86_400, 7 * 86_400]);
 
+/**
+ * How long after its account's deployment a claim may land at the earliest
+ * (rule 3: "never share the hour or the bundle of the same account's
+ * deployment"): `HANDLES_DEPLOY_GAP_S`, else an hour.
+ */
+export function deployGapS(env: Env): number {
+  const raw = env.HANDLES_DEPLOY_GAP_S?.trim();
+  return raw && /^\d{1,6}$/.test(raw) ? Number(raw) : 3600;
+}
+
 /** A uniform draw in `[lo, hi]` seconds, as milliseconds. */
 export function randomDelayMs([lo, hi]: [number, number]): number {
   const span = hi - lo + 1;
@@ -81,6 +100,12 @@ export const VERIFIED_TTL_S = 30 * 24 * 60 * 60;
 /**
  * The limits, each over 30 days. 0086 q20 (ruled 2026-11-19 as recommended) and rule 4: 0086 asks for
  * a limit per install and per account without numbers; these are this build's.
+ *
+ * The per-install limit counts the session's passkey, not the phone (the review
+ * of 2026-11-19, L6): a new account has a new passkey, so one phone making many
+ * accounts never reaches it. The brake on that is the device attestation gate
+ * (decision 0078), skipped on Sepolia; once its verifier exists the limit is
+ * keyed on the attested device instead. Until then it bounds one account only.
  */
 export const LIMITS = {
   /** Holds per identity (one at a time, by the unique index; replacing one counts). */

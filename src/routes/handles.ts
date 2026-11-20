@@ -32,7 +32,8 @@
  *
  *   GET /v1/handles/search?q=<prefix>  → 200 { ok, results: [{ label, inboxId }] } (rule 6: discoverable, active, 3+ characters, at most 20)
  *   GET /v1/handles/:label/inbox       → 200 { ok, label, inboxId } | 404 (not discoverable answers as absent)
- *   GET /v1/handles/registrar          → 200 { ok, chainId, anchor, registrar } | 503 anchor_unconfigured
+ *   GET /v1/handles/registrar          → 200 { ok, chainId, anchor, registrar, statements } | 503 anchor_unconfigured
+ *                                        (`statements`: the address the same-identity and Verified statements are signed by, or null while unset)
  *
  * The authenticated routes (claim, hold, discovery, `addresses`, rename, release,
  * the registrar's actions) are `routes/handlesWrite.ts`.
@@ -45,7 +46,7 @@ import type { Env } from '../env.js';
 import { readHandle } from '../services/handles/grammar.js';
 import { handlesLog, publicLimit } from '../services/handles/limits.js';
 import { availabilityOf, D1HandleStore, quarantineMs, resolutionOf, type HandleStore } from '../services/handles/store.js';
-import { registrarOf } from '../services/handles/anchor.js';
+import { registrarOf, statementSignerOf } from '../services/handles/anchor.js';
 import { anchorAddressOf, HANDLES_CHAIN_ID } from '../services/handles/config.js';
 import { D1HandleRegistry } from '../services/handles/registry.js';
 
@@ -152,7 +153,7 @@ export function createHandlesRoutes(deps: HandlesRouteDeps = defaultHandlesRoute
     const anchor = anchorAddressOf(c.env);
     const registrar = registrarOf(c.env);
     if (!anchor || !registrar) return c.json({ ok: false, error: 'anchor_unconfigured' }, 503);
-    return c.json({ ok: true, chainId: HANDLES_CHAIN_ID, anchor, registrar: registrar.address });
+    return c.json({ ok: true, chainId: HANDLES_CHAIN_ID, anchor, registrar: registrar.address, statements: statementSignerOf(c.env)?.address ?? null });
   });
 
   routes.get('/:label/inbox', async (c) => {

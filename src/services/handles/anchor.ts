@@ -191,6 +191,13 @@ export interface AnchorChain {
   receipt(hash: Hex): Promise<ReceiptStatus>;
   /** The receipt, waited for up to `timeoutMs`; `pending` when it does not come in time. */
   waitReceipt(hash: Hex, timeoutMs: number): Promise<ReceiptStatus>;
+  /**
+   * Whether `account` already had code `seconds` ago (rule 3: a claim never
+   * shares the hour of its account's deployment). False when it did not, and
+   * when the node cannot say (a pruned state, an error): the caller then waits
+   * the whole gap, so a failure only delays a claim.
+   */
+  deployedBefore(account: Address, seconds: number): Promise<boolean>;
 }
 
 /** A call the simulation refused: the contract's error name only, never its arguments. */
@@ -205,6 +212,23 @@ export class AnchorRevert extends Error {
 export function registrarOf(env: Env): PrivateKeyAccount | null {
   const raw = env.HANDLE_REGISTRAR_KEY?.trim();
   if (!raw || !/^0x[0-9a-fA-F]{64}$/.test(raw)) return null;
+  try {
+    return privateKeyToAccount(raw as Hex);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `HANDLE_STATEMENT_KEY` as an account: the key of the plane's own statements
+ * (the same-identity statement, rule 7, and the Verified statement, rule 9),
+ * apart from the registrar's (the review of 2026-11-19, M5). Null while unset,
+ * malformed, or the registrar key itself.
+ */
+export function statementSignerOf(env: Env): PrivateKeyAccount | null {
+  const raw = env.HANDLE_STATEMENT_KEY?.trim();
+  if (!raw || !/^0x[0-9a-fA-F]{64}$/.test(raw)) return null;
+  if (raw.toLowerCase() === env.HANDLE_REGISTRAR_KEY?.trim().toLowerCase()) return null;
   try {
     return privateKeyToAccount(raw as Hex);
   } catch {
@@ -279,5 +303,43 @@ export function rpcAnchorChain(env: Env, anchor: Address | null): AnchorChain | 
         return 'pending';
       }
     },
+    async deployedBefore(account, seconds) {
+      try {
+        return await codeBefore(publicClient, account, seconds);
+      } catch {
+        return false;
+      }
+    },
   };
+}
+
+/** The reads `codeBefore` makes: a block by number or the latest, and an address's code at a block. */
+export interface CodeReader {
+  getBlock(args: { blockNumber: bigint } | { blockTag: 'latest' }): Promise<{ number: bigint | null; timestamp: bigint }>;
+  getCode(args: { address: Address; blockNumber: bigint }): Promise<Hex | undefined>;
+}
+
+/** Blocks the block time is measured over. */
+const SAMPLE_BLOCKS = 1_000n;
+
+/**
+ * Whether `account` had code at a block at least `seconds` older than the head.
+ * The block time is measured on the chain (Base's blocks have been 2 s and
+ * shorter), the block found is checked to be old enough, and a block that is
+ * not answers false, as the caller's safe side.
+ */
+export async function codeBefore(reader: CodeReader, account: Address, seconds: number): Promise<boolean> {
+  if (seconds <= 0) return true;
+  const head = await reader.getBlock({ blockTag: 'latest' });
+  if (head.number === null || head.number <= SAMPLE_BLOCKS) return false;
+  const sample = await reader.getBlock({ blockNumber: head.number - SAMPLE_BLOCKS });
+  const span = head.timestamp - sample.timestamp;
+  if (span <= 0n) return false;
+  // Blocks back for `seconds`, rounded up at the measured rate, plus one.
+  const back = (BigInt(seconds) * SAMPLE_BLOCKS + span - 1n) / span + 1n;
+  if (back >= head.number) return false;
+  const at = await reader.getBlock({ blockNumber: head.number - back });
+  if (head.timestamp - at.timestamp < BigInt(seconds)) return false;
+  const code = await reader.getCode({ address: account, blockNumber: head.number - back });
+  return code !== undefined && code !== '0x';
 }

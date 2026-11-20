@@ -12,8 +12,9 @@
  * Two statements the plane signs are this build's own and in no fixture yet:
  * `SameIdentity` (the rename notice's same-identity statement, rule 7) and
  * `VerifiedStatement` (rule 9). ASSUMPTION(0086 rules 7 and 9): 0086 names what
- * each says; the field names and types are this build's, signed by the
- * registrar key in the registry domain.
+ * each says; the field names and types are this build's, signed in the
+ * registry domain by the statement key `HANDLE_STATEMENT_KEY`, never the
+ * registrar key (the review of 2026-11-19, M5).
  */
 
 import { recoverTypedDataAddress, type Address, type Hex, type TypedDataDomain } from 'viem';
@@ -33,15 +34,25 @@ export function registryDomain(chainId: number): TypedDataDomain {
 
 const f = (name: string, type: string) => ({ name, type }) as const;
 
-/** The anchor's 15 types (SDK `HANDLE_ANCHOR_TYPES`). */
+/** The anchor's 18 types (SDK `HANDLE_ANCHOR_TYPES`). The plane signs only `RegistrarClaim`, `RegistrarAdvance`, `Hold`, `RenewHold`, `Veto` and `RegistrarUnfreeze`; no route signs `RegistrarTransferOwner`, `RegistrarSetMetaAddress` or `RegistrarCancel` (the review of 2026-11-19, H1 and M1), so the handle key alone never moves a record on the slow path. */
 export const ANCHOR_TYPES = {
   RegistrarClaim: [f('handleId', 'bytes32'), f('owner', 'address'), f('serial', 'uint64'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   OwnerClaim: [f('handleId', 'bytes32'), f('metaAddress', 'bytes'), f('serial', 'uint64')],
   TransferOwner: [f('handleId', 'bytes32'), f('newOwner', 'address'), f('newMetaAddress', 'bytes'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   TransferOwnerAccept: [f('handleId', 'bytes32'), f('previousOwner', 'address'), f('newMetaAddress', 'bytes'), f('nonce', 'uint256'), f('deadline', 'uint64')],
+  RegistrarTransferOwner: [
+    f('handleId', 'bytes32'),
+    f('previousOwner', 'address'),
+    f('newOwner', 'address'),
+    f('newMetaAddress', 'bytes'),
+    f('nonce', 'uint256'),
+    f('deadline', 'uint64'),
+  ],
   SetMetaAddress: [f('handleId', 'bytes32'), f('newMetaAddress', 'bytes'), f('nonce', 'uint256'), f('deadline', 'uint64')],
+  RegistrarSetMetaAddress: [f('handleId', 'bytes32'), f('newMetaAddress', 'bytes'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   Release: [f('handleId', 'bytes32'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   Cancel: [f('handleId', 'bytes32'), f('pendingNonce', 'uint256'), f('nonce', 'uint256'), f('deadline', 'uint64')],
+  RegistrarCancel: [f('handleId', 'bytes32'), f('pendingNonce', 'uint256'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   Advance: [f('handleId', 'bytes32'), f('newOwner', 'address'), f('newMetaAddress', 'bytes'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   AdvanceAccept: [f('handleId', 'bytes32'), f('previousOwner', 'address'), f('newMetaAddress', 'bytes'), f('nonce', 'uint256'), f('deadline', 'uint64')],
   RegistrarAdvance: [
@@ -149,7 +160,7 @@ export function signAnchor(account: PrivateKeyAccount, chainId: number, anchor: 
   } as unknown as Parameters<PrivateKeyAccount['signTypedData']>[0]);
 }
 
-/** The registrar's signature over one of the plane's registry-domain statements. */
+/** The statement key's signature over one of the plane's registry-domain statements. */
 export function signRegistry(account: PrivateKeyAccount, chainId: number, primaryType: RegistryPrimaryType, message: Message): Promise<Hex> {
   return account.signTypedData({
     domain: registryDomain(chainId),

@@ -26,6 +26,8 @@ export interface MemoryAnchor extends AnchorChain {
   clock: { now: number };
   receipts: Map<string, ReceiptStatus>;
   delays: { change: number; freeze: number; quarantine: number };
+  /** When each account was deployed (unix seconds, by lower-case address); an account absent was deployed long ago. `null` stands for a node that cannot say. */
+  deployedAt: Map<string, number | null>;
 }
 
 const blank = (): AnchorRecord => ({
@@ -46,6 +48,7 @@ export function memoryAnchor(clock: { now: number }, registrarKey: Hex = fixture
   const records = new Map<string, AnchorRecord>();
   const sent: AnchorCall[] = [];
   const receipts = new Map<string, ReceiptStatus>();
+  const deployedAt = new Map<string, number | null>();
   const delays = { change: 600, freeze: 1800, quarantine: 86_400 };
   const rec = (id: string) => records.get(id.toLowerCase()) ?? blank();
   const put = (id: string, r: AnchorRecord) => records.set(id.toLowerCase(), r);
@@ -70,6 +73,13 @@ export function memoryAnchor(clock: { now: number }, registrarKey: Hex = fixture
     clock,
     receipts,
     delays,
+    deployedAt,
+    async deployedBefore(account, seconds) {
+      const at = deployedAt.get(account.toLowerCase());
+      if (at === undefined) return true;
+      if (at === null) return false;
+      return at <= clock.now - seconds;
+    },
     async record(id) {
       return { ...rec(id) };
     },
@@ -165,7 +175,7 @@ export function memoryAnchor(clock: { now: number }, registrarKey: Hex = fixture
   };
 }
 
-/** Queue a pending change on a record directly, as a thief's `transferOwner` would. */
+/** Queue a pending change on a record directly, as a `transferOwner` would (since the review of 2026-11-19 it needs a registrar's signature too, so a stolen one). */
 export function queueChange(a: MemoryAnchor, handleId: string, newOwner: Address): void {
   const r = a.records.get(handleId.toLowerCase())!;
   a.records.set(handleId.toLowerCase(), {
