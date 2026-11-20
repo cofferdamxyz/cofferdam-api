@@ -175,7 +175,10 @@ describe('the seal gate (review 2026-11-19, H1)', () => {
     expect((await handleSeal(sealCall(ok, APP_KEY, one), e)).status).toBe(200);
     expect((await handleSeal(sealCall(ok, APP_KEY, one), e)).status).toBe(200);
     expect((await handleSeal(sealCall(ok, APP_KEY, one), e)).status).toBe(429);
-    expect((await handleSeal(sealCall(ok, APP_KEY, '203.0.113.10'), e)).status).toBe(429); // the global brake
+    // The refused call spent no global token: another address still gets one, then the brake holds.
+    expect(global.keys).toHaveLength(2);
+    expect((await handleSeal(sealCall(ok, APP_KEY, '203.0.113.10'), e)).status).toBe(200);
+    expect((await handleSeal(sealCall(ok, APP_KEY, '203.0.113.11'), e)).status).toBe(429); // the global brake
     expect(ip.keys.every((k) => !k.includes('203.0.113'))).toBe(true);
     // A caller without the key spends neither bucket.
     const before = global.keys.length;
@@ -330,6 +333,26 @@ describe('delivery', () => {
     expect(new Set(limit.keys).size).toBe(1);
     expect(limit.keys[0]).not.toContain(APNS_TOKEN);
     expect(apple.calls).toHaveLength(2);
+  });
+
+  it('counts one FCM token once, whether sealed as android or ios-fcm', async () => {
+    const limit = fakeLimit(1);
+    const e = { ...(await env()), PUSH_RL: limit.binding };
+    const ring = await loadKeyRing(SEAL_KEYS);
+    const body = JSON.stringify({ topic: GROUP_TOPIC, sequence_id: '5', recipient_id: '00' });
+    const google = fakeFetch({
+      'oauth2.googleapis.com': () => Response.json({ access_token: 't', expires_in: 3600 }),
+      'fcm.googleapis.com': () => Response.json({ name: 'ok' }),
+    });
+    const statuses: number[] = [];
+    for (const platform of ['android', 'ios-fcm'] as const) {
+      const rec = record({ platform, token: 'fcm-token-123' });
+      const sealed = await seal(rec, ring, 1);
+      const req = post(`https://push.cofferdam.xyz/v1/d/${sealed}`, body, await backendWebhook(rec.signingKey, body));
+      statuses.push((await handleDelivery(req, e, sealed, google.fetcher, NOW)).status);
+    }
+    expect(statuses).toEqual([200, 429]);
+    expect(new Set(limit.keys).size).toBe(1);
   });
 
   it('two deliveries of one message share a collapse id; two messages do not', async () => {

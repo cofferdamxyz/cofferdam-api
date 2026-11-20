@@ -93,7 +93,7 @@ async function sameSecret(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 
-/** The seal gate: the app key, then the per-IP and global limits. null lets the call through. */
+/** The seal gate: the app key, then the per-IP limit, then the global one. null lets the call through. */
 async function sealGate(request: Request, env: Env): Promise<Response | null> {
   const keys = (env.SEAL_APP_KEYS ?? '')
     .split(',')
@@ -104,13 +104,14 @@ async function sealGate(request: Request, env: Env): Promise<Response | null> {
   let known = false;
   for (const k of keys) if (m && (await sameSecret(m[1]!.trim(), k))) known = true;
   if (!known) return json(401, { error: 'app_key' });
-  if (env.SEAL_GLOBAL_RL && !(await env.SEAL_GLOBAL_RL.limit({ key: 'seal' })).success) {
-    return json(429, { error: 'busy' });
-  }
+  // Per IP first, so one address past its ceiling never spends the global budget.
   if (env.SEAL_IP_RL) {
     const ip = request.headers.get('cf-connecting-ip') ?? '';
     const key = `seal-ip:${(await sha256Hex(`cofferdam-push-seal-ip:${ip}`)).slice(0, 32)}`;
     if (!(await env.SEAL_IP_RL.limit({ key })).success) return json(429, { error: 'busy' });
+  }
+  if (env.SEAL_GLOBAL_RL && !(await env.SEAL_GLOBAL_RL.limit({ key: 'seal' })).success) {
+    return json(429, { error: 'busy' });
   }
   return null;
 }
@@ -159,8 +160,10 @@ export async function handleDelivery(
   const verified = await verifyWebhook(request.headers, body, record.signingKey, nowS);
   if (!verified.ok) return empty(401);
   if (env.PUSH_RL) {
-    // The device token, not the URL: a fresh seal of one token lands in the same bucket.
-    const key = (await sha256Hex(`cofferdam-push-token:${record.platform}:${record.token}`)).slice(0, 32);
+    // The device token, not the URL: a fresh seal of one token lands in the same bucket. An FCM token is one bucket
+    // whether it was sealed as `android` or `ios-fcm`.
+    const provider = record.platform === 'ios' ? 'apns' : 'fcm';
+    const key = (await sha256Hex(`cofferdam-push-token:${provider}:${record.token}`)).slice(0, 32);
     const { success } = await env.PUSH_RL.limit({ key });
     if (!success) return empty(429);
   }

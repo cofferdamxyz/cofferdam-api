@@ -88,9 +88,11 @@ RETURNING d.sequence_id::text AS sequence_id`;
 }
 
 /**
- * $1 kind (int), $2 resume (bigint), $3 grace ns (bigint), $4 cap (int). How
- * many rows of one kind are past the cutoff yet still here after a run, counted
- * up to the cap. A run that was not cut short deletes every such row the rules
+ * $1 kind (int), $2 resume (bigint), $3 grace ns (bigint), $4 cap (int),
+ * $5 margin ns (bigint). How many rows of one kind are past the cutoff by more
+ * than the margin yet still here after a run, counted up to the cap. The margin
+ * keeps out rows that only expired while the run was going (the count's clock
+ * is later than the deletes'), which a healthy run leaves too. A run that was not cut short deletes every such row the rules
  * allow, so what is left is held by the push cursor (a stalled dispatcher) or a
  * lock: either way retention is no longer being applied, and the run says so.
  */
@@ -100,6 +102,6 @@ export const OVERDUE_COUNT = `SELECT count(*)::int AS overdue FROM (
     AND get_byte(e.topic, 0) = $1::int
     AND e.expiry_ns IS NOT NULL
     AND e.is_commit_or_proposal = false
-    AND e.expiry_ns < ${NOW_NS} - $3::bigint
+    AND e.expiry_ns < ${NOW_NS} - $3::bigint - $5::bigint
   LIMIT $4::int
 ) x`;

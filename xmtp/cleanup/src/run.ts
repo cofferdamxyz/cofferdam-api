@@ -110,7 +110,7 @@ export async function runCleanup(
       [KIND_GROUP_MESSAGE, 'groupMessages'],
       [KIND_WELCOME, 'welcomes'],
     ] as const) {
-      const rows = await query(OVERDUE_COUNT, [kind, state.resume[String(kind)] ?? '0', grace, OVERDUE_CAP]);
+      const rows = await query(OVERDUE_COUNT, [kind, state.resume[String(kind)] ?? '0', grace, OVERDUE_CAP, margin]);
       overdue[key] = Number(rows[0]?.overdue ?? 0);
     }
   }

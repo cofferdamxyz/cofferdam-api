@@ -21,6 +21,7 @@ describe('the SQL', () => {
     expect(OVERDUE_COUNT).toContain('expiry_ns IS NOT NULL');
     expect(OVERDUE_COUNT).toContain('is_commit_or_proposal = false');
     expect(OVERDUE_COUNT).toMatch(/^SELECT count/);
+    expect(OVERDUE_COUNT).toContain('$3::bigint - $5::bigint');
     for (const sql of [sequentialBatch(true), keyPackageBatch(true)]) {
       expect(sql).toContain('expiry_ns IS NOT NULL');
       expect(sql).toContain('is_commit_or_proposal = false');
@@ -70,7 +71,8 @@ describe('a run', () => {
   it('reports rows past the cutoff that a full run left behind (a stalled push cursor)', async () => {
     const clean = await runCleanup(fake({}).query, CFG, null);
     expect(clean.overdue).toEqual({ groupMessages: 0, welcomes: 0 });
-    const stalled = await runCleanup(fake({}, { '0': 12 }).query, CFG, null);
+    const db = fake({}, { '0': 12 });
+    const stalled = await runCleanup(db.query, CFG, null);
     expect(stalled.deleted).toEqual({ groupMessages: 0, welcomes: 0, keyPackages: 0 });
     expect(stalled.overdue).toEqual({ groupMessages: 12, welcomes: 0 });
   });
