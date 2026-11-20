@@ -78,18 +78,24 @@
     // The handle registry's claim, registrar and relay (workspace decision 0086,
     // src/services/handles/config.ts). The Sepolia test deployment goes without
     // the three checks no build has yet (App Attest / Play Integrity, 0082's
-    // install proof, the pinned locator); production ignores this list.
+    // install proof, the pinned locator); production ignores this list, and so
+    // does any handles chain but Base Sepolia, whatever ENVIRONMENT says. The
+    // production cut deletes this line and sets ENVIRONMENT to "production".
     "HANDLES_SKIP_UNBUILT_GATES": "device-attestation,install-proof,locator-pin",
     // Short relay delays on the test deployment, so a claim and a release land
     // within a device test (rule 3's minutes-to-hours and one-to-seven days are
     // the defaults when unset).
     "HANDLES_RELAY_DELAY_S": "30,120",
     "HANDLES_RELEASE_DELAY_S": "60,300",
+    // A claim lands at least this long after its account's deployment (rule 3:
+    // never the same hour, the default of 3600 when unset); a minute on the test
+    // deployment, so a new account's claim lands within a device test.
+    "HANDLES_DEPLOY_GAP_S": "60",
     // The quarantine the Sepolia anchor is deployed with (base-contracts
     // deploy-handle-anchor.ts's default, one day); unset means 0086's 365.
     "HANDLES_QUARANTINE_DAYS": "1",
-    // Set once the founder deploys CofferdamHandleAnchor on Base Sepolia (after
-    // 0086 questions 15 and 16), with the secrets HANDLE_REGISTRAR_KEY and
+    // Set once the founder deploys CofferdamHandleAnchor on Base Sepolia (0086
+    // questions 15 and 16 were ruled 2026-11-19), with the secrets HANDLE_REGISTRAR_KEY and
     // HANDLES_MAP_KEY; until then claim and the registrar's routes answer 503.
     // "HANDLE_ANCHOR_ADDRESS": "0x…",
     // First block the webhook-fed activity store is complete from (decision
@@ -259,7 +265,7 @@
     // (handshake-put-ip:, handshake-put:global), beside a ceiling on the live links in HANDLES_DB.
     { "name": "HANDSHAKE_PUT_IP_RL", "namespace_id": "1123", "simple": { "limit": 10, "period": 60 } },
     { "name": "HANDSHAKE_PUT_GLOBAL_RL", "namespace_id": "1124", "simple": { "limit": 120, "period": 60 } },
-    // The authenticated handle routes (claim, hold, self, discovery, rename, release and the
+    // The authenticated handle routes (claim, hold, addresses, discovery, rename, release and the
     // registrar's actions), per account after the session and the High check (handles-acct:<account>).
     { "name": "HANDLES_ACCOUNT_RL", "namespace_id": "1125", "simple": { "limit": 20, "period": 60 } }
   ],
@@ -296,6 +302,8 @@
     // the production cut at the MVP, which creates a fresh `cofferdam-handles`,
     // re-points this binding (the database_id and name only) and archives or
     // deletes the test one (the founder, 2026-11-17; no staging split before then).
+    // The same cut sets ENVIRONMENT to "production" and deletes
+    // HANDLES_SKIP_UNBUILT_GATES (docs/runbooks/handles-build.md, the cut's checklist).
     // Migrations: `wrangler d1 migrations apply cofferdam-handles-sepolia --remote`. No "remote": true,
     // unlike WORK_DB: wrangler dev then writes a local database, never the live one.
     { "binding": "HANDLES_DB", "database_name": "cofferdam-handles-sepolia", "database_id": "1e76a7d6-1c48-4abf-809a-bcacbc2aa66e", "migrations_dir": "migrations/handles" }

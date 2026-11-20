@@ -9,8 +9,8 @@
  *
  *   POST /v1/handles/mine                      (fast) the identity's held, active and releasing rows
  *   POST /v1/handles/hold                      (fast) q20: onboarding's 14-day reservation
- *   POST /v1/handles/claim                     (fast) the claim, queued for the relay
- *   POST /v1/handles/:label/discoverable       (fast) "Let people find me" (rule 6)
+ *   POST /v1/handles/claim                     (slow) the claim, queued for the relay (it ends in the registrar's signature)
+ *   POST /v1/handles/:label/discoverable       (fast) "Let people find me" (rule 6); off on the High session alone (q19)
  *   POST /v1/handles/:label/addresses          (fast) a one-time address the phone derived or found (rule 5, q18)
  *   POST /v1/handles/:label/release            (slow) give the label up (rule 7)
  *   POST /v1/handles/:label/rename             (slow) claim a new label and release this one (rule 7)
@@ -41,10 +41,11 @@ import type { Env } from '../env.js';
 import { checkOnChainAuthority, type AuthorityCheck } from '../services/authorityCheck.js';
 import { TIER } from '../services/ceremony.js';
 import { createAuthorityMemo, type AuthorityMemo } from '../services/chat/authorityMemo.js';
-import { AnchorRevert, CHANGE_KIND, rpcAnchorChain, ZERO_ADDRESS, type AnchorChain, type AnchorRecord } from '../services/handles/anchor.js';
+import { AnchorRevert, CHANGE_KIND, rpcAnchorChain, statementSignerOf, ZERO_ADDRESS, type AnchorChain, type AnchorRecord } from '../services/handles/anchor.js';
 import {
   anchorAddressOf,
   claimDelayRange,
+  deployGapS,
   HANDLES_CHAIN_ID,
   HOLD_MS,
   LIMIT_WINDOW_MS,
@@ -208,6 +209,11 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     return check;
   }
 
+  /** The unbuilt gates a route names: each refuses unless this deployment may go without it. */
+  function requireGates(c: HContext, gates: readonly UnbuiltGate[]): void {
+    for (const gate of gates) if (!skipsGate(c.env, gate)) refuse(503, `${gate.replace(/-/g, '_')}_unbuilt`);
+  }
+
   /** The gate, in its order; throws the refusal. */
   async function admit(c: HContext, tier: SessionTier, gates: readonly UnbuiltGate[]): Promise<Admitted> {
     if (await overLimit(c.env.HANDLES_GLOBAL_RL, 'handles-write:global')) refuse(429, 'rate_limited', { retryAfterSeconds: 10 });
@@ -243,7 +249,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       refuse(401, 'attestation_rejected', { reason: 'authority', message: 'the session key is not an active High authority on this account' });
     }
 
-    for (const gate of gates) if (!skipsGate(c.env, gate)) refuse(503, `${gate.replace(/-/g, '_')}_unbuilt`);
+    requireGates(c, gates);
 
     const registry = registryOf(c.env) ?? refuse(503, 'handles_db_unprovisioned');
     const keys = (await mapKeysOf(c.env.HANDLES_MAP_KEY)) ?? refuse(503, 'handles_map_key_unprovisioned');
@@ -273,6 +279,8 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
   }
 
   const chainOrRefuse = (c: HContext) => chainOf(c.env) ?? refuse(503, 'anchor_unconfigured');
+  /** The statement key (never the registrar's: a stolen registrar key mints no statement). */
+  const statementKeyOrRefuse = (c: HContext) => statementSignerOf(c.env) ?? refuse(503, 'statement_key_unprovisioned');
 
   /** The label in the path, its row, and that it is the identity's active one. */
   async function ownRow(c: HContext, a: Admitted, states: readonly HandleRow['state'][] = ['active']): Promise<HandleRow> {
@@ -380,11 +388,24 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         owner,
         metaAddress,
         ownerClaimSignature,
-        relayAt: now + randomDelayMs(claimDelayRange(c.env)),
+        relayAt: await claimRelayAt(c, a, chain, now),
         now,
         quarantineMs: quarantineMs(c.env.HANDLES_QUARANTINE_DAYS),
       },
     };
+  }
+
+  /**
+   * When the relay may send a claim: the drawn delay, and never within
+   * `deployGapS` of the account's deployment (rule 3; the review of 2026-11-19,
+   * M4). An account the node cannot show was deployed that long ago waits the
+   * whole gap from now.
+   */
+  async function claimRelayAt(c: HContext, a: Admitted, chain: AnchorChain, now: number): Promise<number> {
+    const drawn = now + randomDelayMs(claimDelayRange(c.env));
+    const gap = deployGapS(c.env);
+    if (gap === 0 || (await chain.deployedBefore(a.account, gap))) return drawn;
+    return Math.max(drawn, now + gap * 1000);
   }
 
   const claimAnswer = (w: { label: string; handleId: Hex; serial: number; owner: Address; metaAddress: Hex }) => ({
@@ -482,7 +503,10 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
   routes.post(
     '/claim',
     handle('claim', async (c) => {
-      const a = await admit(c, 'fast', ['device-attestation', 'locator-pin']);
+      // Slow: the claim ends in the registrar's signature, and rules/cofferdam-identity.md keeps a
+      // co-signing route off fast tokens (the review of 2026-11-19, L7). The hold stays fast: it writes
+      // the registry only, signs nothing, and onboarding sends it.
+      const a = await admit(c, 'slow', ['device-attestation', 'locator-pin']);
       const chain = chainOrRefuse(c);
       const now = deps.now();
       if ((await a.registry.rowsOf(a.identity)).some((r) => r.state === 'active')) refuse(409, 'identity_has_handle');
@@ -504,16 +528,23 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
   routes.post(
     '/:label/discoverable',
     handle('discoverable', async (c) => {
-      const a = await admit(c, 'fast', ['install-proof']);
-      const row = await followIfChain(c, a, await ownRow(c, a));
+      // Discovery off is High only (0086 q19's "What stays High only", the review
+      // of 2026-11-19, L4): a user whose phone holds a stale handle key, or no
+      // install proof, can still hide the handle. Turning it on, which exposes
+      // the inbox id, takes the handle key's signature and the install proof (q12).
+      const a = await admit(c, 'fast', []);
       const b = a.body;
-      const now = deps.now();
       const discoverable = b.discoverable === true ? true : b.discoverable === false ? false : refuse(400, 'bad_request', { field: 'discoverable' });
+      if (discoverable) requireGates(c, ['install-proof']);
+      const row = await followIfChain(c, a, await ownRow(c, a));
+      const now = deps.now();
       const inboxId = str(b, 'inboxId');
       if (discoverable ? !INBOX_ID.test(inboxId) : inboxId !== '') refuse(400, 'bad_request', { field: 'inboxId' });
-      const { nonce, expiresAt } = requestWindow(b, now);
-      const message = { handleId: row.handleId, serial: BigInt(row.serial!), discoverable, inboxId, nonce, expiresAt: BigInt(expiresAt) };
-      await signedBy('SetDiscoverable', message, signature(b, 'signature'), row.owner!, a, expiresAt);
+      if (discoverable || b.signature !== undefined) {
+        const { nonce, expiresAt } = requestWindow(b, now);
+        const message = { handleId: row.handleId, serial: BigInt(row.serial!), discoverable, inboxId, nonce, expiresAt: BigInt(expiresAt) };
+        await signedBy('SetDiscoverable', message, signature(b, 'signature'), row.owner!, a, expiresAt);
+      }
       if (!(await a.registry.setDiscoverable(row.handleId, a.identity, discoverable, inboxId || null, now))) refuse(404, 'not_found');
       handlesLog({ route: 'discoverable', on: discoverable });
       return c.json({ ok: true, discoverable });
@@ -558,10 +589,13 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       plain.set(hexToBytes(sharedSecretHash), 33);
       plain[65] = parseInt(sharedSecretHash.slice(2, 4), 16);
       plain.set(hexToBytes(metaAddress), 66);
+      // The identity and the handle id are kept as keyed tags (the review of
+      // 2026-11-19, M3): the registry's rows name both in clear, so a read of
+      // HANDLES_DB alone must not join a label to its one-time addresses.
       const outcome = await a.registry.watch({
         address: account,
-        identity: a.identity,
-        handleId: row.handleId,
+        identity: await a.keys.tag('watch-identity', a.identity),
+        handleId: await a.keys.tag('watch-handle', row.handleId),
         source: 'own',
         sealed: await a.keys.seal(plain),
         now,
@@ -607,6 +641,8 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     handle('rename', async (c) => {
       const a = await admit(c, 'slow', ['install-proof', 'locator-pin']);
       const chain = chainOrRefuse(c);
+      // Checked before anything is written: a rename always carries its statement.
+      const statementKey = statementKeyOrRefuse(c);
       const { row, rec } = await ownOnChain(c, a, chain);
       const b = a.body;
       const now = deps.now();
@@ -644,7 +680,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       const statement = { oldHandleId: row.handleId, newHandleId, newSerial: BigInt(write.serial), newOwner, issuedAt: BigInt(Math.floor(now / 1000)) };
       const sameIdentity = {
         statement: { ...statement, newSerial: write.serial, issuedAt: Number(statement.issuedAt) },
-        signature: await signRegistry(chain.registrar, HANDLES_CHAIN_ID, 'SameIdentity', statement),
+        signature: await signRegistry(statementKey, HANDLES_CHAIN_ID, 'SameIdentity', statement),
       };
       return c.json({ ...claimAnswer(write), sameIdentity }, 201);
     }),
@@ -846,6 +882,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
     handle('verified', async (c) => {
       const a = await admit(c, 'fast', []);
       const chain = chainOrRefuse(c);
+      const statementKey = statementKeyOrRefuse(c);
       const { row } = await ownOnChain(c, a, chain);
       let bound: boolean;
       try {
@@ -855,7 +892,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       }
       const expiresAt = Math.floor(deps.now() / 1000) + VERIFIED_TTL_S;
       const message = { handleId: row.handleId, serial: BigInt(row.serial!), owner: getAddress(row.owner!), bound, expiresAt: BigInt(expiresAt) };
-      const sig = await signRegistry(chain.registrar, HANDLES_CHAIN_ID, 'VerifiedStatement', message);
+      const sig = await signRegistry(statementKey, HANDLES_CHAIN_ID, 'VerifiedStatement', message);
       return c.json({ ok: true, statement: { ...message, serial: row.serial, expiresAt }, signature: sig });
     }),
   );

@@ -525,7 +525,11 @@ export class D1HandleRegistry {
   }
 
   /**
-   * Watch an address for good: `ours` when it was already this identity's,
+   * Watch an address for good. `identity` and `handleId` are the map key's
+   * tags of the identity and the handle id (`MapKeys.tag('watch-identity' |
+   * 'watch-handle', …)`), never the values the `handles` rows hold in clear
+   * (the review of 2026-11-19, M3; migration 0002's column names predate it).
+   * `ours` when it was already this identity's,
    * `theirs` when another's, `limit` past the identity's bound, `full` past the
    * table's ceiling. Both bounds are checked in the insert itself.
    */
@@ -581,6 +585,10 @@ export class D1HandleRegistry {
    * "never after a veto under the same phrase"; until q19's pinned locator tells
    * one phrase from another, any veto on the record counts, whatever key holds it
    * since (an advance to another key of the same phrase must not reopen it).
+   * Stricter than q15 (the review of 2026-11-19, L5): q15 lets a rotation to a
+   * new phrase end in `unfreeze` even after a veto, and here the record stays
+   * frozen until the freeze lapses or the Safe lifts it. When the pin is built,
+   * an accepted re-pin (q19) clears this mark for the record's serial.
    */
   async vetoed(handleId: string, serial: number): Promise<boolean> {
     const r = await this.db

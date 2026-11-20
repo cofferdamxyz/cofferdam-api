@@ -6,8 +6,11 @@
  * 0086, rules 4 and 5), from the secret `HANDLES_MAP_KEY` (32 bytes as 64 hex
  * characters, the founder's `wrangler secret put HANDLES_MAP_KEY`; no session
  * reads it). Two keys are derived with HKDF-SHA-256 under fixed labels:
- * - the tag key, HMAC-SHA-256 of an account (the identity map's row key) and of
- *   a passkey (the per-install tag the limits count), so no table names either;
+ * - the tag key, HMAC-SHA-256 of an account (the identity map's row key), of
+ *   a passkey (the per-install tag the limits count), and of the identity and
+ *   the handle id a watched address belongs to (the review of 2026-11-19, M3),
+ *   so no table names an account or a passkey, and a read of `HANDLES_DB`
+ *   alone cannot join a label to the addresses it was paid at;
  * - the seal key, AES-256-GCM over what a watched address's registration carries
  *   (R, h, the view tag and the meta-address), 12-byte random nonce first.
  *
@@ -21,7 +24,7 @@ const LABEL_SEAL = 'cofferdam-handles-map-seal-v1';
 
 export interface MapKeys {
   /** Lower-case hex HMAC-SHA-256 of `domain:value`. */
-  tag(domain: 'account' | 'install', value: string): Promise<string>;
+  tag(domain: 'account' | 'install' | 'watch-identity' | 'watch-handle', value: string): Promise<string>;
   seal(plain: Uint8Array): Promise<Uint8Array>;
   open(sealed: Uint8Array): Promise<Uint8Array>;
 }

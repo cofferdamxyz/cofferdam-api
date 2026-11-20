@@ -23,7 +23,8 @@ import { skipsGate } from '../src/services/handles/config.js';
 import type { AuthorityCheck } from '../src/services/authorityCheck.js';
 import { TIER } from '../src/services/ceremony.js';
 import { createAuthorityMemo } from '../src/services/chat/authorityMemo.js';
-import { AnchorRevert, CHANGE_KIND, contractRevert } from '../src/services/handles/anchor.js';
+import { AnchorRevert, CHANGE_KIND, codeBefore, contractRevert, type CodeReader } from '../src/services/handles/anchor.js';
+import { mapKeysOf } from '../src/services/handles/mapKey.js';
 import { handleIdOf } from '../src/services/handles/grammar.js';
 import { D1HandleRegistry, RegistryConflict } from '../src/services/handles/registry.js';
 import { runRelay } from '../src/services/handles/relay.js';
@@ -42,6 +43,9 @@ const ACCOUNT = v2.account as Address;
 const ORIGIN = v2.origin;
 const IP = '203.0.113.9';
 const MAP_KEY = '5a'.repeat(32);
+/** The statement key (a test key, never the registrar's). */
+const STATEMENT_KEY = `0x${'7b'.repeat(32)}` as Hex;
+const statementKey = privateKeyToAccount(STATEMENT_KEY);
 const HIGH: AuthorityCheck = { status: 'active', authorityId: 0, module: ACCOUNT, tier: TIER.High };
 const owner0 = privateKeyToAccount(fixture.keys.owner.privateKey as Hex);
 const owner1 = privateKeyToAccount(fixture.keys.newOwner.privateKey as Hex);
@@ -120,6 +124,7 @@ function world(o: { authority?: AuthorityCheck; env?: Record<string, unknown>; a
     ENVIRONMENT: 'staging',
     HANDLES_DB: db.d1,
     HANDLES_MAP_KEY: MAP_KEY,
+    HANDLE_STATEMENT_KEY: STATEMENT_KEY,
     HANDLES_SKIP_UNBUILT_GATES: 'device-attestation,install-proof,locator-pin',
     HANDLES_RELAY_DELAY_S: '30,120',
     HANDLES_RELEASE_DELAY_S: '60,300',
@@ -134,7 +139,8 @@ function world(o: { authority?: AuthorityCheck; env?: Record<string, unknown>; a
     clock,
     post(path, body, p = {}) {
       const url = `${ORIGIN}/v1/handles${path}`;
-      const token = p.slow ? v2.tokens.p256.slow : v2.tokens.p256.fast;
+      // The claim is slow (a co-signing route, review 2026-11-19 L7); `slow: false` sends it fast.
+      const token = (p.slow ?? path === '/claim') ? v2.tokens.p256.slow : v2.tokens.p256.fast;
       return Promise.resolve(
         app.request(
           url,
@@ -224,6 +230,69 @@ describe('POST /v1/handles/claim and the relay', () => {
     expect(mine.handles).toEqual([expect.objectContaining({ label: 'ana', state: 'active', onChain: true, discoverable: false })]);
     expect(logged()).not.toContain('"ana"');
     expect(logged()).not.toContain(ACCOUNT.toLowerCase());
+  });
+
+  it("waits the deployment gap when the account was deployed within it, or the node cannot say (review 2026-11-19, M4)", async () => {
+    for (const deployed of ['recent', 'unknown'] as const) {
+      const w = world({ env: { HANDLES_DEPLOY_GAP_S: '3600' } });
+      w.anchor.deployedAt.set(ACCOUNT.toLowerCase(), deployed === 'recent' ? w.anchor.clock.now - 600 : null);
+      expect((await w.post('/claim', await claimBody(w, 'ana'))).status).toBe(201);
+      w.advance(121_000); // past the drawn 30 to 120 s
+      await w.relay();
+      expect(w.anchor.sent, deployed).toEqual([]);
+      w.advance(3_600_000 - 121_000);
+      await w.relay();
+      expect(w.anchor.sent.map((s) => s.functionName), deployed).toEqual(['claim']);
+    }
+  });
+
+  it('keeps the drawn delay alone for an account deployed before the gap, or with the gap set to 0', async () => {
+    for (const env of [{ HANDLES_DEPLOY_GAP_S: '3600' }, { HANDLES_DEPLOY_GAP_S: '0' }]) {
+      const w = world({ env });
+      w.anchor.deployedAt.set(ACCOUNT.toLowerCase(), env.HANDLES_DEPLOY_GAP_S === '0' ? w.anchor.clock.now - 10 : w.anchor.clock.now - 7200);
+      expect((await w.post('/claim', await claimBody(w, 'ana'))).status).toBe(201);
+      w.advance(121_000);
+      await w.relay();
+      expect(w.anchor.sent.map((s) => s.functionName)).toEqual(['claim']);
+    }
+  });
+
+  it('reads the deployment at a block old enough, at the measured block time, and fails toward the gap', async () => {
+    const account = '0x00000000000000000000000000000000000000aa' as Address;
+    // 200 ms blocks: 1,000 blocks span 200 s; an hour is 18,000 blocks back, plus one.
+    const reader = (o: { deployedAtBlock: bigint; spanS?: bigint; throwAt?: 'code' }): CodeReader & { codeAt: bigint[] } => {
+      const head = 1_000_000n;
+      const ts = (n: bigint) => 1_800_000_000n - ((head - n) * (o.spanS ?? 200n)) / 1_000n;
+      const codeAt: bigint[] = [];
+      return {
+        codeAt,
+        async getBlock(args) {
+          const n = 'blockNumber' in args ? args.blockNumber : head;
+          return { number: n, timestamp: ts(n) };
+        },
+        async getCode({ blockNumber }) {
+          codeAt.push(blockNumber);
+          if (o.throwAt === 'code') throw new Error('missing trie node');
+          return blockNumber >= o.deployedAtBlock ? '0x6080' : undefined;
+        },
+      };
+    };
+    const old = reader({ deployedAtBlock: 900_000n });
+    expect(await codeBefore(old, account, 3600)).toBe(true);
+    expect(old.codeAt).toEqual([1_000_000n - 18_001n]);
+    expect(await codeBefore(reader({ deployedAtBlock: 999_000n }), account, 3600)).toBe(false);
+    await expect(codeBefore(reader({ deployedAtBlock: 0n, throwAt: 'code' }), account, 3600)).rejects.toThrow();
+    // Slow blocks (2,000 s each): three blocks back already cover the hour.
+    expect(await codeBefore(reader({ deployedAtBlock: 0n, spanS: 2_000_000n }), account, 3600)).toBe(true);
+    expect(await codeBefore(reader({ deployedAtBlock: 0n }), account, 0)).toBe(true);
+  });
+
+  it('refuses a fast token: the claim ends in the registrar\'s signature (rules/cofferdam-identity.md, review 2026-11-19 L7)', async () => {
+    const w = world();
+    const res = await w.post('/claim', await claimBody(w, 'ana'), { slow: false });
+    expect(res.status).toBe(401);
+    expect(await json(res)).toMatchObject({ error: 'step_up_required' });
+    expect(await w.registry.row('ana')).toBeNull();
   });
 
   it('refuses a bad registry signature, an owner claim over another serial, a reserved and a taken label, and a second handle', async () => {
@@ -358,9 +427,27 @@ describe('discovery, search and inbox', () => {
     await claimed(w);
     expect(await json(await discoverable(w, true, owner1))).toMatchObject({ error: 'bad_signature' });
   });
+
+  it('turns discovery off on the High session alone, without the handle key or the install proof (q19, review 2026-11-19 L4)', async () => {
+    const w = world();
+    await claimed(w);
+    expect((await discoverable(w, true)).status).toBe(200);
+    const noProof = { HANDLES_SKIP_UNBUILT_GATES: 'device-attestation,locator-pin' };
+    // On still needs the install proof and the handle key.
+    expect(await json(await w.post('/ana/discoverable', { discoverable: true, inboxId: INBOX }, { env: noProof }))).toMatchObject({ error: 'install_proof_unbuilt' });
+    expect(await json(await w.post('/ana/discoverable', { discoverable: true, inboxId: INBOX }))).toMatchObject({ error: 'bad_request' });
+    // A stale key's signature on an off request is still checked when sent.
+    expect(await json(await discoverable(w, false, owner1))).toMatchObject({ error: 'bad_signature' });
+    expect((await w.get('/ana/inbox')).status).toBe(200);
+    // Off with no signature, and no install proof on this deployment.
+    expect(await json(await w.post('/ana/discoverable', { discoverable: false, inboxId: '' }, { env: noProof }))).toEqual({ ok: true, discoverable: false });
+    expect((await w.get('/ana/inbox')).status).toBe(404);
+    // Only the identity's own handle.
+    expect((await w.post('/bob/discoverable', { discoverable: false, inboxId: '' })).status).toBe(404);
+  });
 });
 
-// ── self (rule 5, q18) ──────────────────────────────────────────────────────
+// ── addresses (rule 5, q18) ─────────────────────────────────────────────────
 
 describe('POST /v1/handles/:label/addresses', () => {
   async function selfBody(w: World, v = fixture.stealth.vectors[0]!, meta = fixture.stealth.metaAddress as Hex, key = owner0) {
@@ -395,6 +482,25 @@ describe('POST /v1/handles/:label/addresses', () => {
     expect(res.status).toBe(201);
     const row = w.db.sqlite.prepare('SELECT address, source, length(sealed) AS n FROM watched_addresses').get() as Record<string, unknown>;
     expect(row).toEqual({ address: fixture.stealth.vectors[0]!.account.toLowerCase(), source: 'own', n: 12 + 132 + 16 });
+    expect((await w.post('/ana/addresses', await selfBody(w))).status).toBe(200);
+  });
+
+  it('keeps the identity and the handle id of a watched address as keyed tags, never joinable to the registry rows (review 2026-11-19, M3)', async () => {
+    const w = world();
+    await claimed(w);
+    expect((await w.post('/ana/addresses', await selfBody(w))).status).toBe(201);
+    const handle = w.db.sqlite.prepare("SELECT identity, handle_id FROM handles WHERE label = 'ana'").get() as { identity: string; handle_id: string };
+    const watched = w.db.sqlite.prepare('SELECT identity, handle_id FROM watched_addresses').get() as { identity: string; handle_id: string };
+    expect(watched.identity).not.toBe(handle.identity);
+    expect(watched.handle_id).not.toBe(handle.handle_id);
+    const joined = w.db.sqlite
+      .prepare('SELECT COUNT(*) AS n FROM watched_addresses w JOIN handles h ON w.identity = h.identity OR w.handle_id = h.handle_id')
+      .get() as { n: number };
+    expect(joined.n).toBe(0);
+    const keys = (await mapKeysOf(MAP_KEY))!;
+    expect(watched.identity).toBe(await keys.tag('watch-identity', handle.identity));
+    expect(watched.handle_id).toBe(await keys.tag('watch-handle', handle.handle_id));
+    // The same identity's second registration still answers ours.
     expect((await w.post('/ana/addresses', await selfBody(w))).status).toBe(200);
   });
 
@@ -483,7 +589,8 @@ describe('release and rename', () => {
     expect(out).toMatchObject({ label: 'ana-b', owner: owner1.address, onChain: false });
     const same = out.sameIdentity as { statement: Record<string, unknown>; signature: Hex };
     const signer = await registrySigner(84532, 'SameIdentity', { ...same.statement, newSerial: BigInt(same.statement.newSerial as number), issuedAt: BigInt(same.statement.issuedAt as number) }, same.signature);
-    expect(signer).toBe(w.anchor.registrar.address);
+    expect(signer).toBe(statementKey.address);
+    expect(signer).not.toBe(w.anchor.registrar.address);
     expect((await w.get('/ana')).status).toBe(404);
     expect(await json(await w.get('/ana-b'))).toMatchObject({ onChain: false });
     // The release waits its own delay (60 to 300 s) and for the new label's claim to land.
@@ -575,7 +682,18 @@ describe('POST /v1/handles/:label/verified', () => {
     const st = out.statement as Record<string, unknown>;
     expect(st).toMatchObject({ handleId: handleIdOf('ana'), serial: 1, owner: owner0.address, bound: true, expiresAt: Math.floor(w.clock.ms / 1000) + 30 * 86_400 });
     const signer = await registrySigner(84532, 'VerifiedStatement', { ...st, serial: 1n, expiresAt: BigInt(st.expiresAt as number) }, out.signature as Hex);
-    expect(signer).toBe(w.anchor.registrar.address);
+    expect(signer).toBe(statementKey.address);
+  });
+
+  it('refuses without a statement key of its own: unset, or the registrar key itself (review 2026-11-19, M5)', async () => {
+    const w = world({ bound: true });
+    await claimed(w);
+    expect(await json(await w.post('/ana/verified', {}, { env: { HANDLE_STATEMENT_KEY: undefined } }))).toMatchObject({ error: 'statement_key_unprovisioned' });
+    const env = { HANDLE_STATEMENT_KEY: fixture.keys.registrar.privateKey, HANDLE_REGISTRAR_KEY: fixture.keys.registrar.privateKey };
+    expect(await json(await w.post('/ana/verified', {}, { env }))).toMatchObject({ error: 'statement_key_unprovisioned' });
+    // A rename without it is refused before anything is written.
+    expect(await json(await w.post('/ana/rename', {}, { slow: true, env: { HANDLE_STATEMENT_KEY: undefined } }))).toMatchObject({ error: 'statement_key_unprovisioned' });
+    expect((await w.registry.row('ana'))?.state).toBe('active');
   });
 });
 
@@ -920,6 +1038,14 @@ describe('review round 2', () => {
     expect(skipsGate({ ENVIRONMENT: 'development', HANDLES_SKIP_UNBUILT_GATES: skip } as never, 'locator-pin')).toBe(true);
     for (const e of ['production', 'prod', 'mainnet', '', undefined]) {
       expect(skipsGate({ ENVIRONMENT: e, HANDLES_SKIP_UNBUILT_GATES: skip } as never, 'locator-pin')).toBe(false);
+    }
+  });
+
+  it('honours the skip list only on Base Sepolia, whatever ENVIRONMENT says (review 2026-11-19, M6)', () => {
+    const env = { ENVIRONMENT: 'staging', HANDLES_SKIP_UNBUILT_GATES: 'device-attestation,install-proof,locator-pin' } as never;
+    expect(skipsGate(env, 'locator-pin', 84532)).toBe(true);
+    for (const chainId of [8453, 1, 0]) {
+      for (const gate of ['device-attestation', 'install-proof', 'locator-pin'] as const) expect(skipsGate(env, gate, chainId)).toBe(false);
     }
   });
 
