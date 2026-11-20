@@ -227,9 +227,11 @@ export type ChainDeployments = Readonly<Partial<Record<DeploymentName, ContractD
 
 /**
  * Base mainnet: empty on purpose (workspace decision 0080 (2)). Today's
- * contracts never go to mainnet, the throwaway test generation (M2) does not
- * exist yet and its addresses never enter the plane's defaults, and the
- * production generation (M5) is deployed once, by the Safe. Until a chain has
+ * contracts never go to mainnet; the throwaway test generation `zkp-test-1`
+ * (M2, live since 2026-11-15) never enters the plane's defaults, and the
+ * mainnet test relay reaches it only through its own switches
+ * (`services/testRelay.ts`); the production generation (M5) is deployed once,
+ * by the Ledger, and owned by the Safe. Until a chain has
  * the contract a path needs, that path answers `chain_unsupported` there, with
  * the mainnet switch on or off.
  */

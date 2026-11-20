@@ -108,6 +108,10 @@ const KNOWN_ERRORS = [
   'RebindNotReady(uint48)',
   'RebindStale(bytes32)',
   'NotBoundAccount(address,address)',
+  // the next generation's registry (base-contracts claude/review-fixes-zkp, decision 0080 P4)
+  'RebindPending(bytes32)',
+  'RetiredNeedsRuling(bytes32)',
+  'NotRetired(bytes32)',
   // ZKPassportEvidenceAdapter
   'NotCanonicalVerifier(address)',
   'ZeroVersion()',
