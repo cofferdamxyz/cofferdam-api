@@ -119,7 +119,10 @@ CREATE INDEX handle_freezes_at ON handle_freezes (handle_id, at);
 -- address is the key the watcher reads; what would let anyone recompute or spend
 -- it (R, h, the view tag, the meta-address it derives from) is sealed with
 -- AES-256-GCM under a key derived from HANDLES_MAP_KEY. Every read is logged by
--- count. ASSUMPTION(ruling D): here until the address map has its own database.
+-- count. `identity` and `handle_id` hold keyed tags (HMAC under the map key,
+-- `watch-identity` and `watch-handle` domains, registry.ts `watch`), never the registry's identity id or
+-- handle id, so this table alone joins no label to its addresses (the review of
+-- 2026-11-19, M3). ASSUMPTION(ruling D): here until the address map has its own database.
 CREATE TABLE watched_addresses (
   address TEXT PRIMARY KEY CHECK (address GLOB '0x*' AND substr(address, 3) NOT GLOB '*[^0-9a-f]*' AND length(address) = 42),
   identity TEXT NOT NULL,

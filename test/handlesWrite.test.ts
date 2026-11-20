@@ -678,7 +678,8 @@ describe('POST /v1/handles/:label/verified', () => {
   it('signs (handleId, serial, owner, bound, expiry) for 30 days', async () => {
     const w = world({ bound: true });
     await claimed(w);
-    const out = await json(await w.post('/ana/verified', {}));
+    const out = await json(await w.post('/ana/verified', {}, { slow: true }));
+    expect((await w.post('/ana/verified', {})).status).toBe(401);
     const st = out.statement as Record<string, unknown>;
     expect(st).toMatchObject({ handleId: handleIdOf('ana'), serial: 1, owner: owner0.address, bound: true, expiresAt: Math.floor(w.clock.ms / 1000) + 30 * 86_400 });
     const signer = await registrySigner(84532, 'VerifiedStatement', { ...st, serial: 1n, expiresAt: BigInt(st.expiresAt as number) }, out.signature as Hex);
@@ -688,9 +689,9 @@ describe('POST /v1/handles/:label/verified', () => {
   it('refuses without a statement key of its own: unset, or the registrar key itself (review 2026-11-19, M5)', async () => {
     const w = world({ bound: true });
     await claimed(w);
-    expect(await json(await w.post('/ana/verified', {}, { env: { HANDLE_STATEMENT_KEY: undefined } }))).toMatchObject({ error: 'statement_key_unprovisioned' });
+    expect(await json(await w.post('/ana/verified', {}, { slow: true, env: { HANDLE_STATEMENT_KEY: undefined } }))).toMatchObject({ error: 'statement_key_unprovisioned' });
     const env = { HANDLE_STATEMENT_KEY: fixture.keys.registrar.privateKey, HANDLE_REGISTRAR_KEY: fixture.keys.registrar.privateKey };
-    expect(await json(await w.post('/ana/verified', {}, { env }))).toMatchObject({ error: 'statement_key_unprovisioned' });
+    expect(await json(await w.post('/ana/verified', {}, { slow: true, env }))).toMatchObject({ error: 'statement_key_unprovisioned' });
     // A rename without it is refused before anything is written.
     expect(await json(await w.post('/ana/rename', {}, { slow: true, env: { HANDLE_STATEMENT_KEY: undefined } }))).toMatchObject({ error: 'statement_key_unprovisioned' });
     expect((await w.registry.row('ana'))?.state).toBe('active');

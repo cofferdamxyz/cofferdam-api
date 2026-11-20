@@ -17,7 +17,7 @@
  *   POST /v1/handles/:label/hold-record        (slow) the registrar's hold, renewal or veto (rule 3)
  *   POST /v1/handles/:label/advance            (slow) the registrar's signature on the immediate advance (rule 3)
  *   POST /v1/handles/:label/unfreeze           (slow) the registrar's signature on `unfreeze` (q15)
- *   POST /v1/handles/:label/verified           (fast) the Verified statement (rule 9)
+ *   POST /v1/handles/:label/verified           (slow) the Verified statement (rule 9)
  *
  * Every route takes `{ account, … }` and passes one gate, in order: the
  * family's global brake and per-IP ceiling, the `csa1:` session pinned to the
@@ -880,7 +880,9 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
   routes.post(
     '/:label/verified',
     handle('verified', async (c) => {
-      const a = await admit(c, 'fast', []);
+      // Slow: it signs a statement about the account's passport binding, which rules/cofferdam-identity.md
+      // keeps off a fast token (the review round of 2026-11-19, as /claim).
+      const a = await admit(c, 'slow', []);
       const chain = chainOrRefuse(c);
       const statementKey = statementKeyOrRefuse(c);
       const { row } = await ownOnChain(c, a, chain);
