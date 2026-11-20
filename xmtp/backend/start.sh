@@ -1,35 +1,87 @@
 #!/bin/sh
-# Container entry point (workspace decision 0042, amended 2026-11-19).
+# Container entry point (workspace decision 0042, amended 2026-11-19 and
+# 2026-11-20).
 #
-# With XMTP_TLS_CERT and XMTP_TLS_KEY set (Cloudflare: the XmtpBackend Durable
-# Object passes them from Worker secrets), it runs the backend on 127.0.0.1:5050
-# behind Caddy on :8443 (./Caddyfile), and exits when either process does, so the
-# object's next alarm starts a fresh container. Without them (the Fly.io
-# fallback, whose edge ends TLS) it runs the backend alone, as the published
-# image would.
+# Three modes, picked from the environment the XmtpBackend Durable Object passes:
+#   acme    XMTP_ACME_R2_ACCESS_KEY_ID and XMTP_ACME_R2_SECRET_ACCESS_KEY set:
+#           Caddy (./Caddyfile.acme) obtains and renews xmtp.cofferdam.xyz's
+#           certificate itself over TLS-ALPN-01 on :8443, which Spectrum reaches
+#           on 443. Its storage (/data/caddy) is restored from the R2 bucket
+#           XMTP_ACME_BUCKET at start and copied back every few minutes, so a
+#           restart reuses the certificate instead of issuing a new one.
+#   manual  XMTP_TLS_CERT and XMTP_TLS_KEY set (the override, and the emergency
+#           path of scripts/xmtp/tls-renew.sh): Caddy (./Caddyfile) serves that
+#           pair on :8443. Takes precedence over acme.
+#   plain   neither: the backend alone on :5050 (the Fly.io fallback, whose edge
+#           ends TLS), as the published image would.
+# In acme and manual modes it exits when the backend or Caddy does, so the
+# object's next alarm starts a fresh container.
 set -u
 
 CONFIG=/etc/xmtp/backend.toml
+DATA=/data/caddy
+# The backend never needs the TLS key or the ACME store's token.
+BACKEND_ENV_DROP="-u XMTP_TLS_CERT -u XMTP_TLS_KEY -u XMTP_ACME_R2_ACCESS_KEY_ID -u XMTP_ACME_R2_SECRET_ACCESS_KEY -u RCLONE_CONFIG_STORE_ACCESS_KEY_ID -u RCLONE_CONFIG_STORE_SECRET_ACCESS_KEY"
 
-if [ -z "${XMTP_TLS_CERT:-}" ] && [ -z "${XMTP_TLS_KEY:-}" ]; then
-	exec xmtp-backend --config-file "$CONFIG"
+mode=plain
+if [ -n "${XMTP_TLS_CERT:-}" ] || [ -n "${XMTP_TLS_KEY:-}" ]; then
+	if [ -z "${XMTP_TLS_CERT:-}" ] || [ -z "${XMTP_TLS_KEY:-}" ]; then
+		echo "start: XMTP_TLS_CERT and XMTP_TLS_KEY must both be set" >&2
+		exit 1
+	fi
+	mode=manual
+elif [ -n "${XMTP_ACME_R2_ACCESS_KEY_ID:-}" ] || [ -n "${XMTP_ACME_R2_SECRET_ACCESS_KEY:-}" ]; then
+	for v in XMTP_ACME_R2_ACCESS_KEY_ID XMTP_ACME_R2_SECRET_ACCESS_KEY XMTP_ACME_BUCKET XMTP_R2_ENDPOINT; do
+		eval "[ -n \"\${$v:-}\" ]" || {
+			echo "start: acme mode needs $v" >&2
+			exit 1
+		}
+	done
+	mode=acme
 fi
-if [ -z "${XMTP_TLS_CERT:-}" ] || [ -z "${XMTP_TLS_KEY:-}" ]; then
-	echo "start: XMTP_TLS_CERT and XMTP_TLS_KEY must both be set" >&2
-	exit 1
+
+if [ "$mode" = plain ]; then
+	exec xmtp-backend --config-file "$CONFIG"
 fi
 
 umask 077
-mkdir -p /run/xmtp-tls
-printf '%s\n' "$XMTP_TLS_CERT" >/run/xmtp-tls/cert.pem
-printf '%s\n' "$XMTP_TLS_KEY" >/run/xmtp-tls/key.pem
-# The backend never needs the key.
-unset XMTP_TLS_CERT XMTP_TLS_KEY
 
-xmtp-backend --config-file "$CONFIG" &
+if [ "$mode" = manual ]; then
+	mkdir -p /run/xmtp-tls
+	printf '%s\n' "$XMTP_TLS_CERT" >/run/xmtp-tls/cert.pem
+	printf '%s\n' "$XMTP_TLS_KEY" >/run/xmtp-tls/key.pem
+	CADDYFILE=/etc/caddy/Caddyfile
+else
+	# rclone reads its remote from the environment; nothing is written to disk.
+	export RCLONE_CONFIG_STORE_TYPE=s3
+	export RCLONE_CONFIG_STORE_PROVIDER=Cloudflare
+	export RCLONE_CONFIG_STORE_ENDPOINT="$XMTP_R2_ENDPOINT"
+	export RCLONE_CONFIG_STORE_ACCESS_KEY_ID="$XMTP_ACME_R2_ACCESS_KEY_ID"
+	export RCLONE_CONFIG_STORE_SECRET_ACCESS_KEY="$XMTP_ACME_R2_SECRET_ACCESS_KEY"
+	export RCLONE_CONFIG_STORE_NO_CHECK_BUCKET=true
+	# Bounded, so a store outage costs seconds at start, never minutes.
+	export RCLONE_RETRIES=2 RCLONE_LOW_LEVEL_RETRIES=2 RCLONE_CONTIMEOUT=5s RCLONE_TIMEOUT=20s
+	REMOTE="store:$XMTP_ACME_BUCKET/caddy"
+	case "${XMTP_ACME_CA:-staging}" in
+	production) export XMTP_ACME_DIRECTORY=https://acme-v02.api.letsencrypt.org/directory ;;
+	*) export XMTP_ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory ;;
+	esac
+	export XMTP_TLS_DOMAIN="${XMTP_TLS_DOMAIN:-xmtp.cofferdam.xyz}"
+	mkdir -p "$DATA"
+	# A missing or empty store is a first start; a failed read is not fatal
+	# either: Caddy then issues again (Let's Encrypt allows 5 a week per name).
+	rclone copy --quiet "$REMOTE" "$DATA" || echo "start: could not restore the certificate store" >&2
+	CADDYFILE=/etc/caddy/Caddyfile.acme
+fi
+
+env $BACKEND_ENV_DROP xmtp-backend --config-file "$CONFIG" &
 backend=$!
+proxy=""
+saver=""
 
 stop() {
+	[ -n "$saver" ] && kill "$saver" 2>/dev/null
+	if [ "$mode" = acme ]; then rclone copy --quiet "$DATA" "$REMOTE" 2>/dev/null; fi
 	kill "$backend" ${proxy:+"$proxy"} 2>/dev/null
 	wait
 	exit "${1:-0}"
@@ -46,8 +98,17 @@ until nc -z 127.0.0.1 5050 2>/dev/null; do
 	sleep 0.2
 done
 
-caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
+# Caddy needs the key and certificate files, never the R2 token.
+env -u RCLONE_CONFIG_STORE_ACCESS_KEY_ID -u RCLONE_CONFIG_STORE_SECRET_ACCESS_KEY \
+	-u XMTP_ACME_R2_ACCESS_KEY_ID -u XMTP_ACME_R2_SECRET_ACCESS_KEY -u XMTP_TLS_CERT -u XMTP_TLS_KEY \
+	caddy run --config "$CADDYFILE" --adapter caddyfile &
 proxy=$!
+
+if [ "$mode" = acme ]; then
+	# Copy changes back: a new or renewed certificate, the ACME account, the locks.
+	(while sleep 300; do rclone copy --quiet "$DATA" "$REMOTE" || echo "start: could not save the certificate store" >&2; done) &
+	saver=$!
+fi
 
 while kill -0 "$backend" 2>/dev/null && kill -0 "$proxy" 2>/dev/null; do
 	sleep 2

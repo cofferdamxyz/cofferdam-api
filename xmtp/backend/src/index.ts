@@ -30,7 +30,7 @@
 
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 
-import { certificateStatus, type CertificateStatusAnswer } from './certificate.js';
+import { deployedCertificate, type CertificateStatusAnswer, type CertificateStore } from './certificate.js';
 
 import { containerEnv, envFingerprint, running, type BackendEnv } from './containerEnv.js';
 import { PASSTHROUGH, openUpstream, splice } from './socket.js';
@@ -41,6 +41,8 @@ export interface Env extends BackendEnv {
   INGRESS?: string;
   /** "on" keeps the container running; anything else pauses it. */
   RUN?: string;
+  /** Read binding to the ACME store's bucket, for CertificateStatus only. */
+  XMTP_TLS_STORE?: CertificateStore;
 }
 
 /** Caddy's TLS listener in front of the backend (../Caddyfile); the backend itself is on 5050. */
@@ -126,13 +128,14 @@ export class XmtpBackend extends DurableObject<Env> {
 
 /**
  * The certificate's dates and names for the Ops bot (coworkers, workspace
- * decision 0042 as amended 2026-11-19), over a service binding only: a named
- * entrypoint has no route and no URL. It reads the `XMTP_TLS_CERT` secret the
- * container serves and answers its validity, never the PEM or the key.
+ * decision 0042 as amended 2026-11-19 and 2026-11-20), over a service binding
+ * only: a named entrypoint has no route and no URL. It reads the certificate
+ * the container serves (the `XMTP_TLS_CERT` override, else the one Caddy keeps
+ * in the ACME store) and answers its validity, never the PEM or a key.
  */
 export class CertificateStatus extends WorkerEntrypoint<Env> {
-  status(): CertificateStatusAnswer {
-    return certificateStatus(this.env.XMTP_TLS_CERT);
+  status(): Promise<CertificateStatusAnswer> {
+    return deployedCertificate(this.env);
   }
 }
 

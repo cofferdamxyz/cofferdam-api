@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { BACKEND_ENV_NAMES, TLS_ENV_NAMES, containerEnv, envFingerprint, running } from '../../xmtp/backend/src/containerEnv.js';
+import { ACME_ENV_NAMES, BACKEND_ENV_NAMES, TLS_ENV_NAMES, containerEnv, envFingerprint, running, tlsMode } from '../../xmtp/backend/src/containerEnv.js';
 import { PASSTHROUGH, openUpstream } from '../../xmtp/backend/src/socket.js';
 
 const root = join(__dirname, '../../xmtp');
@@ -116,8 +116,32 @@ describe('the container environment', () => {
     ).toThrow(/sslrootcert=system/);
     expect(() => containerEnv({ ...full, XMTP_DATABASE_URL: 'postgresql://u:p@aws-us-east-1-5.pg.psdb.cloud:5432/postgres?sslmode=verify-full' })).not.toThrow();
   });
+  const acme = {
+    ...full,
+    XMTP_TLS_CERT: undefined,
+    XMTP_TLS_KEY: undefined,
+    XMTP_ACME_R2_ACCESS_KEY_ID: 'acme-id',
+    XMTP_ACME_R2_SECRET_ACCESS_KEY: 'acme-secret',
+    XMTP_ACME_BUCKET: 'cofferdam-xmtp-tls',
+    XMTP_ACME_CA: 'staging',
+  };
+  it('runs Caddy\'s own ACME when its store is set, and passes only that', () => {
+    expect(tlsMode(acme)).toBe('acme');
+    const out = containerEnv(acme);
+    for (const name of ACME_ENV_NAMES) expect(out[name]).toBeDefined();
+    for (const name of TLS_ENV_NAMES) expect(out[name]).toBeUndefined();
+    expect(() => containerEnv({ ...acme, XMTP_ACME_CA: 'prod' })).toThrow(/staging" or "production/);
+    expect(() => containerEnv({ ...acme, XMTP_ACME_R2_SECRET_ACCESS_KEY: undefined })).toThrow(/no certificate source: missing XMTP_ACME_R2_SECRET_ACCESS_KEY/);
+    for (const name of ACME_ENV_NAMES) expect(BACKEND_ENV_NAMES as readonly string[]).not.toContain(name);
+  });
+  it('lets the manual pair win over ACME, and never half a pair', () => {
+    const both = { ...acme, XMTP_TLS_CERT: full.XMTP_TLS_CERT, XMTP_TLS_KEY: full.XMTP_TLS_KEY };
+    expect(tlsMode(both)).toBe('manual');
+    expect(containerEnv(both).XMTP_ACME_R2_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(() => containerEnv({ ...acme, XMTP_TLS_CERT: full.XMTP_TLS_CERT })).toThrow(/go together/);
+  });
   it('needs the TLS pair, as PEM, and keeps it out of backend.toml', () => {
-    expect(() => containerEnv({ ...full, XMTP_TLS_KEY: undefined })).toThrow(/XMTP_TLS_KEY/);
+    expect(() => containerEnv({ ...full, XMTP_TLS_KEY: undefined })).toThrow(/go together/);
     expect(() => containerEnv({ ...full, XMTP_TLS_CERT: 'not a pem' })).toThrow(/PEM certificate/);
     expect(() => containerEnv({ ...full, XMTP_TLS_KEY: 'not a pem' })).toThrow(/PEM private key/);
     expect(() => containerEnv({ ...full, XMTP_TLS_KEY: '-----BEGIN PRIVATE KEY-----\nMIG\n-----END PRIVATE KEY-----' })).not.toThrow();

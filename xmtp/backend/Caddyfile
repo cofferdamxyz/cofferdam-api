@@ -1,10 +1,14 @@
-# TLS in front of the XMTP backend (workspace decision 0042, amended 2026-11-19).
+# TLS in front of the XMTP backend with a certificate passed in: the override
+# (workspace decision 0042, amended 2026-11-19 and 2026-11-20). Caddy renewing
+# its own certificate is ./Caddyfile.acme; this file serves only when the
+# XMTP_TLS_CERT and XMTP_TLS_KEY secrets are both set (scripts/xmtp/tls-renew.sh
+# in the workspace, the emergency path), and then wins.
 #
 # Spectrum on a Pro zone passes TCP through without ending TLS, so the container
-# ends it: Caddy serves xmtp.cofferdam.xyz's certificate on :8443, advertises h2
-# over ALPN, and forwards gRPC (unary and streaming) to the backend's plaintext
-# listener as h2c. ./start.sh writes the certificate and key from the
-# XMTP_TLS_CERT and XMTP_TLS_KEY secrets before Caddy starts.
+# ends it: Caddy serves the certificate on :8443, advertises h2 over ALPN, and
+# forwards gRPC (unary and streaming) to the backend's plaintext listener as
+# h2c. ./start.sh writes the certificate and key from the two secrets before
+# Caddy starts.
 #
 # Decision 0039: no access log (a site `log` directive would add one), no admin
 # endpoint, no ACME (the certificate comes from the secrets, never from here).

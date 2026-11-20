@@ -22,13 +22,26 @@ export interface BackendEnv {
   XMTP_R2_ACCESS_KEY_ID?: string;
   XMTP_R2_SECRET_ACCESS_KEY?: string;
   /**
-   * Secret. PEM chain for the Spectrum hostname (leaf first), publicly trusted:
-   * Spectrum on a Pro zone passes TLS through, so the container's Caddy serves it
-   * (../Caddyfile, ../start.sh; decision 0042, amended 2026-11-19).
+   * Secret, optional override. PEM chain for the Spectrum hostname (leaf
+   * first), publicly trusted: Spectrum on a Pro zone passes TLS through, so the
+   * container's Caddy serves it (../Caddyfile, ../start.sh; decision 0042,
+   * amended 2026-11-19). When set with the key it wins over Caddy's own ACME;
+   * scripts/xmtp/tls-renew.sh (workspace) is the emergency path that sets it.
    */
   XMTP_TLS_CERT?: string;
-  /** Secret. The certificate's PEM private key. Only Caddy reads it; the backend never gets it. */
+  /** Secret, optional override. The certificate's PEM private key. Only Caddy reads it. */
   XMTP_TLS_KEY?: string;
+  /**
+   * Secret. R2 token, Object Read & Write on the ACME store's bucket only:
+   * Caddy obtains and renews the certificate itself (../Caddyfile.acme), and
+   * rclone keeps its store in that bucket (decision 0042, amended 2026-11-20).
+   */
+  XMTP_ACME_R2_ACCESS_KEY_ID?: string;
+  XMTP_ACME_R2_SECRET_ACCESS_KEY?: string;
+  /** Var. The ACME store's bucket. */
+  XMTP_ACME_BUCKET?: string;
+  /** Var. "staging" (Let's Encrypt's test CA) or "production". */
+  XMTP_ACME_CA?: string;
 }
 
 export const BACKEND_ENV_NAMES = [
@@ -41,18 +54,46 @@ export const BACKEND_ENV_NAMES = [
   'XMTP_R2_SECRET_ACCESS_KEY',
 ] as const satisfies readonly (keyof BackendEnv)[];
 
-/** The container's TLS material, read by ../start.sh, never by backend.toml. */
+/** The manual certificate pair, read by ../start.sh, never by backend.toml. */
 export const TLS_ENV_NAMES = ['XMTP_TLS_CERT', 'XMTP_TLS_KEY'] as const satisfies readonly (keyof BackendEnv)[];
+
+/** Caddy's own ACME, read by ../start.sh, never by backend.toml. */
+export const ACME_ENV_NAMES = [
+  'XMTP_ACME_R2_ACCESS_KEY_ID',
+  'XMTP_ACME_R2_SECRET_ACCESS_KEY',
+  'XMTP_ACME_BUCKET',
+  'XMTP_ACME_CA',
+] as const satisfies readonly (keyof BackendEnv)[];
+
+const present = (env: BackendEnv, name: keyof BackendEnv) => {
+  const value = env[name];
+  return typeof value === 'string' && value.length > 0;
+};
+
+/** How the container gets its certificate: Caddy's own ACME, or a pair passed in (which wins). */
+export function tlsMode(env: BackendEnv): 'manual' | 'acme' | null {
+  if (TLS_ENV_NAMES.every((n) => present(env, n))) return 'manual';
+  if (ACME_ENV_NAMES.every((n) => present(env, n))) return 'acme';
+  return null;
+}
 
 export function containerEnv(env: BackendEnv): Record<string, string> {
   const out: Record<string, string> = {};
-  const missing: string[] = [];
-  for (const name of [...BACKEND_ENV_NAMES, ...TLS_ENV_NAMES]) {
-    const value = env[name];
-    if (typeof value === 'string' && value.length > 0) out[name] = value;
-    else missing.push(name);
-  }
+  const missing: string[] = BACKEND_ENV_NAMES.filter((n) => !present(env, n));
   if (missing.length > 0) throw new Error(`xmtp-backend: missing ${missing.join(', ')}`);
+  for (const name of BACKEND_ENV_NAMES) out[name] = env[name]!;
+  if (TLS_ENV_NAMES.some((n) => present(env, n)) && tlsMode(env) !== 'manual') {
+    throw new Error('xmtp-backend: XMTP_TLS_CERT and XMTP_TLS_KEY go together');
+  }
+  const mode = tlsMode(env);
+  if (mode === null) {
+    const absent = ACME_ENV_NAMES.filter((n) => !present(env, n));
+    throw new Error(`xmtp-backend: no certificate source: missing ${absent.join(', ')} (or the XMTP_TLS_CERT/XMTP_TLS_KEY override)`);
+  }
+  for (const name of mode === 'manual' ? TLS_ENV_NAMES : ACME_ENV_NAMES) out[name] = env[name]!;
+  if (mode === 'acme' && !['staging', 'production'].includes(out.XMTP_ACME_CA!)) {
+    throw new Error('xmtp-backend: XMTP_ACME_CA must be "staging" or "production"');
+  }
   if (/-pooler\./.test(out.XMTP_DATABASE_URL!) || /:6432\b/.test(out.XMTP_DATABASE_URL!)) {
     throw new Error('xmtp-backend: XMTP_DATABASE_URL must be a direct endpoint, not a transaction pooler');
   }
@@ -63,10 +104,10 @@ export function containerEnv(env: BackendEnv): Record<string, string> {
     throw new Error('xmtp-backend: drop sslrootcert=system from XMTP_DATABASE_URL (sqlx reads it as a file); keep sslmode=verify-full');
   }
   if (out.XMTP_APP_API_KEY!.length < 32) throw new Error('xmtp-backend: XMTP_APP_API_KEY must be 32+ characters');
-  if (!/^-----BEGIN CERTIFICATE-----/.test(out.XMTP_TLS_CERT!.trim())) {
+  if (mode === 'manual' && !/^-----BEGIN CERTIFICATE-----/.test(out.XMTP_TLS_CERT!.trim())) {
     throw new Error('xmtp-backend: XMTP_TLS_CERT must be a PEM certificate chain');
   }
-  if (!/^-----BEGIN (EC |RSA )?PRIVATE KEY-----/.test(out.XMTP_TLS_KEY!.trim())) {
+  if (mode === 'manual' && !/^-----BEGIN (EC |RSA )?PRIVATE KEY-----/.test(out.XMTP_TLS_KEY!.trim())) {
     throw new Error('xmtp-backend: XMTP_TLS_KEY must be a PEM private key');
   }
   return out;

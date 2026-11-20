@@ -13,10 +13,14 @@
  *   XMTP_R2_ENDPOINT           https://<account id>.r2.cloudflarestorage.com
  *   XMTP_R2_ACCESS_KEY_ID      R2 API token, Object Write on the bucket only
  *   XMTP_R2_SECRET_ACCESS_KEY
- *   XMTP_TLS_CERT              PEM chain for xmtp.cofferdam.xyz, publicly trusted
- *                              (Let's Encrypt, DNS-01); Spectrum on a Pro zone
- *                              passes TLS through, so the container serves it
- *   XMTP_TLS_KEY               its PEM private key (Caddy only, never the backend)
+ *   XMTP_ACME_R2_ACCESS_KEY_ID      R2 token, Object Read & Write on the
+ *   XMTP_ACME_R2_SECRET_ACCESS_KEY  cofferdam-xmtp-tls bucket only: Spectrum on the
+ *                                   Pro zone passes TLS through, so the container's
+ *                                   Caddy obtains and renews the certificate itself
+ *                                   (TLS-ALPN-01) and keeps it there
+ * Optional override (the emergency path, scripts/xmtp/tls-renew.sh in the workspace):
+ *   XMTP_TLS_CERT, XMTP_TLS_KEY     a PEM pair for xmtp.cofferdam.xyz; when both
+ *                                   are set they win over Caddy's own certificate
  */
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
@@ -42,6 +46,12 @@
     // Paused 2026-11-04 until inbound TCP exists: nothing could reach it, and the
     // object and container ran 24/7 (docs/runbooks/xmtp-backend.md, workspace).
     "RUN": "off",
+    // Caddy's certificate store (Caddyfile.acme, start.sh). "staging" is Let's
+    // Encrypt's test CA, which phones do not trust: prove issuance through
+    // Spectrum there, then set "production" and deploy (decision 0042, amended
+    // 2026-11-20).
+    "XMTP_ACME_BUCKET": "cofferdam-xmtp-tls",
+    "XMTP_ACME_CA": "staging",
     // Public RPCs for ERC-1271 checks. Swap for keyed endpoints before load.
     "XMTP_RPC_BASE_SEPOLIA": "https://sepolia.base.org",
     "XMTP_RPC_BASE": "https://mainnet.base.org"
@@ -63,6 +73,11 @@
       "constraints": { "regions": ["ENAM"] }
     }
   ],
+
+  // Read by CertificateStatus only (the Ops bot's expiry check); the container
+  // writes the bucket with its own scoped token. Create the bucket before the
+  // deploy that carries this binding.
+  "r2_buckets": [{ "binding": "XMTP_TLS_STORE", "bucket_name": "cofferdam-xmtp-tls" }],
 
   "durable_objects": {
     "bindings": [{ "name": "XMTP_BACKEND", "class_name": "XmtpBackend" }]

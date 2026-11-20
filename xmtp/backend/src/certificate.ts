@@ -119,8 +119,12 @@ export function certificateFacts(pem: string): CertificateFacts {
 }
 
 export interface CertificateStatusAnswer {
-  /** Whether XMTP_TLS_CERT is set on the deployed Worker. */
+  /** Whether a certificate is in place: the XMTP_TLS_CERT override, or one Caddy obtained. */
   configured: boolean;
+  /** Where it came from: the override secret, or Caddy's own ACME (its store in R2). */
+  source?: 'override' | 'acme';
+  /** Let's Encrypt's staging CA: phones never trust it. */
+  staging?: boolean;
   notBefore?: string;
   notAfter?: string;
   dnsNames?: string[];
@@ -141,4 +145,51 @@ export function certificateStatus(pem: string | undefined, now: Date = new Date(
   } catch (err) {
     return { configured: true, error: err instanceof Error ? err.message : 'certificate: unreadable', checkedAt };
   }
+}
+
+/** The hostname Spectrum serves (../Caddyfile.acme's site). */
+export const TLS_DOMAIN = 'xmtp.cofferdam.xyz';
+
+/** CertMagic's storage key for an ACME directory: host and path, `/` turned into `-`. */
+const ISSUER_KEYS = {
+  production: 'acme-v02.api.letsencrypt.org-directory',
+  staging: 'acme-staging-v02.api.letsencrypt.org-directory',
+} as const;
+
+/** Where rclone keeps Caddy's certificate in the ACME store's bucket (../start.sh). */
+export function acmeCertificateKey(ca: 'production' | 'staging', domain: string = TLS_DOMAIN): string {
+  return `caddy/certificates/${ISSUER_KEYS[ca]}/${domain}/${domain}.crt`;
+}
+
+/** The R2 read this needs: one object by key. */
+export interface CertificateStore {
+  get(key: string): Promise<{ text(): Promise<string> } | null>;
+}
+
+export interface DeployedCertificateEnv {
+  XMTP_TLS_CERT?: string;
+  XMTP_TLS_KEY?: string;
+  XMTP_ACME_CA?: string;
+  XMTP_TLS_STORE?: CertificateStore;
+}
+
+/**
+ * The certificate the container serves: the override pair when both halves are
+ * set (start.sh's manual mode), else the one Caddy keeps in the ACME store for
+ * the CA in use. A store read that fails is reported, never thrown.
+ */
+export async function deployedCertificate(env: DeployedCertificateEnv, now: Date = new Date()): Promise<CertificateStatusAnswer> {
+  if (env.XMTP_TLS_CERT?.trim() && env.XMTP_TLS_KEY?.trim()) {
+    return { ...certificateStatus(env.XMTP_TLS_CERT, now), source: 'override' };
+  }
+  const ca = env.XMTP_ACME_CA === 'production' ? 'production' : 'staging';
+  if (!env.XMTP_TLS_STORE) return { configured: false, checkedAt: now.toISOString() };
+  let pem: string | undefined;
+  try {
+    pem = (await (await env.XMTP_TLS_STORE.get(acmeCertificateKey(ca)))?.text()) ?? undefined;
+  } catch {
+    return { configured: true, source: 'acme', error: 'certificate: store unreadable', checkedAt: now.toISOString() };
+  }
+  const answer = certificateStatus(pem, now);
+  return answer.configured ? { ...answer, source: 'acme', staging: ca === 'staging' } : answer;
 }

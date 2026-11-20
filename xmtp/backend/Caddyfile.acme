@@ -1,0 +1,41 @@
+# TLS in front of the XMTP backend, with Caddy obtaining and renewing the
+# certificate itself (workspace decision 0042, amended 2026-11-20; research in
+# docs/architecture/mac-free-operations.md). ./start.sh picks this file when the
+# ACME store's R2 token is set, and keeps /data/caddy in the R2 bucket.
+#
+# TLS-ALPN-01 only: Spectrum sends xmtp.cofferdam.xyz:443 to this container's
+# :8443 untouched, so Let's Encrypt's `acme-tls/1` handshake reaches Caddy. No
+# HTTP-01 (no port 80), no DNS-01 (no DNS token anywhere), Let's Encrypt only (no
+# ZeroSSL fallback). XMTP_ACME_DIRECTORY is staging unless XMTP_ACME_CA is
+# "production" (start.sh).
+#
+# Decision 0039: no access log, no admin endpoint.
+{
+	admin off
+	persist_config off
+	https_port 8443
+	auto_https disable_redirects
+	storage file_system /data/caddy
+	cert_issuer acme {
+		dir {$XMTP_ACME_DIRECTORY}
+		disable_http_challenge
+	}
+	# Spectrum carries TCP only: no HTTP/3 (UDP) listener.
+	servers {
+		protocols h1 h2
+	}
+	log {
+		output stderr
+		level ERROR
+	}
+}
+
+{$XMTP_TLS_DOMAIN} {
+	reverse_proxy h2c://127.0.0.1:5050 {
+		# Stream every frame as it arrives (gRPC server streams stay open).
+		flush_interval -1
+		transport http {
+			versions h2c
+		}
+	}
+}

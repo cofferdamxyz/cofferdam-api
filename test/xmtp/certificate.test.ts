@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { certificateFacts, certificateStatus } from '../../xmtp/backend/src/certificate.js';
+import { acmeCertificateKey, certificateFacts, certificateStatus, deployedCertificate } from '../../xmtp/backend/src/certificate.js';
 import {
   GENERALIZED_PEM,
   NO_SAN_PEM,
@@ -70,7 +70,49 @@ describe('certificateStatus', () => {
   it('is served by a named entrypoint that reads only the certificate', () => {
     const index = readFileSync(join(__dirname, '../../xmtp/backend/src/index.ts'), 'utf8');
     const entry = index.slice(index.indexOf('export class CertificateStatus'), index.indexOf('export default'));
-    expect(entry).toMatch(/certificateStatus\(this\.env\.XMTP_TLS_CERT\)/);
-    expect(entry).not.toMatch(/XMTP_TLS_KEY|XMTP_DATABASE_URL|XMTP_APP_API_KEY|XMTP_R2_/);
+    expect(entry).toMatch(/deployedCertificate\(this\.env\)/);
+    expect(entry).not.toMatch(/XMTP_DATABASE_URL|XMTP_APP_API_KEY|XMTP_R2_|XMTP_ACME_R2/);
+  });
+});
+
+describe('deployedCertificate', () => {
+  const now = new Date('2027-01-27T12:00:00Z');
+  const store = (objects: Record<string, string>) => ({
+    get: async (key: string) => (key in objects ? { text: async () => objects[key]! } : null),
+  });
+
+  it('reads the certificate Caddy keeps in the store, for the CA in use', async () => {
+    expect(acmeCertificateKey('production')).toBe(
+      'caddy/certificates/acme-v02.api.letsencrypt.org-directory/xmtp.cofferdam.xyz/xmtp.cofferdam.xyz.crt',
+    );
+    const answer = await deployedCertificate(
+      { XMTP_ACME_CA: 'production', XMTP_TLS_STORE: store({ [acmeCertificateKey('production')]: UTC_PEM }) },
+      now,
+    );
+    expect(answer).toMatchObject({ configured: true, source: 'acme', staging: false, daysLeft: 20 });
+    const staging = await deployedCertificate(
+      { XMTP_ACME_CA: 'staging', XMTP_TLS_STORE: store({ [acmeCertificateKey('staging')]: UTC_PEM }) },
+      now,
+    );
+    expect(staging).toMatchObject({ source: 'acme', staging: true });
+  });
+
+  it('prefers the override pair, and says when nothing is issued yet', async () => {
+    const both = await deployedCertificate(
+      { XMTP_TLS_CERT: UTC_PEM, XMTP_TLS_KEY: 'k', XMTP_ACME_CA: 'production', XMTP_TLS_STORE: store({}) },
+      now,
+    );
+    expect(both.source).toBe('override');
+    expect(await deployedCertificate({ XMTP_ACME_CA: 'production', XMTP_TLS_STORE: store({}) }, now)).toEqual({
+      configured: false,
+      checkedAt: now.toISOString(),
+    });
+    expect((await deployedCertificate({}, now)).configured).toBe(false);
+  });
+
+  it('reports a store it cannot read, without throwing', async () => {
+    const broken = { get: async () => { throw new Error('r2 down'); } };
+    const answer = await deployedCertificate({ XMTP_ACME_CA: 'production', XMTP_TLS_STORE: broken }, now);
+    expect(answer).toMatchObject({ configured: true, source: 'acme', error: 'certificate: store unreadable' });
   });
 });
