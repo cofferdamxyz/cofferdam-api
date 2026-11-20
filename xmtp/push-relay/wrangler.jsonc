@@ -10,6 +10,8 @@
  *   APNS_KEY_P8          the .p8 file's contents (Apple Developer > Keys, APNs)
  *   APNS_KEY_ID          that key's 10-character id (not secret; kept with the key)
  *   FCM_SERVICE_ACCOUNT  the Firebase service-account JSON (Cloud Messaging)
+ *   SEAL_APP_KEYS        the backend's [auth.api_keys] value(s), comma-separated;
+ *                        /v1/seal refuses a call without one (503 while unset)
  *
  * The relay stores nothing and logs nothing. Do not add a KV, D1, R2, Durable
  * Object, Analytics Engine or Queue binding here, and keep observability off.
@@ -35,7 +37,13 @@
     "APNS_BUNDLE_ID": "xyz.cofferdam.app"
   },
 
-  // Per sealed URL: a phone gets at most 60 pushes a minute through the relay.
-  // The counter is in-colo memory, keyed by a hash of the URL, never stored.
-  "ratelimits": [{ "name": "PUSH_RL", "namespace_id": "1201", "simple": { "limit": 60, "period": 60 } }]
+  // Counters are in-colo memory, keyed by hashes, never stored.
+  // PUSH_RL: per device token (a hash of the unsealed platform and token, so
+  // every URL sealing one token shares it): at most 60 pushes a minute.
+  // SEAL_IP_RL: seals per connecting IP (hashed). SEAL_GLOBAL_RL: seals in all.
+  "ratelimits": [
+    { "name": "PUSH_RL", "namespace_id": "1201", "simple": { "limit": 60, "period": 60 } },
+    { "name": "SEAL_IP_RL", "namespace_id": "1202", "simple": { "limit": 10, "period": 60 } },
+    { "name": "SEAL_GLOBAL_RL", "namespace_id": "1203", "simple": { "limit": 600, "period": 60 } }
+  ]
 }

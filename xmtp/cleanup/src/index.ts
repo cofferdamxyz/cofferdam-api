@@ -12,7 +12,10 @@
  * Hyperdrive config (a DELETE … RETURNING must never be served from cache).
  *
  * It logs one line per run with counts only: no topic, no id, nothing about a
- * user. Alert on zero deletions for several days while the database grows.
+ * user. When a full run leaves rows past the cutoff (the push cursor stalled, so
+ * nothing at or above it may go), the line carries `alert: "retention_stalled"`
+ * with the overdue counts: retention is then not being applied, whatever the
+ * deletion counts say (workspace review of 2026-11-19, M3).
  *
  * Each run first checks the schema (health.ts) and stores the result under the
  * `health` key; before the backend's first boot has migrated the database it
@@ -88,7 +91,16 @@ export default {
       const previous = await env.CLEANUP_STATE.get<CleanupState>(STATE_KEY, 'json');
       const report = await runCleanup(query, cfg, previous);
       await env.CLEANUP_STATE.put(STATE_KEY, JSON.stringify(report.state));
-      console.log(JSON.stringify({ job: 'xmtp-cleanup', ...report.deleted, timedOut: report.timedOut }));
+      const stalled = report.overdue.groupMessages + report.overdue.welcomes > 0;
+      console.log(
+        JSON.stringify({
+          job: 'xmtp-cleanup',
+          ...report.deleted,
+          timedOut: report.timedOut,
+          overdue: report.overdue,
+          ...(stalled ? { alert: 'retention_stalled' } : {}),
+        }),
+      );
     });
   },
 

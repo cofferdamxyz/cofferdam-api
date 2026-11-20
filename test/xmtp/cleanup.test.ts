@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { configFrom } from '../../xmtp/cleanup/src/index.js';
 import { fingerprint, runCleanup, type CleanupConfig, type Query } from '../../xmtp/cleanup/src/run.js';
-import { keyPackageBatch, sequentialBatch } from '../../xmtp/cleanup/src/sql.js';
+import { keyPackageBatch, OVERDUE_COUNT, sequentialBatch } from '../../xmtp/cleanup/src/sql.js';
 
 const CFG: CleanupConfig = {
   retention: { groupMessageS: 2592000, welcomeS: 7776000, keyPackageS: 7776000 },
@@ -18,6 +18,9 @@ const CFG: CleanupConfig = {
 
 describe('the SQL', () => {
   it('keeps every rule of the design in every statement', () => {
+    expect(OVERDUE_COUNT).toContain('expiry_ns IS NOT NULL');
+    expect(OVERDUE_COUNT).toContain('is_commit_or_proposal = false');
+    expect(OVERDUE_COUNT).toMatch(/^SELECT count/);
     for (const sql of [sequentialBatch(true), keyPackageBatch(true)]) {
       expect(sql).toContain('expiry_ns IS NOT NULL');
       expect(sql).toContain('is_commit_or_proposal = false');
@@ -33,9 +36,10 @@ describe('the SQL', () => {
 
 describe('a run', () => {
   /** A fake database: per-kind queues of rows the next query "deletes". */
-  function fake(batches: Record<string, { sequence_id: string; settled: boolean }[][]>) {
+  function fake(batches: Record<string, { sequence_id: string; settled: boolean }[][]>, overdue: Record<string, number> = {}) {
     const seen: unknown[][] = [];
     const query: Query = async (text, params) => {
+      if (text === OVERDUE_COUNT) return [{ overdue: overdue[String(params[0])] ?? 0 }];
       seen.push(params);
       const kind = text.includes("'\\x03'") ? 'kp' : String(params[0]);
       return (batches[kind]?.shift() ?? []) as Record<string, unknown>[];
@@ -61,6 +65,14 @@ describe('a run', () => {
     // The second group batch started from the first batch's settled maximum.
     expect(db.seen[1]![1]).toBe('9');
     expect(db.seen[0]![2]).toBe((604800n * 1_000_000_000n).toString());
+  });
+
+  it('reports rows past the cutoff that a full run left behind (a stalled push cursor)', async () => {
+    const clean = await runCleanup(fake({}).query, CFG, null);
+    expect(clean.overdue).toEqual({ groupMessages: 0, welcomes: 0 });
+    const stalled = await runCleanup(fake({}, { '0': 12 }).query, CFG, null);
+    expect(stalled.deleted).toEqual({ groupMessages: 0, welcomes: 0, keyPackages: 0 });
+    expect(stalled.overdue).toEqual({ groupMessages: 12, welcomes: 0 });
   });
 
   it('starts over when retention changes', async () => {

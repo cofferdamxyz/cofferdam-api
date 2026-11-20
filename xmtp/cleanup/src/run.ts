@@ -8,7 +8,7 @@
  * M0 runbook drives it against a real Postgres.
  */
 
-import { KIND_GROUP_MESSAGE, KIND_WELCOME, keyPackageBatch, sequentialBatch } from './sql.js';
+import { KIND_GROUP_MESSAGE, KIND_WELCOME, keyPackageBatch, OVERDUE_COUNT, sequentialBatch } from './sql.js';
 
 export type Query = (text: string, params: unknown[]) => Promise<Record<string, unknown>[]>;
 
@@ -34,7 +34,16 @@ export interface RunReport {
   deleted: { groupMessages: number; welcomes: number; keyPackages: number };
   state: CleanupState;
   timedOut: boolean;
+  /**
+   * Rows past the cutoff that a full run left behind (counted up to
+   * OVERDUE_CAP per kind; not counted when the run timed out). Above zero,
+   * retention has stopped: the push cursor is stalled or rows are locked. The
+   * Worker's log line then carries `alert: "retention_stalled"`.
+   */
+  overdue: { groupMessages: number; welcomes: number };
 }
+
+export const OVERDUE_CAP = 1000;
 
 export function fingerprint(cfg: CleanupConfig): string {
   const r = cfg.retention;
@@ -95,5 +104,16 @@ export async function runCleanup(
     if (rows.length < cfg.batch) break;
   }
 
-  return { deleted, state, timedOut };
+  const overdue = { groupMessages: 0, welcomes: 0 };
+  if (!timedOut) {
+    for (const [kind, key] of [
+      [KIND_GROUP_MESSAGE, 'groupMessages'],
+      [KIND_WELCOME, 'welcomes'],
+    ] as const) {
+      const rows = await query(OVERDUE_COUNT, [kind, state.resume[String(kind)] ?? '0', grace, OVERDUE_CAP]);
+      overdue[key] = Number(rows[0]?.overdue ?? 0);
+    }
+  }
+
+  return { deleted, state, timedOut, overdue };
 }
