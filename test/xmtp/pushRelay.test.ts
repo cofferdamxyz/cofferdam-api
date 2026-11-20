@@ -335,6 +335,23 @@ describe('delivery', () => {
     expect(apple.calls).toHaveLength(2);
   });
 
+  it('counts an APNs token once whatever its case, sealed or delivered', async () => {
+    const limit = fakeLimit(1);
+    const e = { ...(await env()), PUSH_RL: limit.binding };
+    const ring = await loadKeyRing(SEAL_KEYS);
+    const body = JSON.stringify({ topic: GROUP_TOPIC, sequence_id: '5', recipient_id: '00' });
+    const apple = fakeFetch({ 'api.push.apple.com': () => new Response(null, { status: 200 }) });
+    const statuses: number[] = [];
+    for (const token of [APNS_TOKEN.toLowerCase(), APNS_TOKEN.toUpperCase()]) {
+      const rec = { ...record(), token };
+      const sealed = await seal(rec, ring, 1);
+      const req = post(`https://push.cofferdam.xyz/v1/d/${sealed}`, body, await backendWebhook(rec.signingKey, body));
+      statuses.push((await handleDelivery(req, e, sealed, apple.fetcher, NOW)).status);
+    }
+    expect(statuses).toEqual([200, 429]);
+    expect(new Set(limit.keys).size).toBe(1);
+  });
+
   it('counts one FCM token once, whether sealed as android or ios-fcm', async () => {
     const limit = fakeLimit(1);
     const e = { ...(await env()), PUSH_RL: limit.binding };
@@ -389,6 +406,10 @@ describe('the relay keeps nothing', () => {
     }
     expect(cfg).toMatch(/"observability":\s*\{\s*"enabled":\s*false\s*\}/);
     expect(cfg).toMatch(/"logpush":\s*false/);
+  });
+  it('binds the three limits, which the code skips when a binding is absent', () => {
+    const cfg = readFileSync(join(dir, 'wrangler.jsonc'), 'utf8');
+    for (const name of ['PUSH_RL', 'SEAL_IP_RL', 'SEAL_GLOBAL_RL']) expect(cfg).toMatch(new RegExp(`"name":\\s*"${name}"`));
   });
 });
 

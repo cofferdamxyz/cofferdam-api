@@ -131,7 +131,8 @@ export async function handleSeal(request: Request, env: Env): Promise<Response> 
   const signingKey = typeof input.signingKey === 'string' ? fromB64(input.signingKey) : null;
   const record = {
     platform: input.platform,
-    token: input.token,
+    // An APNs token is hex, which APNs reads in any case: one case only, so no case variant seals into a bucket of its own.
+    token: input.platform === 'ios' && typeof input.token === 'string' ? input.token.toLowerCase() : input.token,
     signingKey,
     apnsEnv: input.apnsEnv ?? 'production',
   } as DeliveryRecord;
@@ -163,7 +164,8 @@ export async function handleDelivery(
     // The device token, not the URL: a fresh seal of one token lands in the same bucket. An FCM token is one bucket
     // whether it was sealed as `android` or `ios-fcm`.
     const provider = record.platform === 'ios' ? 'apns' : 'fcm';
-    const key = (await sha256Hex(`cofferdam-push-token:${provider}:${record.token}`)).slice(0, 32);
+    const token = provider === 'apns' ? record.token.toLowerCase() : record.token;
+    const key = (await sha256Hex(`cofferdam-push-token:${provider}:${token}`)).slice(0, 32);
     const { success } = await env.PUSH_RL.limit({ key });
     if (!success) return empty(429);
   }
