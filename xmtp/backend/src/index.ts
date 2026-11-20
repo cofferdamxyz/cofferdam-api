@@ -28,7 +28,9 @@
  * The database, R2 and the secrets stay; "on" and a deploy bring it back.
  */
 
-import { DurableObject } from 'cloudflare:workers';
+import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
+
+import { certificateStatus, type CertificateStatusAnswer } from './certificate.js';
 
 import { containerEnv, envFingerprint, running, type BackendEnv } from './containerEnv.js';
 import { PASSTHROUGH, openUpstream, splice } from './socket.js';
@@ -119,6 +121,18 @@ export class XmtpBackend extends DurableObject<Env> {
       this.ctx.container!.getTcpPort(INGRESS_PORT).connect(`10.0.0.1:${INGRESS_PORT}`, PASSTHROUGH),
     );
     await splice(socket, upstream);
+  }
+}
+
+/**
+ * The certificate's dates and names for the Ops bot (coworkers, workspace
+ * decision 0042 as amended 2026-11-19), over a service binding only: a named
+ * entrypoint has no route and no URL. It reads the `XMTP_TLS_CERT` secret the
+ * container serves and answers its validity, never the PEM or the key.
+ */
+export class CertificateStatus extends WorkerEntrypoint<Env> {
+  status(): CertificateStatusAnswer {
+    return certificateStatus(this.env.XMTP_TLS_CERT);
   }
 }
 
