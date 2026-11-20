@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { fromB64, fromB64Url, toB64, utf8 } from '../../xmtp/push-relay/src/b64.js';
 import { encryptHint, hintKeys } from '../../xmtp/push-relay/src/hint.js';
-import relay, { handleDelivery, type Env } from '../../xmtp/push-relay/src/index.js';
+import relay, { handleDelivery, handleSeal, type Env } from '../../xmtp/push-relay/src/index.js';
 import { classifyApns, classifyFcm, resetProviderCaches } from '../../xmtp/push-relay/src/providers.js';
 import { loadKeyRing, seal, unseal, type DeliveryRecord } from '../../xmtp/push-relay/src/seal.js';
 import { verifyWebhook } from '../../xmtp/push-relay/src/webhook.js';
@@ -51,6 +51,7 @@ async function env(): Promise<Env> {
     SEAL_KEYS,
     SEAL_KID_CURRENT: '1',
     PUBLIC_BASE_URL: 'https://push.cofferdam.xyz',
+    SEAL_APP_KEYS: `old-key, ${APP_KEY}`,
     APNS_KEY_P8: await pem(ec.privateKey),
     APNS_KEY_ID: 'KEY1234567',
     APNS_TEAM_ID: '4DCX2H37VW',
@@ -81,6 +82,30 @@ function fakeFetch(answers: Record<string, () => Response>) {
 
 const post = (url: string, body: string, headers?: Headers) => new Request(url, { method: 'POST', body, headers });
 
+const APP_KEY = 'test-app-key';
+/** The phone's seal call: the app key as a bearer token, from one address. */
+const sealCall = (body: unknown, key = APP_KEY, ip = '198.51.100.7') =>
+  post(
+    'https://push.cofferdam.xyz/v1/seal',
+    JSON.stringify(body),
+    new Headers({ 'content-type': 'application/json', authorization: `Bearer ${key}`, 'cf-connecting-ip': ip }),
+  );
+
+/** A rate-limit binding that counts per key in memory, as the Workers binding does per colo. */
+function fakeLimit(limit: number) {
+  const counts = new Map<string, number>();
+  const keys: string[] = [];
+  const binding = {
+    async limit({ key }: { key: string }) {
+      keys.push(key);
+      const n = (counts.get(key) ?? 0) + 1;
+      counts.set(key, n);
+      return { success: n <= limit };
+    },
+  } as unknown as RateLimit;
+  return { binding, keys };
+}
+
 beforeEach(() => resetProviderCaches());
 
 describe('sealing', () => {
@@ -105,10 +130,7 @@ describe('sealing', () => {
 
   it('keeps the delivery URL far under the backend limit (2,048) for a long FCM token', async () => {
     const res = await relay.fetch(
-      post(
-        'https://push.cofferdam.xyz/v1/seal',
-        JSON.stringify({ v: 1, platform: 'android', token: 'f'.repeat(300), signingKey: toB64(new Uint8Array(32)) }),
-      ),
+      sealCall({ v: 1, platform: 'android', token: 'f'.repeat(300), signingKey: toB64(new Uint8Array(32)) }),
       await env(),
     );
     expect(res.status).toBe(200);
@@ -127,8 +149,41 @@ describe('sealing', () => {
       { v: 2, platform: 'android', token: 'tok-ok-123', signingKey: toB64(new Uint8Array(32)) },
     ];
     for (const b of bad) {
-      expect((await relay.fetch(post('https://push.cofferdam.xyz/v1/seal', JSON.stringify(b)), e)).status).toBe(400);
+      expect((await relay.fetch(sealCall(b), e)).status).toBe(400);
     }
+  });
+});
+
+describe('the seal gate (review 2026-11-19, H1)', () => {
+  const ok = { v: 1, platform: 'android', token: 'tok-ok-123', signingKey: toB64(new Uint8Array(32)) };
+
+  it('seals only for a caller with an app key, and nothing while no key is set', async () => {
+    const e = await env();
+    expect((await handleSeal(sealCall(ok), e)).status).toBe(200);
+    expect((await handleSeal(sealCall(ok, 'old-key'), e)).status).toBe(200);
+    expect((await handleSeal(sealCall(ok, 'wrong'), e)).status).toBe(401);
+    const bare = post('https://push.cofferdam.xyz/v1/seal', JSON.stringify(ok));
+    expect((await handleSeal(bare, e)).status).toBe(401);
+    expect((await handleSeal(sealCall(ok), { ...e, SEAL_APP_KEYS: ' , ' })).status).toBe(503);
+  });
+
+  it('limits seals per address and in all, keyed by a hash that never holds the address', async () => {
+    const ip = fakeLimit(2);
+    const global = fakeLimit(3);
+    const e = { ...(await env()), SEAL_IP_RL: ip.binding, SEAL_GLOBAL_RL: global.binding };
+    const one = '203.0.113.9';
+    expect((await handleSeal(sealCall(ok, APP_KEY, one), e)).status).toBe(200);
+    expect((await handleSeal(sealCall(ok, APP_KEY, one), e)).status).toBe(200);
+    expect((await handleSeal(sealCall(ok, APP_KEY, one), e)).status).toBe(429);
+    // The refused call spent no global token: another address still gets one, then the brake holds.
+    expect(global.keys).toHaveLength(2);
+    expect((await handleSeal(sealCall(ok, APP_KEY, '203.0.113.10'), e)).status).toBe(200);
+    expect((await handleSeal(sealCall(ok, APP_KEY, '203.0.113.11'), e)).status).toBe(429); // the global brake
+    expect(ip.keys.every((k) => !k.includes('203.0.113'))).toBe(true);
+    // A caller without the key spends neither bucket.
+    const before = global.keys.length;
+    expect((await handleSeal(sealCall(ok, 'wrong', one), e)).status).toBe(401);
+    expect(global.keys.length).toBe(before);
   });
 });
 
@@ -261,6 +316,62 @@ describe('delivery', () => {
     expect(none.calls).toHaveLength(0);
   });
 
+  it('limits per device token, so a fresh seal of the same token never lifts the cap', async () => {
+    const limit = fakeLimit(2);
+    const e = { ...(await env()), PUSH_RL: limit.binding };
+    const ring = await loadKeyRing(SEAL_KEYS);
+    const rec = record();
+    const body = JSON.stringify({ topic: GROUP_TOPIC, sequence_id: '5', recipient_id: '00' });
+    const apple = fakeFetch({ 'api.push.apple.com': () => new Response(null, { status: 200 }) });
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const sealed = await seal(rec, ring, 1); // a new URL each time (fresh IV)
+      const req = post(`https://push.cofferdam.xyz/v1/d/${sealed}`, body, await backendWebhook(rec.signingKey, body));
+      statuses.push((await handleDelivery(req, e, sealed, apple.fetcher, NOW)).status);
+    }
+    expect(statuses).toEqual([200, 200, 429]);
+    expect(new Set(limit.keys).size).toBe(1);
+    expect(limit.keys[0]).not.toContain(APNS_TOKEN);
+    expect(apple.calls).toHaveLength(2);
+  });
+
+  it('counts an APNs token once whatever its case, sealed or delivered', async () => {
+    const limit = fakeLimit(1);
+    const e = { ...(await env()), PUSH_RL: limit.binding };
+    const ring = await loadKeyRing(SEAL_KEYS);
+    const body = JSON.stringify({ topic: GROUP_TOPIC, sequence_id: '5', recipient_id: '00' });
+    const apple = fakeFetch({ 'api.push.apple.com': () => new Response(null, { status: 200 }) });
+    const statuses: number[] = [];
+    for (const token of [APNS_TOKEN.toLowerCase(), APNS_TOKEN.toUpperCase()]) {
+      const rec = { ...record(), token };
+      const sealed = await seal(rec, ring, 1);
+      const req = post(`https://push.cofferdam.xyz/v1/d/${sealed}`, body, await backendWebhook(rec.signingKey, body));
+      statuses.push((await handleDelivery(req, e, sealed, apple.fetcher, NOW)).status);
+    }
+    expect(statuses).toEqual([200, 429]);
+    expect(new Set(limit.keys).size).toBe(1);
+  });
+
+  it('counts one FCM token once, whether sealed as android or ios-fcm', async () => {
+    const limit = fakeLimit(1);
+    const e = { ...(await env()), PUSH_RL: limit.binding };
+    const ring = await loadKeyRing(SEAL_KEYS);
+    const body = JSON.stringify({ topic: GROUP_TOPIC, sequence_id: '5', recipient_id: '00' });
+    const google = fakeFetch({
+      'oauth2.googleapis.com': () => Response.json({ access_token: 't', expires_in: 3600 }),
+      'fcm.googleapis.com': () => Response.json({ name: 'ok' }),
+    });
+    const statuses: number[] = [];
+    for (const platform of ['android', 'ios-fcm'] as const) {
+      const rec = record({ platform, token: 'fcm-token-123' });
+      const sealed = await seal(rec, ring, 1);
+      const req = post(`https://push.cofferdam.xyz/v1/d/${sealed}`, body, await backendWebhook(rec.signingKey, body));
+      statuses.push((await handleDelivery(req, e, sealed, google.fetcher, NOW)).status);
+    }
+    expect(statuses).toEqual([200, 429]);
+    expect(new Set(limit.keys).size).toBe(1);
+  });
+
   it('two deliveries of one message share a collapse id; two messages do not', async () => {
     const key = new Uint8Array(32).fill(3);
     const a = await encryptHint(key, { topic: fromB64(GROUP_TOPIC)!, sequenceId: '10' });
@@ -295,6 +406,10 @@ describe('the relay keeps nothing', () => {
     }
     expect(cfg).toMatch(/"observability":\s*\{\s*"enabled":\s*false\s*\}/);
     expect(cfg).toMatch(/"logpush":\s*false/);
+  });
+  it('binds the three limits, which the code skips when a binding is absent', () => {
+    const cfg = readFileSync(join(dir, 'wrangler.jsonc'), 'utf8');
+    for (const name of ['PUSH_RL', 'SEAL_IP_RL', 'SEAL_GLOBAL_RL']) expect(cfg).toMatch(new RegExp(`"name":\\s*"${name}"`));
   });
 });
 

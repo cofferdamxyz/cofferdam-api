@@ -12,8 +12,13 @@
  *
  * Wire format (base64url): 0x01 | kid (1 byte) | iv (12) | AES-256-GCM(JSON),
  * with AAD "cofferdam-push-seal-v1:<kid>". Rotation: add a key under a new kid,
- * point SEAL_KID_CURRENT at it; phones reseal on their next launch. Removing an
- * old kid makes its URLs answer 410, so the backend drops those recipients.
+ * point SEAL_KID_CURRENT at it; a phone re-seals at its first launch once its
+ * registration is 7 days old (cofferdam-app `src/lib/push.ts`, RESEAL_AFTER_MS),
+ * so drop the old kid no sooner than 30 days later. Removing an old kid makes
+ * its URLs answer 410, so the backend drops those recipients; a phone not
+ * opened for a week seals afresh at its next launch. After an old kid is
+ * dropped at once (a leak), a phone sealed under it within the week registers
+ * the dead URL again until its registration turns seven days old.
  */
 
 import { fromB64, fromB64Url, fromUtf8, toB64, toB64Url, utf8 } from './b64.js';
