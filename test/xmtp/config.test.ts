@@ -71,8 +71,8 @@ describe('backend.toml (decisions 0039, 0040, 0042)', () => {
     expect(running({ RUN: 'off' })).toBe(false);
     expect(running({})).toBe(false);
     expect(running({ RUN: 'ON' })).toBe(false);
-    // Paused while inbound TCP does not exist (2026-11-04).
-    expect(jsonc('backend/wrangler.jsonc').vars.RUN).toBe('off');
+    // Paused 2026-11-04 while nothing could reach it; on again with inbound TCP (2026-11-21).
+    expect(jsonc('backend/wrangler.jsonc').vars.RUN).toBe('on');
   });
 
   it('logs nothing from the backend Worker and exposes no URL', () => {
@@ -80,7 +80,9 @@ describe('backend.toml (decisions 0039, 0040, 0042)', () => {
     expect(cfg.observability.enabled).toBe(false);
     expect(cfg.workers_dev).toBe(false);
     expect(cfg.routes).toBeUndefined();
-    expect(cfg.vars.INGRESS).toBe('off');
+    // The only way in is the Spectrum application's inbound TCP (2026-11-21).
+    expect(cfg.vars.INGRESS).toBe('tcp');
+    expect(cfg.vars.XMTP_ACME_CA).toBe('production');
     for (const f of readdirSync(join(root, 'backend/src'))) {
       expect(readFileSync(join(root, 'backend/src', f), 'utf8'), f).not.toMatch(/console\./);
     }

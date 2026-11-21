@@ -47,11 +47,12 @@
     // inbound TCP for the M0 phone test (the founder, 2026-11-21).
     "RUN": "on",
     // Caddy's certificate store (Caddyfile.acme, start.sh). "staging" is Let's
-    // Encrypt's test CA, which phones do not trust: prove issuance through
-    // Spectrum there, then set "production" and deploy (decision 0042, amended
-    // 2026-11-20).
+    // Encrypt's test CA, which phones do not trust; issuance through Spectrum
+    // was proven there on 2026-11-21 (gRPC health SERVING), so "production"
+    // (decision 0042, amended 2026-11-20). Let's Encrypt allows 5 a week per
+    // name: never loop deploys.
     "XMTP_ACME_BUCKET": "cofferdam-xmtp-tls",
-    "XMTP_ACME_CA": "staging",
+    "XMTP_ACME_CA": "production",
     // Public RPCs for ERC-1271 checks. Swap for keyed endpoints before load.
     "XMTP_RPC_BASE_SEPOLIA": "https://sepolia.base.org",
     "XMTP_RPC_BASE": "https://mainnet.base.org"

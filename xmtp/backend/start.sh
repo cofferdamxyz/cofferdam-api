@@ -68,9 +68,17 @@ else
 	esac
 	export XMTP_TLS_DOMAIN="${XMTP_TLS_DOMAIN:-xmtp.cofferdam.xyz}"
 	mkdir -p "$DATA"
-	# A missing or empty store is a first start; a failed read is not fatal
-	# either: Caddy then issues again (Let's Encrypt allows 5 a week per name).
-	rclone copy --quiet "$REMOTE" "$DATA" || echo "start: could not restore the certificate store" >&2
+	# A missing or empty store is a first start (rclone exits 3, directory not
+	# found). Any other failed read is fatal on the production CA: Caddy would
+	# issue again on every restart, and Let's Encrypt allows 5 a week per name,
+	# so a store outage in a restart loop would leave the name with no
+	# certificate for days. On staging it only warns.
+	rc=0
+	rclone copy --quiet "$REMOTE" "$DATA" || rc=$?
+	if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+		echo "start: could not restore the certificate store (rclone exit $rc)" >&2
+		[ "${XMTP_ACME_CA:-staging}" = production ] && exit 1
+	fi
 	CADDYFILE=/etc/caddy/Caddyfile.acme
 fi
 
@@ -106,7 +114,14 @@ proxy=$!
 
 if [ "$mode" = acme ]; then
 	# Copy changes back: a new or renewed certificate, the ACME account, the locks.
-	(while sleep 300; do rclone copy --quiet "$DATA" "$REMOTE" || echo "start: could not save the certificate store" >&2; done) &
+	# Every 30 s for the first 10 minutes, so a certificate issued at start is in
+	# the store before a restart could ask for another; then every 5 minutes.
+	(n=0; while sleep 30; do
+		n=$((n + 1))
+		if [ "$n" -le 20 ] || [ $((n % 10)) -eq 0 ]; then
+			rclone copy --quiet "$DATA" "$REMOTE" || echo "start: could not save the certificate store" >&2
+		fi
+	done) &
 	saver=$!
 fi
 
