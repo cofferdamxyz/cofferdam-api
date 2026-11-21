@@ -94,10 +94,10 @@
     // The quarantine the Sepolia anchor is deployed with (base-contracts
     // deploy-handle-anchor.ts's default, one day); unset means 0086's 365.
     "HANDLES_QUARANTINE_DAYS": "1",
-    // Set once the founder deploys CofferdamHandleAnchor on Base Sepolia (0086
-    // questions 15 and 16 were ruled 2026-11-19), with the secrets HANDLE_REGISTRAR_KEY,
-    // HANDLES_MAP_KEY and HANDLE_STATEMENT_KEY; until then claim and the registrar's routes answer 503.
-    // "HANDLE_ANCHOR_ADDRESS": "0x…",
+    // CofferdamHandleAnchor on Base Sepolia (deployed 2026-11-20, block 61532195;
+    // base-contracts deployments/baseSepolia.json). Needs the secrets HANDLE_REGISTRAR_KEY
+    // (address 0x17838cDF0788eF83a70E95A645D7C1E9ac107E19), HANDLES_MAP_KEY and HANDLE_STATEMENT_KEY.
+    "HANDLE_ANCHOR_ADDRESS": "0x8b346614EBC7eE242eCB2Bb5F04D9CBF91ed1aA8",
     // First block the webhook-fed activity store is complete from (decision
     // 0032). Leave unset until the CDP subscription exists; then set it to the
     // head block at creation. ACTIVITY_RPC_URL (the CDP Node URL, carrying a
