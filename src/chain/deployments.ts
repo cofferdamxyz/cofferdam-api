@@ -205,6 +205,23 @@ export const SEPOLIA_DEPLOYMENTS = {
     tier: 'LowManaged',
     kind: 'polis_sso',
   },
+  /**
+   * The handle anchor (workspace decision 0086), deployed 2026-11-20 at block 61532195 from base-contracts
+   * `9c312a1`. Listed here as the mirror of `deployments/baseSepolia.json`; the handle routes and the relay read it
+   * from `HANDLE_ANCHOR_ADDRESS` in `wrangler.jsonc`, which must equal it.
+   */
+  CofferdamHandleAnchor: {
+    address: '0x8b346614EBC7eE242eCB2Bb5F04D9CBF91ed1aA8',
+    txHash: '0x6d704f856c60a347dbbe0428a01b4816a39cfb2c475d5a8b937db487fb6c56ae',
+    deployer: '0x2c8A01e971d7C51B3B78f9F08c57c45584D96AB2',
+  },
+  /**
+   * The test Safe (v1.4.1, the CofferdamDev key, threshold 1) that owns the handle anchor from its first block;
+   * `CofferdamHandleAnchorSafe` in `deployments/baseSepolia.json` names the same address.
+   */
+  CofferdamSafe: {
+    address: '0x48fDe2B5aF92BF4BE2Cc82DE71e7a87774CFF735',
+  },
 } as const satisfies Record<string, ContractDeployment>;
 
 export type ContractName = keyof typeof SEPOLIA_DEPLOYMENTS;
