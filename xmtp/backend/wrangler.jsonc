@@ -38,14 +38,14 @@
   "preview_urls": false,
 
   "vars": {
-    // "off" until the Spectrum application (xmtp.cofferdam.xyz, TCP 443, Worker
-    // origin; public beta since 2026-11-19) points at this Worker; then "tcp".
+    // "tcp": the Spectrum application (xmtp.cofferdam.xyz, TCP 443, Worker
+    // origin; public beta since 2026-11-19) reaches this Worker; "off" refuses it.
     // See docs/runbooks/xmtp-backend.md (workspace).
-    "INGRESS": "off",
+    "INGRESS": "tcp",
     // "on" keeps the container up around the clock; "off" pauses it (src/index.ts).
-    // Paused 2026-11-04 until inbound TCP exists: nothing could reach it, and the
-    // object and container ran 24/7 (docs/runbooks/xmtp-backend.md, workspace).
-    "RUN": "off",
+    // Paused 2026-11-04 to 2026-11-21 while nothing could reach it; on again with
+    // inbound TCP for the M0 phone test (the founder, 2026-11-21).
+    "RUN": "on",
     // Caddy's certificate store (Caddyfile.acme, start.sh). "staging" is Let's
     // Encrypt's test CA, which phones do not trust: prove issuance through
     // Spectrum there, then set "production" and deploy (decision 0042, amended
