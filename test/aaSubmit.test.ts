@@ -120,6 +120,36 @@ describe('submitUserOperation with the op nonce a bigint', () => {
     expect(logged()).toMatchObject([{ event: 'aa_send_refused', nonce: '26', class: 'fatal' }]);
   });
 
+  it('answers rate_limited, nothing sent, when the node refuses every send as rate-limited (the revoke of 2026-11-19)', async () => {
+    vi.useFakeTimers();
+    try {
+      chain.sendRawTransaction.mockRejectedValue(nodeError('429 Too Many Requests'));
+      const failure = submitUserOperation(env, op).catch((e: unknown) => e);
+      await vi.runAllTimersAsync();
+      const err = await failure;
+      expect(err).toBeInstanceOf(UserOpSubmitError);
+      expect(err).toMatchObject({ code: 'rate_limited' });
+      expect(chain.sendRawTransaction).toHaveBeenCalledTimes(3);
+      expect(chain.waitForTransactionReceipt).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('answers relay_failed when a refused attempt may have reached the node', async () => {
+    vi.useFakeTimers();
+    try {
+      chain.sendRawTransaction
+        .mockRejectedValueOnce(nodeError('The request took too long to respond. timeout'))
+        .mockRejectedValue(nodeError('429 Too Many Requests'));
+      const failure = submitUserOperation(env, op).catch((e: unknown) => e);
+      await vi.runAllTimersAsync();
+      expect(await failure).toMatchObject({ code: 'relay_failed' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('answers simulation_failed for a failed simulation, logged, with nothing admitted or sent', async () => {
     chain.simulateContract.mockRejectedValue(new BaseError('execution reverted'));
     const admit = vi.fn(async () => {});
