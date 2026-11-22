@@ -28,6 +28,8 @@ export interface MemoryAnchor extends AnchorChain {
   delays: { change: number; freeze: number; quarantine: number };
   /** When each account was deployed (unix seconds, by lower-case address); an account absent was deployed long ago. `null` stands for a node that cannot say. */
   deployedAt: Map<string, number | null>;
+  /** A send mines with a successful receipt and changes nothing, as the empty transactions of 2026-11-22 did. */
+  mineNothing: boolean;
 }
 
 const blank = (): AnchorRecord => ({
@@ -53,6 +55,7 @@ export function memoryAnchor(clock: { now: number }, registrarKey: Hex = fixture
   const rec = (id: string) => records.get(id.toLowerCase()) ?? blank();
   const put = (id: string, r: AnchorRecord) => records.set(id.toLowerCase(), r);
   let n = 0;
+  const flags = { mineNothing: false };
 
   const expect = async (who: Address, type: AnchorPrimaryType, message: Record<string, unknown>, sig: Hex) => {
     const got = await anchorSigner(84532, TEST_ANCHOR, type, message, sig);
@@ -74,6 +77,12 @@ export function memoryAnchor(clock: { now: number }, registrarKey: Hex = fixture
     receipts,
     delays,
     deployedAt,
+    get mineNothing() {
+      return flags.mineNothing;
+    },
+    set mineNothing(v: boolean) {
+      flags.mineNothing = v;
+    },
     async deployedBefore(account, seconds) {
       const at = deployedAt.get(account.toLowerCase());
       if (at === undefined) return true;
@@ -90,6 +99,10 @@ export function memoryAnchor(clock: { now: number }, registrarKey: Hex = fixture
       return receipts.get(hash) ?? 'success';
     },
     async send(call) {
+      if (flags.mineNothing) {
+        sent.push(call);
+        return keccak256(`0x${(++n).toString(16).padStart(4, '0')}`);
+      }
       const r = { ...rec(call.args[0]) };
       const id = call.args[0];
       switch (call.functionName) {

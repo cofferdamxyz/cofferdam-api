@@ -209,12 +209,20 @@ async function settle(registry: D1HandleRegistry, chain: AnchorChain, job: Ancho
     return reverted(registry, job, 'tx_reverted', now);
   }
   if (job.kind === 'advance') return followAdvance(registry, job, now);
+  // A successful receipt proves only that a transaction mined: the anchor itself must show the change, or the
+  // job goes back to the queue, whose send reads the record again (2026-11-22: two claims mined as empty
+  // contract creations and were marked on chain).
   const rec = await chain.record(job.handleId);
   if (job.kind === 'claim') {
+    if (!same(rec.owner, job.args.owner!) || rec.serial !== Number(job.args.serial)) return reverted(registry, job, 'not_landed', now);
     await registry.markOnChain(job.handleId, job.args.owner!, now);
   } else if (job.kind === 'release') {
-    await registry.queueApply(job.handleId, rec.pendingReadyAt * 1000, now);
-  } else if (rec.releasedAt > 0) {
+    if (rec.pendingKind !== CHANGE_KIND.Release && !(same(rec.owner, ZERO_ADDRESS) && rec.releasedAt > 0)) {
+      return reverted(registry, job, 'not_landed', now);
+    }
+    if (rec.pendingKind === CHANGE_KIND.Release) await registry.queueApply(job.handleId, rec.pendingReadyAt * 1000, now);
+  } else {
+    if (!(same(rec.owner, ZERO_ADDRESS) && rec.releasedAt > 0)) return reverted(registry, job, 'not_landed', now);
     await registry.markReleased(job.handleId, rec.releasedAt * 1000, now);
   }
   await registry.updateJob(job.id, { state: 'done' }, now);

@@ -232,6 +232,26 @@ describe('POST /v1/handles/claim and the relay', () => {
     expect(logged()).not.toContain(ACCOUNT.toLowerCase());
   });
 
+  it('never marks a claim on chain on a receipt alone: a mined transaction that left the anchor unchanged is sent again (2026-11-22)', async () => {
+    const w = world();
+    expect((await w.post('/claim', await claimBody(w, 'ana'))).status).toBe(201);
+    w.anchor.mineNothing = true;
+    w.advance(121_000);
+    await w.relay(); // sent, mined, nothing changed
+    expect(w.anchor.sent.map((s) => s.functionName)).toEqual(['claim']);
+    await w.relay(); // the receipt says success; the record says otherwise
+    expect(await json(await w.get('/ana'))).toMatchObject({ onChain: false });
+    const [job] = await w.registry.jobsOf(handleIdOf('ana'));
+    expect(job).toMatchObject({ state: 'queued', attempts: 1, error: 'not_landed' });
+
+    w.anchor.mineNothing = false;
+    w.advance(61_000);
+    await w.relay(); // sent again, and it lands
+    expect(w.anchor.sent.map((s) => s.functionName)).toEqual(['claim', 'claim']);
+    await w.relay();
+    expect(await json(await w.get('/ana'))).toMatchObject({ onChain: true });
+  });
+
   it("waits the deployment gap when the account was deployed within it, or the node cannot say (review 2026-11-19, M4)", async () => {
     for (const deployed of ['recent', 'unknown'] as const) {
       const w = world({ env: { HANDLES_DEPLOY_GAP_S: '3600' } });

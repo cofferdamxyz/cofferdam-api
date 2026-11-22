@@ -18,7 +18,7 @@
  * relay and the tests share it; `rpcAnchorChain` is the deployed one.
  */
 
-import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, http, type Address, type Hex } from 'viem';
+import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, encodeFunctionData, http, type Address, type Hex } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
 
@@ -249,6 +249,20 @@ export function contractRevert(err: unknown): AnchorRevert | null {
   return new AnchorRevert(reverted.data?.errorName ?? 'reverted');
 }
 
+/**
+ * The transaction a registrar call sends: to the anchor, with the call encoded.
+ * Built here rather than from `simulateContract`'s `request`, which names the
+ * contract as `address` with `abi`, `functionName` and `args`: handed to
+ * `prepareTransactionRequest`, that request loses both, and the key signs a
+ * contract creation with no code (what the relay sent on 2026-11-22 until this
+ * fix, `test/handlesAnchorSend.test.ts`).
+ */
+export function anchorTransaction(anchor: Address, call: AnchorCall): { to: Address; data: Hex } {
+  const data = encodeFunctionData({ abi: HANDLE_ANCHOR_ABI, ...call } as never);
+  if (!/^0x[0-9a-f]{8}/i.test(data)) throw new Error('anchor: empty call data');
+  return { to: anchor, data };
+}
+
 /** The deployed anchor through JSON-RPC (`BASE_SEPOLIA_RPC_URL`), or null while the anchor or the key is missing. */
 export function rpcAnchorChain(env: Env, anchor: Address | null): AnchorChain | null {
   const registrar = registrarOf(env);
@@ -276,14 +290,14 @@ export function rpcAnchorChain(env: Env, anchor: Address | null): AnchorChain | 
       };
     },
     async send(call) {
-      let request;
       try {
-        ({ request } = await publicClient.simulateContract({ address: anchor, abi: HANDLE_ANCHOR_ABI, account: registrar, ...call } as never));
+        await publicClient.simulateContract({ address: anchor, abi: HANDLE_ANCHOR_ABI, account: registrar, ...call } as never);
       } catch (err) {
         throw contractRevert(err) ?? err;
       }
+      const tx = anchorTransaction(anchor, call);
       return sendWithRetry({
-        sign: async () => wallet.signTransaction(await wallet.prepareTransactionRequest(request as never)),
+        sign: async () => wallet.signTransaction(await wallet.prepareTransactionRequest({ ...tx, account: registrar, chain: baseSepolia })),
         send: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
       });
     },
