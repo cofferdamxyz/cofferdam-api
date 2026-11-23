@@ -12,8 +12,8 @@
 #   manual  XMTP_TLS_CERT and XMTP_TLS_KEY set (the override, and the emergency
 #           path of scripts/xmtp/tls-renew.sh): Caddy (./Caddyfile) serves that
 #           pair on :8443. Takes precedence over acme.
-#   plain   neither: the backend alone on :5050 (the Fly.io fallback, whose edge
-#           ends TLS), as the published image would.
+#   plain   neither: the backend alone on :5050, as the published image would
+#           (a local run of this image; containerEnv refuses it on Cloudflare).
 # In acme and manual modes it exits when the backend or Caddy does, so the
 # object's next alarm starts a fresh container.
 set -u

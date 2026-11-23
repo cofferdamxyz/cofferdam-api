@@ -28,6 +28,6 @@ COPY Caddyfile.acme /etc/caddy/Caddyfile.acme
 COPY --chmod=755 start.sh /usr/local/bin/xmtp-start
 
 # 8443: TLS (Cloudflare, through Spectrum and the Worker). 5050: plaintext h2c,
-# used directly only by the Fly.io fallback, whose edge ends TLS.
+# reached directly only in a local run of this image.
 EXPOSE 8443 5050
 ENTRYPOINT ["/usr/local/bin/xmtp-start"]
