@@ -399,13 +399,16 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
    * When the relay may send a claim: the drawn delay, and never within
    * `deployGapS` of the account's deployment (rule 3; the review of 2026-11-19,
    * M4). An account the node cannot show was deployed that long ago waits the
-   * whole gap from now.
+   * whole gap from now and then the drawn delay on top of it, never the larger
+   * of the two: with the claim made in onboarding minutes after the deploy
+   * (decision 0091), the larger would land a fixed share of claims at the gap's
+   * end, an hour after their account's deployment, a time anyone can match.
    */
   async function claimRelayAt(c: HContext, a: Admitted, chain: AnchorChain, now: number): Promise<number> {
-    const drawn = now + randomDelayMs(claimDelayRange(c.env));
+    const drawn = randomDelayMs(claimDelayRange(c.env));
     const gap = deployGapS(c.env);
-    if (gap === 0 || (await chain.deployedBefore(a.account, gap))) return drawn;
-    return Math.max(drawn, now + gap * 1000);
+    if (gap === 0 || (await chain.deployedBefore(a.account, gap))) return now + drawn;
+    return now + gap * 1000 + drawn;
   }
 
   const claimAnswer = (w: { label: string; handleId: Hex; serial: number; owner: Address; metaAddress: Hex }) => ({

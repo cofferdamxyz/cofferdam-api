@@ -252,7 +252,7 @@ describe('POST /v1/handles/claim and the relay', () => {
     expect(await json(await w.get('/ana'))).toMatchObject({ onChain: true });
   });
 
-  it("waits the deployment gap when the account was deployed within it, or the node cannot say (review 2026-11-19, M4)", async () => {
+  it("waits the deployment gap, then the drawn delay after it, when the account was deployed within it or the node cannot say (review 2026-11-19, M4)", async () => {
     for (const deployed of ['recent', 'unknown'] as const) {
       const w = world({ env: { HANDLES_DEPLOY_GAP_S: '3600' } });
       w.anchor.deployedAt.set(ACCOUNT.toLowerCase(), deployed === 'recent' ? w.anchor.clock.now - 600 : null);
@@ -260,7 +260,11 @@ describe('POST /v1/handles/claim and the relay', () => {
       w.advance(121_000); // past the drawn 30 to 120 s
       await w.relay();
       expect(w.anchor.sent, deployed).toEqual([]);
-      w.advance(3_600_000 - 121_000);
+      // At the gap's end and short of the least draw after it: still waiting (the delay adds to the gap).
+      w.advance(3_600_000 + 29_000 - 121_000);
+      await w.relay();
+      expect(w.anchor.sent, deployed).toEqual([]);
+      w.advance(92_000); // the gap plus 121 s: past the longest draw
       await w.relay();
       expect(w.anchor.sent.map((s) => s.functionName), deployed).toEqual(['claim']);
     }
