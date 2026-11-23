@@ -12,6 +12,8 @@
 
 import type { AttesterRpc } from './services/attester.js';
 import type { ActivityDO } from './services/activityDO.js';
+import type { AttachmentIssuerDO } from './services/attachmentIssuerDO.js';
+import type { AttachmentQuotaDO } from './services/attachmentQuotaDO.js';
 import type { BindBundleDO } from './services/bindBundleDO.js';
 import type { ChatUsageDO } from './services/chatUsageDO.js';
 import type { PopReplayDO } from './services/popReplayDO.js';
@@ -350,6 +352,27 @@ export interface Env {
   VAULT_HANDOFF_DO?: DurableObjectNamespace<VaultHandoffDO>;
 
   /**
+   * The attachment quota (services/attachmentQuotaDO.ts, workspace decision 0093): one object per account
+   * (`account:<address>`) with class bytes granted per UTC day for 30 days, and one plane-wide (`plane:attachments`)
+   * for the daily ceiling. Unbound: `POST /v1/messages/attachments/tokens` answers 503 `attachment_quota_unprovisioned`.
+   */
+  ATTACHMENT_QUOTA_DO?: DurableObjectNamespace<AttachmentQuotaDO>;
+
+  /**
+   * The attachment token issuer's keys (services/attachmentIssuerDO.ts, workspace decision 0093): one object, `issuer`,
+   * that makes one RSA-PSS 2048-bit key per size class for each 30-day epoch and keeps them wrapped under
+   * `ATTACHMENT_KEY_WRAP`. Unbound: `/v1/messages/attachments/*` answers 503 `attachment_issuer_unprovisioned`.
+   */
+  ATTACHMENT_ISSUER_DO?: DurableObjectNamespace<AttachmentIssuerDO>;
+
+  /**
+   * Secret. The AES-256-GCM key (base64 of 32 bytes) the issuer's private keys are wrapped under in
+   * `ATTACHMENT_ISSUER_DO` (workspace decision 0093), made by `scripts/attachments/wrap-key.mjs`. It never rotates:
+   * the issuer keys under it rotate by epoch. Unset: 503 `attachment_issuer_unprovisioned`.
+   */
+  ATTACHMENT_KEY_WRAP?: string;
+
+  /**
    * `"false"` refuses `csa1:` v1 bearer tokens on every gated route (workspace
    * decision 0055). Any other value, or unset, accepts them during the move to
    * v2; set it once the app build that sends v2 is out.
@@ -385,6 +408,13 @@ export interface Env {
   VAULT_RL?: RateLimit;
   /** `/v1/vault/*`: a generous per-IP ceiling (`vault-ip:<ip>`) before the gate. */
   VAULT_IP_RL?: RateLimit;
+
+  /** `POST /v1/messages/attachments/tokens` (workspace decision 0093): the global brake, `attachments:global`, first. */
+  ATTACHMENT_GLOBAL_RL?: RateLimit;
+  /** The same route: a generous per-IP ceiling (`attachments-ip:<ip>`) before the gate. */
+  ATTACHMENT_IP_RL?: RateLimit;
+  /** The same route: per account (`attachments:<account>`), counted only once the session and the High check pass. */
+  ATTACHMENT_RL?: RateLimit;
 
   // ── R2 buckets ──────────────────────────────────────────────────
   /**

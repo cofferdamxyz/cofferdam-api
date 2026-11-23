@@ -186,13 +186,22 @@
   // phone's sealed Vault roots for ten minutes, one slot per account, and
   // hands them to the new phone once. Its migration, v5-vault-handoff, is
   // the founder's to deploy.
+  //
+  // ATTACHMENT_QUOTA_DO (workspace decision 0093): one SQLite-backed object per
+  // account with the class bytes of attachment tokens granted per UTC day for 30
+  // days, and one plane-wide for the daily ceiling; nothing else.
+  // ATTACHMENT_ISSUER_DO: one object, `issuer`, that makes each 30-day epoch's
+  // class keys and keeps them wrapped under the secret ATTACHMENT_KEY_WRAP.
+  // Their migration, v6-attachments, is the founder's to deploy.
   "durable_objects": {
     "bindings": [
       { "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" },
       { "name": "ACTIVITY_DO", "class_name": "ActivityDO" },
       { "name": "CHAT_USAGE_DO", "class_name": "ChatUsageDO" },
       { "name": "POP_REPLAY_DO", "class_name": "PopReplayDO" },
-      { "name": "VAULT_HANDOFF_DO", "class_name": "VaultHandoffDO" }
+      { "name": "VAULT_HANDOFF_DO", "class_name": "VaultHandoffDO" },
+      { "name": "ATTACHMENT_QUOTA_DO", "class_name": "AttachmentQuotaDO" },
+      { "name": "ATTACHMENT_ISSUER_DO", "class_name": "AttachmentIssuerDO" }
     ]
   },
   // Workers AI, reached only through src/services/inference (decision 0037).
@@ -207,7 +216,8 @@
     { "tag": "v2-activity", "new_sqlite_classes": ["ActivityDO"] },
     { "tag": "v3-chat-usage", "new_sqlite_classes": ["ChatUsageDO"] },
     { "tag": "v4-pop-replay", "new_sqlite_classes": ["PopReplayDO"] },
-    { "tag": "v5-vault-handoff", "new_sqlite_classes": ["VaultHandoffDO"] }
+    { "tag": "v5-vault-handoff", "new_sqlite_classes": ["VaultHandoffDO"] },
+    { "tag": "v6-attachments", "new_sqlite_classes": ["AttachmentQuotaDO", "AttachmentIssuerDO"] }
   ],
 
   // ─────────────────────────────────────────────────────────────────
@@ -267,7 +277,13 @@
     { "name": "HANDSHAKE_PUT_GLOBAL_RL", "namespace_id": "1124", "simple": { "limit": 120, "period": 60 } },
     // The authenticated handle routes (claim, hold, addresses, discovery, rename, release and the
     // registrar's actions), per account after the session and the High check (handles-acct:<account>).
-    { "name": "HANDLES_ACCOUNT_RL", "namespace_id": "1125", "simple": { "limit": 20, "period": 60 } }
+    { "name": "HANDLES_ACCOUNT_RL", "namespace_id": "1125", "simple": { "limit": 20, "period": 60 } },
+    // POST /v1/messages/attachments/tokens (workspace decision 0093): the global brake
+    // (attachments:global), a per-IP ceiling (attachments-ip:), then per account once the
+    // session and the High check pass (attachments:<account>); a phone tops up a small wallet.
+    { "name": "ATTACHMENT_GLOBAL_RL", "namespace_id": "1126", "simple": { "limit": 600, "period": 60 } },
+    { "name": "ATTACHMENT_IP_RL", "namespace_id": "1127", "simple": { "limit": 60, "period": 60 } },
+    { "name": "ATTACHMENT_RL", "namespace_id": "1128", "simple": { "limit": 10, "period": 60 } }
   ],
 
   // ─────────────────────────────────────────────────────────────────

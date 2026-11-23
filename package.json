@@ -24,6 +24,8 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@cloudflare/blindrsa-ts": "0.4.5",
+    "@cloudflare/privacypass-ts": "0.9.0",
     "@noble/curves": "1.9.7",
     "h3-js": "4.5.0",
     "hono": "4.13.14",
@@ -42,6 +44,7 @@
     "wrangler": "4.156.0"
   },
   "resolutions": {
-    "minimatch": "11.0.1"
+    "minimatch": "11.0.1",
+    "**/@cloudflare/blindrsa-ts/sjcl": "1.0.9"
   }
 }
