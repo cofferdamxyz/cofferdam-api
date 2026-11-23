@@ -102,6 +102,13 @@ describe('the container environment', () => {
     XMTP_TLS_CERT: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
     XMTP_TLS_KEY: '-----BEGIN EC PRIVATE KEY-----\nMHc\n-----END EC PRIVATE KEY-----\n',
   };
+  it('gives ACME mode every variable start.sh checks', () => {
+    // start.sh exits on a missing one in ACME mode, and the backend then crash-loops on every alarm.
+    const sh = readFileSync(join(root, 'backend/start.sh'), 'utf8');
+    const checked = /for v in ([A-Z0-9_ ]+); do/.exec(sh)![1]!.trim().split(/\s+/);
+    expect(checked).toContain('XMTP_R2_ENDPOINT');
+    for (const name of checked) expect(ACME_ENV_NAMES as readonly string[]).toContain(name);
+  });
   it('hands the backend no R2 write token', () => {
     const out = containerEnv({ ...full, XMTP_R2_ACCESS_KEY_ID: 'id', XMTP_R2_SECRET_ACCESS_KEY: 'secret' });
     expect(out.XMTP_R2_ACCESS_KEY_ID).toBeUndefined();
