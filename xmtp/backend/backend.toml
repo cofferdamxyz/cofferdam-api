@@ -74,24 +74,9 @@ max_attempts = 3
 allowed_domains = ["push.cofferdam.xyz"]
 allow_private_addresses = false
 
-[attachments]
-# Ciphertext only, in R2 (bucket `cofferdam-xmtp-attachments`, public through
-# the custom domain below, lifecycle 30 days = retention_seconds). Objects are
-# keyed by the ciphertext's SHA-256: no user, no conversation in the key.
-base_url = "https://xmtp-files.cofferdam.xyz"
-max_upload_bytes = 26214400
-retention_seconds = 2592000
-
-[attachments.target.S3]
-# R2's S3 endpoint carries the account id, so it is a secret, never a literal.
-endpoint = "env:XMTP_R2_ENDPOINT"
-region = "auto"
-bucket = "cofferdam-xmtp-attachments"
-key_prefix = ""
-presign_ttl_seconds = 900
-
-[attachments.target.S3.credentials]
-# An R2 API token limited to Object Write on this one bucket.
-kind = "static"
-access_key_id = "env:XMTP_R2_ACCESS_KEY_ID"
-secret_access_key = "env:XMTP_R2_SECRET_ACCESS_KEY"
+# No [attachments] (2026-11-23, the founder's ruling): with it the backend minted
+# a presigned R2 upload for anyone holding the app key every binary carries, so
+# nothing bounded what went into the bucket. Without it CreateUpload answers
+# UNIMPLEMENTED, "attachment storage is not configured" (checked on the Mac with
+# this image). Uploads come back through the plane's per-account voucher and a
+# gate Worker (10 MB a file, 50 MB an account over 30 days), never this section.

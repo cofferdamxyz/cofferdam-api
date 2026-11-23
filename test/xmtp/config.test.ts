@@ -63,7 +63,11 @@ describe('backend.toml (decisions 0039, 0040, 0042)', () => {
     expect(vars.RETENTION_GROUP_MESSAGE_SECONDS).toBe(r.group_message_seconds);
     expect(vars.RETENTION_WELCOME_SECONDS).toBe(r.welcome_seconds);
     expect(vars.RETENTION_KEY_PACKAGE_SECONDS).toBe(r.key_package_seconds);
-    expect(table('attachments').retention_seconds).toBe(r.group_message_seconds);
+  });
+
+  it('mints no attachment uploads behind the app key', () => {
+    // 2026-11-23: uploads go through the plane's per-account voucher and a gate Worker, never the backend.
+    expect(live).not.toMatch(/^\[attachments/m);
   });
 
   it('runs the backend only when RUN is "on"', () => {
@@ -95,12 +99,14 @@ describe('the container environment', () => {
     XMTP_APP_API_KEY: 'k'.repeat(48),
     XMTP_RPC_BASE_SEPOLIA: 'https://sepolia.base.org',
     XMTP_RPC_BASE: 'https://mainnet.base.org',
-    XMTP_R2_ENDPOINT: 'https://acct.r2.cloudflarestorage.com',
-    XMTP_R2_ACCESS_KEY_ID: 'id',
-    XMTP_R2_SECRET_ACCESS_KEY: 'secret',
     XMTP_TLS_CERT: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
     XMTP_TLS_KEY: '-----BEGIN EC PRIVATE KEY-----\nMHc\n-----END EC PRIVATE KEY-----\n',
   };
+  it('hands the backend no R2 write token', () => {
+    const out = containerEnv({ ...full, XMTP_R2_ACCESS_KEY_ID: 'id', XMTP_R2_SECRET_ACCESS_KEY: 'secret' });
+    expect(out.XMTP_R2_ACCESS_KEY_ID).toBeUndefined();
+    expect(out.XMTP_R2_SECRET_ACCESS_KEY).toBeUndefined();
+  });
   it('names what is missing', () => {
     expect(() => containerEnv({ ...full, XMTP_APP_API_KEY: undefined })).toThrow(/XMTP_APP_API_KEY/);
   });
@@ -122,6 +128,7 @@ describe('the container environment', () => {
     ...full,
     XMTP_TLS_CERT: undefined,
     XMTP_TLS_KEY: undefined,
+    XMTP_R2_ENDPOINT: 'https://acct.r2.cloudflarestorage.com',
     XMTP_ACME_R2_ACCESS_KEY_ID: 'acme-id',
     XMTP_ACME_R2_SECRET_ACCESS_KEY: 'acme-secret',
     XMTP_ACME_BUCKET: 'cofferdam-xmtp-tls',

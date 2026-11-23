@@ -21,6 +21,7 @@ export interface BackendEnv {
   /** Secret. R2 API token, Object Write on the attachments bucket only. */
   XMTP_R2_ACCESS_KEY_ID?: string;
   XMTP_R2_SECRET_ACCESS_KEY?: string;
+  // The two above are no longer passed: backend.toml has no [attachments] since 2026-11-23.
   /**
    * Secret, optional override. PEM chain for the Spectrum hostname (leaf
    * first), publicly trusted: Spectrum on a Pro zone passes TLS through, so the
@@ -49,9 +50,6 @@ export const BACKEND_ENV_NAMES = [
   'XMTP_APP_API_KEY',
   'XMTP_RPC_BASE_SEPOLIA',
   'XMTP_RPC_BASE',
-  'XMTP_R2_ENDPOINT',
-  'XMTP_R2_ACCESS_KEY_ID',
-  'XMTP_R2_SECRET_ACCESS_KEY',
 ] as const satisfies readonly (keyof BackendEnv)[];
 
 /** The manual certificate pair, read by ../start.sh, never by backend.toml. */
@@ -59,6 +57,7 @@ export const TLS_ENV_NAMES = ['XMTP_TLS_CERT', 'XMTP_TLS_KEY'] as const satisfie
 
 /** Caddy's own ACME, read by ../start.sh, never by backend.toml. */
 export const ACME_ENV_NAMES = [
+  'XMTP_R2_ENDPOINT', // the store's endpoint (../start.sh); the backend writes nothing to R2 since 2026-11-23
   'XMTP_ACME_R2_ACCESS_KEY_ID',
   'XMTP_ACME_R2_SECRET_ACCESS_KEY',
   'XMTP_ACME_BUCKET',

@@ -10,9 +10,10 @@
  *                            ?sslmode=verify-full (no sslrootcert=system),
  *                            never 6432 (Neon: no `-pooler`)
  *   XMTP_APP_API_KEY           openssl rand -base64 48 (the app holds the same)
- *   XMTP_R2_ENDPOINT           https://<account id>.r2.cloudflarestorage.com
- *   XMTP_R2_ACCESS_KEY_ID      R2 API token, Object Write on the bucket only
- *   XMTP_R2_SECRET_ACCESS_KEY
+ *   XMTP_R2_ENDPOINT           https://<account id>.r2.cloudflarestorage.com (the
+ *                            ACME store's; the backend uploads nothing since
+ *                            2026-11-23, so XMTP_R2_ACCESS_KEY_ID and
+ *                            XMTP_R2_SECRET_ACCESS_KEY are no longer read)
  *   XMTP_ACME_R2_ACCESS_KEY_ID      R2 token, Object Read & Write on the
  *   XMTP_ACME_R2_SECRET_ACCESS_KEY  cofferdam-xmtp-tls bucket only: Spectrum on the
  *                                   Pro zone passes TLS through, so the container's

@@ -3,8 +3,7 @@
 # backend.toml, same secret names. From this directory, on the Mac:
 #
 #   fly apps create cofferdam-xmtp-backend
-#   fly secrets set XMTP_DATABASE_URL=… XMTP_APP_API_KEY=… XMTP_R2_ENDPOINT=… \
-#     XMTP_R2_ACCESS_KEY_ID=… XMTP_R2_SECRET_ACCESS_KEY=…
+#   fly secrets set XMTP_DATABASE_URL=… XMTP_APP_API_KEY=… XMTP_R2_ENDPOINT=…
 #   fly deploy
 #   fly certs add xmtp.cofferdam.xyz   (then the CNAME Fly prints, DNS only, not proxied)
 #
