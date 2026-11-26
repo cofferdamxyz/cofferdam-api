@@ -51,15 +51,12 @@ import { Hono } from 'hono';
 import {
   BaseError,
   ContractFunctionRevertedError,
-  createWalletClient,
   decodeErrorResult,
   encodeFunctionData,
-  http,
   type Address,
   type Chain,
   type Hex,
 } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 
 import { getBaseClient, getBaseSepoliaClient, type ChainClient } from '../chain/client.js';
@@ -77,7 +74,9 @@ import {
   type UserOpPolicy,
 } from '../services/userOp.js';
 import { identityLogLine } from '../services/identityLog.js';
-import { SendRefusedError, sendWithRetry } from '../services/relaySend.js';
+import { hotSigner, keySpec, signerMissing, signerSpecOf, type SignerSpec } from '../services/hotSigner.js';
+import { keyBudgetOf, receiptGasWei } from '../services/keyBudgetStore.js';
+import { SendRefusedError } from '../services/relaySend.js';
 import {
   GAS_PRICE_ORACLE,
   GAS_PRICE_ORACLE_ABI,
@@ -104,6 +103,7 @@ export class UserOpSubmitError extends Error {
       | 'preflight_unavailable'
       | 'relay_failed'
       | 'rate_limited'
+      | 'budget_exhausted'
       | 'user_op_reverted',
     message: string,
     /** The mined transaction, for `user_op_reverted`. */
@@ -133,7 +133,13 @@ export interface AaRouteDeps {
    * simulation and the pre-flight pass and before the send; it throws
    * `rate_limited` to refuse. A reverted op throws `user_op_reverted`.
    */
-  submit: (env: Env, op: PackedUserOperationWire, admit: () => Promise<void>, lane: RelayLane) => Promise<RelayOutcome>;
+  submit: (
+    env: Env,
+    op: PackedUserOperationWire,
+    admit: () => Promise<void>,
+    lane: RelayLane,
+    defer?: (work: Promise<unknown>) => void,
+  ) => Promise<RelayOutcome>;
 }
 
 /**
@@ -144,30 +150,39 @@ export interface AaRouteDeps {
 export interface RelayLane {
   readonly chainId: typeof BASE_SEPOLIA_CHAIN_ID | typeof BASE_MAINNET_CHAIN_ID;
   readonly rpcUrl: string;
-  readonly privateKey: Hex;
+  /** Who signs and sends `handleOps`: a raw key or a CDP account (`services/hotSigner.ts`). */
+  readonly signer: SignerSpec;
   /** The identity registry whose `check` view pre-flights a bind, relink or rebind (none on Sepolia). */
   readonly identityRegistry?: Address;
   /** The op repays the L1 data fee through `preVerificationGas`, and the relayer signs at the op's own price. */
   readonly opPaysL1?: boolean;
 }
 
-/** Base Sepolia's lane: `BASE_SEPOLIA_RPC_URL` and `RELAYER_PRIVATE_KEY`, nothing added. */
-export function sepoliaLane(env: Env): RelayLane {
+/**
+ * Base Sepolia's lane: `BASE_SEPOLIA_RPC_URL` and the relayer `RELAYER_SIGNER`
+ * picks (`RELAYER_PRIVATE_KEY` by default, a CDP account under `cdp`), nothing
+ * added. Null while that signer is not configured.
+ */
+export function sepoliaLane(env: Env): RelayLane | null {
+  const signer = signerSpecOf(env, 'relayer');
+  if (!signer) return null;
   return {
     chainId: BASE_SEPOLIA_CHAIN_ID,
     rpcUrl: env.BASE_SEPOLIA_RPC_URL ?? DEFAULT_BASE_SEPOLIA_RPC_URL,
-    privateKey: env.RELAYER_PRIVATE_KEY as Hex,
+    signer,
   };
 }
 
 /** The Base mainnet test lane, or null while the key or the mainnet switch is off. */
 export function testLane(env: Env, config: TestRelayConfig): RelayLane | null {
   const rpcUrl = chainRpcUrl(env, BASE_MAINNET_CHAIN_ID);
-  if (!rpcUrl || !env.RELAYER_MAINNET_TEST_PRIVATE_KEY) return null;
+  // The M2 test lane keeps its own raw key: it ends with M2 and never moves to CDP.
+  const signer = keySpec(env.RELAYER_MAINNET_TEST_PRIVATE_KEY);
+  if (!rpcUrl || !signer) return null;
   return {
     chainId: BASE_MAINNET_CHAIN_ID,
     rpcUrl,
-    privateKey: env.RELAYER_MAINNET_TEST_PRIVATE_KEY as Hex,
+    signer,
     identityRegistry: config.registry,
     opPaysL1: true,
   };
@@ -175,6 +190,9 @@ export function testLane(env: Env, config: TestRelayConfig): RelayLane | null {
 
 /** How long the relay waits for the receipt before answering `pending` (Base mines every 2 s; iOS gives up at 60 s). */
 export const RECEIPT_WAIT_MS = 20_000;
+
+/** How long a late receipt is waited for after the answer, for the budget (waitUntil allows 30 s). */
+const LATE_RECEIPT_WAIT_MS = 25_000;
 
 /** The receipt poll's interval: Base's block time, so the wait costs about one node call per block. */
 const RECEIPT_POLL_MS = 2_000;
@@ -393,13 +411,21 @@ export async function submitUserOperation(
   op: PackedUserOperationWire,
   admit: () => Promise<void> = async () => {},
   receiptWaitMs: number = RECEIPT_WAIT_MS,
-  lane: RelayLane = sepoliaLane(env),
+  lane: RelayLane | null = sepoliaLane(env),
+  /** Work that may outlive the answer (`ExecutionContext.waitUntil`): a late receipt's gas for the budget. */
+  defer: (work: Promise<unknown>) => void = () => {},
 ): Promise<RelayOutcome> {
+  // Nothing was sent: the same answer the route gives for a relayer that is not configured.
+  if (!lane) throw new UserOpSubmitError('preflight_unavailable', signerMissing(env, 'relayer'));
   const { rpcUrl } = lane;
-  const relayer = privateKeyToAccount(lane.privateKey);
   const publicClient: ChainClient =
     lane.chainId === BASE_SEPOLIA_CHAIN_ID ? (getBaseSepoliaClient(rpcUrl) as unknown as ChainClient) : getBaseClient(rpcUrl);
   const chain: Chain = lane.chainId === BASE_SEPOLIA_CHAIN_ID ? baseSepolia : base;
+  const relayer = hotSigner(lane.signer, {
+    chain,
+    rpcUrl,
+    sendRaw: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
+  });
   if (lane.identityRegistry) await registryPreflight(publicClient, lane.identityRegistry, op);
   let request;
   try {
@@ -408,7 +434,7 @@ export async function submitUserOperation(
       abi: ENTRY_POINT_ABI,
       functionName: 'handleOps',
       args: [[op], relayer.address],
-      account: relayer,
+      account: relayer.address,
     }));
   } catch (err) {
     const reason = revertReason(err);
@@ -419,25 +445,24 @@ export async function submitUserOperation(
   if (lane.opPaysL1) await l1FeePreflight(publicClient, op, data);
   await preflightExecution(publicClient, relayer.address, data, op);
   await admit();
-  const wallet = createWalletClient({ account: relayer, chain, transport: http(rpcUrl) });
+  // The key's daily budget (decision 0090 item 11): refused only at the hard
+  // stop, set well above normal use; counted per signer and chain.
+  const budget = keyBudgetOf(env, 'relayer', lane.chainId, relayer.address);
+  if (!(await budget.admit())) {
+    logRelay('aa_budget_stopped', op, { chainId: lane.chainId });
+    throw new UserOpSubmitError('budget_exhausted', "the relayer's daily budget is spent; retry later");
+  }
   // The mainnet test lane signs at the op's own price, so the EntryPoint's
   // repayment matches what the relayer's transaction pays for L2 gas.
   const fees = lane.opPaysL1 ? unpackGasFees(op.gasFees) : null;
   let txHash: Hex;
   try {
-    txHash = await sendWithRetry({
-      sign: async () => {
-        const prepared = await wallet.prepareTransactionRequest({
-          to: request.address,
-          data,
-          chain,
-          ...(fees ? { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas } : {}),
-        });
-        return wallet.signTransaction(prepared);
-      },
-      send: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
-      onAttemptError: (attempt, cls, reason) => logRelay('aa_send_refused', op, { attempt, class: cls, reason }),
-    });
+    // A raw key signs once and resends the same bytes; a CDP account resends
+    // under one idempotency key and never signs a second transaction.
+    txHash = await relayer.sendTransaction(
+      { to: request.address, data, ...(fees ? { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas } : {}) },
+      { onAttemptError: (attempt, cls, reason) => logRelay('aa_send_refused', op, { attempt, class: cls, reason }) },
+    );
   } catch (err) {
     // Refused as rate-limited on every attempt: the node took nothing, so the client may report a plain failure
     // (a 4xx) instead of searching for an op that was never sent (`relay_failed`, 502, may have been sent).
@@ -455,8 +480,16 @@ export async function submitUserOperation(
     receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: receiptWaitMs, pollingInterval: RECEIPT_POLL_MS });
   } catch (err) {
     logRelay('aa_receipt_pending', op, { txHash, reason: revertReason(err) });
+    // The budget still counts its gas: read the receipt once more after the answer, within waitUntil's time.
+    defer(
+      publicClient
+        .waitForTransactionReceipt({ hash: txHash, timeout: LATE_RECEIPT_WAIT_MS, pollingInterval: RECEIPT_POLL_MS })
+        .then((late) => budget.spend(txHash, receiptGasWei(late as Parameters<typeof receiptGasWei>[0])))
+        .catch(() => {}),
+    );
     return { txHash, receipt: 'pending' };
   }
+  await budget.spend(txHash, receiptGasWei(receipt as Parameters<typeof receiptGasWei>[0]));
   if (receipt.status !== 'success') {
     // `handleOps` itself reverted: the op did not run in this transaction. A
     // resend after a nonce clash (`relaySend.ts`) may mean it ran in the
@@ -481,6 +514,7 @@ const SUBMIT_STATUS = {
   user_op_reverted: 422,
   rate_limited: 429,
   relay_failed: 502,
+  budget_exhausted: 503,
   preflight_unavailable: 503,
 } as const satisfies Record<UserOpSubmitError['code'], number>;
 
@@ -534,10 +568,11 @@ export function createAaRoutes(deps: AaRouteDeps) {
       }
       lane = test;
     } else {
-      if (!c.env.RELAYER_PRIVATE_KEY) {
-        return c.json({ ok: false, error: 'relayer_not_configured', message: 'RELAYER_PRIVATE_KEY not set' }, 503);
+      const sepolia = sepoliaLane(c.env);
+      if (!sepolia) {
+        return c.json({ ok: false, error: 'relayer_not_configured', message: signerMissing(c.env, 'relayer') }, 503);
       }
-      lane = sepoliaLane(c.env);
+      lane = sepolia;
     }
     try {
       // The per-sender bucket is counted only once policy and the handleOps
@@ -561,7 +596,14 @@ export function createAaRoutes(deps: AaRouteDeps) {
           : await overLimit(c.env.AA_RELAY_RL, `aa:${sender}`);
         if (over) throw new UserOpSubmitError('rate_limited', 'too many ops for this account; retry shortly');
       };
-      const { txHash, receipt } = await deps.submit(c.env, parsed.userOp, admit, lane);
+      const defer = (work: Promise<unknown>) => {
+        try {
+          c.executionCtx.waitUntil(work);
+        } catch {
+          // No execution context (the tests): the work runs unawaited.
+        }
+      };
+      const { txHash, receipt } = await deps.submit(c.env, parsed.userOp, admit, lane, defer);
       return c.json({ ok: true, txHash, entryPoint: parsed.entryPoint, chainId: lane.chainId, receipt }, 202);
     } catch (err) {
       if (err instanceof UserOpSubmitError) {
@@ -584,5 +626,5 @@ export const aaRoutes = createAaRoutes({
     paymaster: SEPOLIA_DEPLOYMENTS.CofferdamPaymaster.address,
     factory: SEPOLIA_DEPLOYMENTS.CofferdamAccountFactory4337.address,
   },
-  submit: (env, op, admit, lane) => submitUserOperation(env, op, admit, RECEIPT_WAIT_MS, lane),
+  submit: (env, op, admit, lane, defer) => submitUserOperation(env, op, admit, RECEIPT_WAIT_MS, lane, defer),
 });

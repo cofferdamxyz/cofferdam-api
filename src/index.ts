@@ -21,6 +21,7 @@ export { ChatUsageDO } from './services/chatUsageDO.js';
 export { AttachmentIssuerDO } from './services/attachmentIssuerDO.js';
 export { AttachmentQuotaDO } from './services/attachmentQuotaDO.js';
 export { PopReplayDO } from './services/popReplayDO.js';
+export { KeyBudgetDO } from './services/keyBudgetDO.js';
 export { VaultHandoffDO } from './services/vaultHandoffDO.js';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';

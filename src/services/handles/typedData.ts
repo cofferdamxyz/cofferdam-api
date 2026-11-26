@@ -17,7 +17,7 @@
  * registrar key (the review of 2026-11-19, M5).
  */
 
-import { recoverTypedDataAddress, type Address, type Hex, type TypedDataDomain } from 'viem';
+import { recoverTypedDataAddress, type Address, type Hex, type TypedDataDefinition, type TypedDataDomain } from 'viem';
 import type { PrivateKeyAccount } from 'viem/accounts';
 
 export const HANDLE_ANCHOR_DOMAIN_NAME = 'CofferdamHandleAnchor';
@@ -151,13 +151,19 @@ export async function registrySigner(chainId: number, primaryType: RegistryPrima
 }
 
 /** The registrar's signature over an anchor-domain message. */
-export function signAnchor(account: PrivateKeyAccount, chainId: number, anchor: Address, primaryType: AnchorPrimaryType, message: Message): Promise<Hex> {
+export function signAnchor(
+  account: { signTypedData(typedData: TypedDataDefinition): Promise<Hex> },
+  chainId: number,
+  anchor: Address,
+  primaryType: AnchorPrimaryType,
+  message: Message,
+): Promise<Hex> {
   return account.signTypedData({
     domain: anchorDomain(chainId, anchor),
     types: { [primaryType]: ANCHOR_TYPES[primaryType] },
     primaryType,
     message,
-  } as unknown as Parameters<PrivateKeyAccount['signTypedData']>[0]);
+  } as unknown as TypedDataDefinition);
 }
 
 /** The statement key's signature over one of the plane's registry-domain statements. */
