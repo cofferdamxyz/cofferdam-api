@@ -465,5 +465,14 @@ describe('POST /v1/ceremony/first-high', () => {
     expect(await res.json()).toMatchObject({ error: 'attester_rejected' });
     const noKey = app(async () => { throw new Error('BAD_ATTESTER_KEY: CEREMONY_ATTESTER_PRIVATE_KEY secret is missing'); });
     expect((await post(noKey, body, fixtures.webauthn.token)).status).toBe(503);
+    // An attester deployed without its ceremony pins (decision 0090 item 5) is unavailable, not a refusal.
+    for (const code of ['BAD_CEREMONY_SIGNATURE_VAR', 'BAD_CEREMONY_REGISTRY_VAR', 'BAD_CHAIN_ID_VAR']) {
+      const unpinned = app(async () => { throw new Error(`${code}: the var is malformed`); });
+      const r = await post(unpinned, body, fixtures.webauthn.token);
+      expect(r.status).toBe(503);
+      expect(await r.json()).toMatchObject({ error: 'attester_unavailable' });
+    }
+    const registry = app(async () => { throw new Error('REGISTRY_NOT_ALLOWED: attester is pinned to ceremony registry 0x44A2'); });
+    expect((await post(registry, body, fixtures.webauthn.token)).status).toBe(502);
   });
 });
