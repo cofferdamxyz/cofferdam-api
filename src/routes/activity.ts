@@ -178,6 +178,18 @@ activityRoutes.get('/check', async (c) => {
   }
 });
 
+/** The subscriptions' secrets in `CDP_WEBHOOK_SECRET`, comma-separated (one per subscription: MockUSDC, pBRL). */
+export function webhookSecrets(value: string | undefined): string[] {
+  return (value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * GET and HEAD /v1/activity/webhooks/cdp: CDP refuses a subscription whose
+ * target does not answer HEAD with 200, and Hono serves HEAD through the GET
+ * route. Empty, and the same whatever is configured.
+ */
+activityRoutes.get('/webhooks/cdp', (c) => c.body(null, 200));
+
 /**
  * POST /v1/activity/webhooks/cdp
  *
@@ -190,12 +202,15 @@ activityRoutes.get('/check', async (c) => {
  * and ignored.
  */
 activityRoutes.post('/webhooks/cdp', async (c) => {
-  const secret = c.env.CDP_WEBHOOK_SECRET;
-  if (!secret || !c.env.ACTIVITY_DO) {
+  const secrets = webhookSecrets(c.env.CDP_WEBHOOK_SECRET);
+  if (secrets.length === 0 || !c.env.ACTIVITY_DO) {
     return c.json({ ok: false, error: 'activity_store_unprovisioned' }, 503);
   }
   const raw = await c.req.text();
-  if (!(await verifyCdpSignature(raw, c.req.header('x-hook0-signature'), secret))) {
+  const header = c.req.header('x-hook0-signature');
+  let signed = false;
+  for (const secret of secrets) if (!signed && (await verifyCdpSignature(raw, header, secret))) signed = true;
+  if (!signed) {
     return c.json({ ok: false, error: 'invalid_signature' }, 401);
   }
 

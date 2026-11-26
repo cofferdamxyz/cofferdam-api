@@ -67,8 +67,9 @@ export const ACTIVITY_TOKENS: Readonly<Record<number, readonly ActivityToken[]>>
   84532: [
     // MockUSDC (base-contracts/deployments/baseSepolia.json), fed by the CDP webhook.
     { symbol: 'USDC', address: SEPOLIA_DEPLOYMENTS.MockUSDC.address, decimals: 6, webhookFed: true },
-    // Pods' pBRL, BRS's stand-in on Base Sepolia (18 decimals).
-    { symbol: 'pBRL', address: '0x9762f60740142cF11C0F32C6e24cd3e86016C0f2', decimals: 18 },
+    // Pods' pBRL, BRS's stand-in on Base Sepolia (18 decimals), fed by its own CDP subscription (the founder,
+    // 2026-11-26). Both subscriptions are created together, so ACTIVITY_INDEX_FROM_BLOCK covers both.
+    { symbol: 'pBRL', address: '0x9762f60740142cF11C0F32C6e24cd3e86016C0f2', decimals: 18, webhookFed: true },
   ],
   8453: [
     // Native Circle USDC.

@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Env } from '../src/env.js';
-import { activityRoutes, requestedToken } from '../src/routes/activity.js';
+import { activityRoutes, requestedToken, webhookSecrets } from '../src/routes/activity.js';
 import {
   checkActivity,
   findActivityToken,
@@ -106,21 +106,23 @@ describe('activity tokens', () => {
     expect(check).toEqual({ hasNew: true, latestBlock: 1_000 });
   });
 
-  it('pBRL on Sepolia: scanned, never read from the store, 18 decimals', async () => {
-    const { store, reads } = fakeStore([stored(1_000, MOCK_USDC, '2500000')]);
-    const { logReader, tokens } = fakeReaders({ [PBRL.toLowerCase()]: [log(995, 1_500_000_000_000_000_000n)] }, 1_010);
+  it('pBRL on Sepolia: read from the store under its own token, 18 decimals, never a USDC row', async () => {
+    const { store, reads } = fakeStore([stored(1_000, MOCK_USDC, '2500000'), stored(995, PBRL, '1500000000000000000')]);
+    const { logReader } = fakeReaders({}, 1_010);
     const token = sepoliaToken(PBRL);
     const r = await getActivity(undefined, ME, 10, undefined, 84532, { store, indexFromBlock: 500, logReader, token }, undefined);
-    expect(reads).toEqual([]);
-    expect(tokens.every((t) => t === PBRL)).toBe(true);
+    expect(reads.every((x) => x.endsWith(PBRL))).toBe(true);
     expect(r.transactions).toHaveLength(1);
-    // The USDC row in the store never shows up in a pBRL answer.
     expect(r.transactions[0]).toMatchObject({ blockNumber: 995, value: '1500000000000000000', valueFormatted: 1.5, tokenAddress: PBRL.toLowerCase() });
-    expect(r.headBlock).toBe(1_010);
+  });
 
-    const check = await checkActivity(undefined, ME, 990, 84532, { store, indexFromBlock: 500, logReader, token });
-    expect(reads).toEqual([]);
-    expect(check).toEqual({ hasNew: true, latestBlock: 1_010 });
+  it('pBRL on Sepolia while the store is off: scanned by RPC, 18 decimals', async () => {
+    const { logReader, tokens } = fakeReaders({ [PBRL.toLowerCase()]: [log(995, 1_500_000_000_000_000_000n)] }, 1_010);
+    const token = sepoliaToken(PBRL);
+    const r = await getActivity(undefined, ME, 10, undefined, 84532, { logReader, token }, undefined);
+    expect(tokens.every((t) => t === PBRL)).toBe(true);
+    expect(r.transactions[0]).toMatchObject({ blockNumber: 995, valueFormatted: 1.5, tokenAddress: PBRL.toLowerCase() });
+    expect(r.headBlock).toBe(1_010);
   });
 
   it('BRS on mainnet: Portal queries the BRS contract and formats with its decimals', async () => {
@@ -181,7 +183,7 @@ describe('POST /webhooks/cdp', () => {
     return `t=${t},v0=${[...mac].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
   }
 
-  it('records a webhook-fed token’s transfer for both sides and ignores pBRL’s', async () => {
+  it('records each webhook-fed token’s transfer for both sides, signed by any of the secrets, and ignores another contract', async () => {
     const recorded: Array<[string, string]> = [];
     const namespace = {
       getByName: (name: string) => ({
@@ -191,7 +193,8 @@ describe('POST /webhooks/cdp', () => {
         },
       }),
     };
-    const env = { CDP_WEBHOOK_SECRET: SECRET, ACTIVITY_DO: namespace } as unknown as Env;
+    // One secret per subscription, comma-separated: MockUSDC's first, then pBRL's (the delivery is signed with this one).
+    const env = { CDP_WEBHOOK_SECRET: `other-subscription-secret, ${SECRET}`, ACTIVITY_DO: namespace } as unknown as Env;
     const base = {
       block_number: 1_000,
       event_name: 'Transfer',
@@ -204,6 +207,7 @@ describe('POST /webhooks/cdp', () => {
     const body = JSON.stringify([
       { ...base, contract_address: MOCK_USDC.toLowerCase() },
       { ...base, log_index: 1, contract_address: PBRL.toLowerCase() },
+      { ...base, log_index: 2, contract_address: '0x' + '12'.repeat(20) },
     ]);
     const res = await activityRoutes.request(
       '/webhooks/cdp',
@@ -211,8 +215,25 @@ describe('POST /webhooks/cdp', () => {
       env,
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, recorded: 2, ignored: 1 });
-    expect(recorded.map(([name]) => name).sort()).toEqual([`84532:${ME}`, `84532:${OTHER}`]);
-    expect(recorded.every(([, token]) => token === MOCK_USDC.toLowerCase())).toBe(true);
+    expect(await res.json()).toEqual({ ok: true, recorded: 4, ignored: 1 });
+    expect(recorded.map(([, token]) => token).sort()).toEqual([MOCK_USDC.toLowerCase(), MOCK_USDC.toLowerCase(), PBRL.toLowerCase(), PBRL.toLowerCase()].sort());
+
+    // A delivery signed by none of the secrets is refused.
+    const wrong = await activityRoutes.request(
+      '/webhooks/cdp',
+      { method: 'POST', body, headers: { 'x-hook0-signature': await sign(body, Math.floor(Date.now() / 1000)) } },
+      { ...env, CDP_WEBHOOK_SECRET: 'nobody, else' } as unknown as Env,
+    );
+    expect(wrong.status).toBe(401);
+  });
+
+  it('answers HEAD and GET on the webhook path with 200, as CDP checks a target before it subscribes', async () => {
+    expect((await activityRoutes.request('/webhooks/cdp', { method: 'HEAD' }, {} as Env)).status).toBe(200);
+    expect((await activityRoutes.request('/webhooks/cdp', { method: 'GET' }, {} as Env)).status).toBe(200);
+  });
+
+  it('splits the secrets on commas and drops blanks', () => {
+    expect(webhookSecrets(' a , b,, ')).toEqual(['a', 'b']);
+    expect(webhookSecrets(undefined)).toEqual([]);
   });
 });

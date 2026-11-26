@@ -89,8 +89,10 @@ export interface Env {
   ACTIVITY_INDEX_FROM_BLOCK?: string;
 
   /**
-   * Secret of the CDP onchain webhook subscription (`metadata.secret`); it keys
-   * the `X-Hook0-Signature` HMAC. Set with `wrangler secret put
+   * Secrets of the CDP onchain webhook subscriptions (each create answers its
+   * own `secret`), comma-separated: one subscription matches one contract, so
+   * MockUSDC and pBRL each have one. A delivery passes when any of them keys
+   * its `X-Hook0-Signature` HMAC. Set with `wrangler secret put
    * CDP_WEBHOOK_SECRET`. Unset, `POST /v1/activity/webhooks/cdp` answers 503.
    */
   CDP_WEBHOOK_SECRET?: string;

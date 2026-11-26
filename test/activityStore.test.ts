@@ -91,10 +91,12 @@ describe('parseCdpTransfer', () => {
     expect(parseCdpTransfer({ ...event, parameters: { ...event.parameters, value: 637064239 } }, tokenFor)?.transfer.value).toBe('637064239');
   });
 
-  it('accepts a webhook-fed token of the table and ignores the others, pBRL included', () => {
+  it('accepts each webhook-fed token of the table, pBRL included, and ignores the others', () => {
     expect(parseCdpTransfer(event, tokenFor)?.transfer.token).toBe(MOCK_USDC.toLowerCase());
-    // pBRL is in the table but no webhook feeds it: ignored until its flag flips.
-    expect(parseCdpTransfer({ ...event, contract_address: PBRL.toLowerCase() }, tokenFor)).toBeNull();
+    // pBRL is webhook-fed since 2026-11-26 (its own CDP subscription).
+    expect(parseCdpTransfer({ ...event, contract_address: PBRL.toLowerCase() }, tokenFor)?.transfer.token).toBe(PBRL.toLowerCase());
+    // Another contract on the same network is not.
+    expect(parseCdpTransfer({ ...event, contract_address: '0x' + '12'.repeat(20) }, tokenFor)).toBeNull();
     // Mainnet USDC is not webhook-fed either.
     expect(parseCdpTransfer({ ...event, network: 'base-mainnet', contract_address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }, tokenFor)).toBeNull();
     // Once a token is marked webhook-fed, the parser takes it as it is.
@@ -166,10 +168,10 @@ describe('the record’s SQL, on node:sqlite', () => {
     expect(listTransfers(sql, PBRL, 10, null)).toEqual([]);
   });
 
-  it('the table names one webhook-fed token, MockUSDC, on Base Sepolia', () => {
+  it('the table names two webhook-fed tokens, MockUSDC and pBRL, both on Base Sepolia', () => {
     const fed = Object.entries(ACTIVITY_TOKENS).flatMap(([chainId, tokens]) =>
       tokens.filter((t) => t.webhookFed).map((t) => `${chainId}:${t.address}`),
     );
-    expect(fed).toEqual([`84532:${MOCK_USDC}`]);
+    expect(fed).toEqual([`84532:${MOCK_USDC}`, `84532:${PBRL}`]);
   });
 });
