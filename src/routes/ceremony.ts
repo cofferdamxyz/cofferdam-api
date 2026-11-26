@@ -275,8 +275,12 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
         return c.json({ error: err.code, message: err.message }, err.status as 400 | 403 | 404 | 409 | 422 | 429 | 500);
       }
       const message = err instanceof Error ? err.message : String(err);
-      // The attester throws `CODE: detail`; a missing binding or key is a 503.
-      const status = /BAD_ATTESTER_KEY|is not a function|undefined/.test(message) ? 503 : 502;
+      // The attester throws `CODE: detail`; a missing binding, key or pin (an
+      // operator error, not a refusal) is a 503.
+      const status =
+        /BAD_ATTESTER_KEY|BAD_CHAIN_ID_VAR|BAD_CEREMONY_SIGNATURE_VAR|BAD_CEREMONY_REGISTRY_VAR|is not a function|undefined/.test(message)
+          ? 503
+          : 502;
       return c.json({ error: status === 503 ? 'attester_unavailable' : 'attester_rejected', message }, status);
     }
   });

@@ -159,7 +159,10 @@ export const SEPOLIA_DEPLOYMENTS = {
    * Keys that co-sign first-High enrolment, Partner recovery and hard
    * recovery. The ceremony attester
    * `0xC912bFE0AD345035606182c23495b6883AA0934D` (cofferdam-attester
-   * `signCeremony`) is listed from the constructor.
+   * `signCeremony`) is listed from the constructor. This generation's
+   * accounts verify the co-sign as EIP-191; the production generation's verify
+   * EIP-712 with the registry as `verifyingContract` (workspace decision 0090
+   * item 5). The attester's `CEREMONY_REGISTRY_ADDRESS` must equal it.
    */
   CofferdamCeremonyAttesterRegistry: {
     address: '0x44A2B59d5D39f773C2e65469e0Dd3217E53823Af',
