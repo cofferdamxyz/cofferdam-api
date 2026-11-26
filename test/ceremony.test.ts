@@ -474,5 +474,12 @@ describe('POST /v1/ceremony/first-high', () => {
     }
     const registry = app(async () => { throw new Error('REGISTRY_NOT_ALLOWED: attester is pinned to ceremony registry 0x44A2'); });
     expect((await post(registry, body, fixtures.webauthn.token)).status).toBe(502);
+    // The attester on CDP (E7): an outage is unavailable, a policy refusal is a refusal.
+    const outage = app(async () => { throw new Error('CDP_UNAVAILABLE: cdp 503 service_unavailable (c-1)'); });
+    const down = await post(outage, body, fixtures.webauthn.token);
+    expect(down.status).toBe(503);
+    expect(await down.json()).toMatchObject({ error: 'attester_unavailable' });
+    const policy = app(async () => { throw new Error('CDP_REFUSED: cdp 403 policy_violation (c-2)'); });
+    expect((await post(policy, body, fixtures.webauthn.token)).status).toBe(502);
   });
 });

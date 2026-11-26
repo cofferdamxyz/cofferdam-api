@@ -276,9 +276,12 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
       }
       const message = err instanceof Error ? err.message : String(err);
       // The attester throws `CODE: detail`; a missing binding, key or pin (an
-      // operator error, not a refusal) is a 503.
+      // operator error, not a refusal) is a 503, and so is a CDP outage under
+      // the attester's `CEREMONY_SIGNER=cdp` (`CDP_UNAVAILABLE`: no answer, 429
+      // or 5xx; workspace decision 0090 item 12, cdp-setup.md E7). A CDP policy
+      // refusal (`CDP_REFUSED`) stays a 502.
       const status =
-        /BAD_ATTESTER_KEY|BAD_CHAIN_ID_VAR|BAD_CEREMONY_SIGNATURE_VAR|BAD_CEREMONY_REGISTRY_VAR|is not a function|undefined/.test(message)
+        /BAD_ATTESTER_KEY|BAD_CHAIN_ID_VAR|BAD_CEREMONY_SIGNATURE_VAR|BAD_CEREMONY_REGISTRY_VAR|CDP_UNAVAILABLE|is not a function|undefined/.test(message)
           ? 503
           : 502;
       return c.json({ error: status === 503 ? 'attester_unavailable' : 'attester_rejected', message }, status);
