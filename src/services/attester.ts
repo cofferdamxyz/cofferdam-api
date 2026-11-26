@@ -79,6 +79,12 @@ export type CeremonyAction = 'enroll-first-high' | 'replace-partner';
 /** Request payload for `signCeremony` (decision 0016); bigints as decimal strings. */
 export interface SignCeremonyRequest {
   readonly chainId: string;
+  /**
+   * The account's `CEREMONY_ATTESTERS`, checked against the chain's pin: the
+   * attester refuses any other (`REGISTRY_NOT_ALLOWED`), and it is the EIP-712
+   * `verifyingContract` (workspace decision 0090 item 5).
+   */
+  readonly registry: Hex;
   readonly account: Hex;
   readonly action: CeremonyAction;
   /** `keccak256(newConfig)` of the authority config the account will store. */
@@ -93,10 +99,17 @@ export interface SignCeremonyRequest {
 /** Response from `signCeremony`: the `CeremonyAttestation` the account takes. */
 export interface SignCeremonyResponse {
   readonly attesterAddress: Hex;
-  /** Equals `CofferdamAccount4337.ceremonyHash(...)`. */
+  /**
+   * Equals `CofferdamAccount4337.ceremonyHash(...)` in the attester's pinned
+   * form: the EIP-712 digest for the production generation on, the hash
+   * EIP-191 wraps for Base Sepolia's deployed generation.
+   */
   readonly messageHash: Hex;
-  /** 65-byte EIP-191 personal_sign signature. */
+  /** 65-byte signature, the `CeremonyAttestation.signature` bytes. */
   readonly signature: Hex;
+  /** The attester's pinned form; absent from an attester older than decision 0090 item 5. */
+  readonly signatureForm?: 'eip191' | 'eip712';
+  readonly registry?: Hex;
   readonly chainId: string;
   readonly account: Hex;
   readonly action: CeremonyAction;

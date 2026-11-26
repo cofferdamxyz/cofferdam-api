@@ -22,7 +22,13 @@
  *      the account's own challenge for the current nonce, through the module's
  *      `isValidSignature` (RP pin and UV enforced on-chain);
  *   5. the attester's hash equals the account's `ceremonyHash` for the same
- *      inputs (encoding drift fails closed).
+ *      inputs (encoding drift fails closed). The plane carries no signature
+ *      form (workspace decision 0090 item 5, ruled 2026-11-26): the attester
+ *      signs in the form its Worker pins, EIP-712 typed data from the
+ *      production generation on and EIP-191 for Base Sepolia's deployed one,
+ *      and each generation's `ceremonyHash` returns exactly the digest that
+ *      form signs, so an attester pinned to the wrong form for the account's
+ *      generation fails this check instead of handing out a dead signature.
  * The window is short (ten minutes) and the nonce makes it single-use.
  *
  *   6. the request carries the signing authority's own session (2026-10-15):
@@ -344,6 +350,7 @@ export async function issueFirstHighAttestation(
 
   const signed = await deps.sign({
     chainId: pins.chainId.toString(),
+    registry: pins.ceremonyRegistry,
     account: req.account,
     action: 'enroll-first-high',
     newKeyHash,

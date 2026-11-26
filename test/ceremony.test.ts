@@ -23,6 +23,9 @@ import {
 } from '../src/services/ceremony.js';
 import type { SignCeremonyRequest, SignCeremonyResponse } from '../src/services/attester.js';
 import fixtures from './fixtures/sdk-attestations.json';
+// cofferdam-sdk packages/core/test/fixtures/ceremonyTypes.json (workspace
+// decision 0090 item 5), copied byte for byte.
+import ceremonyFixture from './fixtures/ceremony/ceremonyTypes.json';
 
 const ACCOUNT: Address = '0x80967a159A00dcabe2DeAF86b68249acfc45C265';
 const HIGH_MODULE: Address = '0xd62c4deDeD3E2fEF52c8733aa1c899C7714a87C5';
@@ -148,6 +151,7 @@ describe('issueFirstHighAttestation', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({
       chainId: '84532',
+      registry: CEREMONY_REGISTRY,
       account: ACCOUNT,
       action: 'enroll-first-high',
       newKeyHash: keccak256(CONFIG),
@@ -251,6 +255,65 @@ describe('issueFirstHighAttestation', () => {
     expect(
       await codeOf(issueFirstHighAttestation(deps({ onChainCeremonyHash: async () => `0x${'dd'.repeat(32)}` }), request())),
     ).toEqual(['ceremony_hash_mismatch', 500]);
+  });
+
+  describe('the typed attestation (decision 0090 item 5)', () => {
+    // The SDK fixture's enroll-first-high vector: an EIP-712 generation's
+    // account answers `ceremonyHash` with the typed digest the attester signed.
+    const v = ceremonyFixture.vectors.find((x) => x.actionName === 'enroll-first-high')!;
+    const typedPins = {
+      ...pins,
+      chainId: BigInt(v.domain.chainId),
+      ceremonyRegistry: getAddress(v.domain.verifyingContract) as Address,
+    };
+    const typedSnapshot = () =>
+      snapshot({ nonce: BigInt(v.message.nonce), ceremonyRegistry: typedPins.ceremonyRegistry });
+    const typedSign = async (req: SignCeremonyRequest): Promise<SignCeremonyResponse> => ({
+      ...(await fakeSign([], v.digest as Hex)(req)),
+      signature: v.signature as Hex,
+      attesterAddress: ceremonyFixture.attester.address as Hex,
+      signatureForm: 'eip712',
+      registry: req.registry,
+    });
+
+    it('hands out the typed signature when its digest is the account ceremonyHash', async () => {
+      const seen: SignCeremonyRequest[] = [];
+      const out = await issueFirstHighAttestation(
+        deps({
+          pins: typedPins,
+          readAccount: async () => typedSnapshot(),
+          onChainCeremonyHash: async () => v.digest as Hex,
+          sign: async (r) => (seen.push(r), typedSign(r)),
+        }),
+        request(),
+      );
+      expect(seen[0]?.registry).toBe(typedPins.ceremonyRegistry);
+      expect(seen[0]?.chainId).toBe(String(v.domain.chainId));
+      expect(out.ceremonyHash).toBe(v.digest);
+      expect(out.attestation.signature).toBe(v.signature);
+      expect(out.attesterAddress).toBe(ceremonyFixture.attester.address);
+    });
+
+    it('fails closed when the attester form does not match the account generation', async () => {
+      // A typed attester for an EIP-191 account (or the reverse): the hashes differ.
+      const legacy: Hex = `0x${'ee'.repeat(32)}`;
+      expect(
+        await codeOf(
+          issueFirstHighAttestation(
+            deps({ pins: typedPins, readAccount: async () => typedSnapshot(), onChainCeremonyHash: async () => legacy, sign: typedSign }),
+            request(),
+          ),
+        ),
+      ).toEqual(['ceremony_hash_mismatch', 500]);
+      expect(
+        await codeOf(
+          issueFirstHighAttestation(
+            deps({ pins: typedPins, readAccount: async () => typedSnapshot(), onChainCeremonyHash: async () => v.digest as Hex }),
+            request(),
+          ),
+        ),
+      ).toEqual(['ceremony_hash_mismatch', 500]);
+    });
   });
 });
 
