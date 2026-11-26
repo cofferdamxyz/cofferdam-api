@@ -133,7 +133,13 @@ export interface AaRouteDeps {
    * simulation and the pre-flight pass and before the send; it throws
    * `rate_limited` to refuse. A reverted op throws `user_op_reverted`.
    */
-  submit: (env: Env, op: PackedUserOperationWire, admit: () => Promise<void>, lane: RelayLane) => Promise<RelayOutcome>;
+  submit: (
+    env: Env,
+    op: PackedUserOperationWire,
+    admit: () => Promise<void>,
+    lane: RelayLane,
+    defer?: (work: Promise<unknown>) => void,
+  ) => Promise<RelayOutcome>;
 }
 
 /**
@@ -184,6 +190,9 @@ export function testLane(env: Env, config: TestRelayConfig): RelayLane | null {
 
 /** How long the relay waits for the receipt before answering `pending` (Base mines every 2 s; iOS gives up at 60 s). */
 export const RECEIPT_WAIT_MS = 20_000;
+
+/** How long a late receipt is waited for after the answer, for the budget (waitUntil allows 30 s). */
+const LATE_RECEIPT_WAIT_MS = 25_000;
 
 /** The receipt poll's interval: Base's block time, so the wait costs about one node call per block. */
 const RECEIPT_POLL_MS = 2_000;
@@ -403,8 +412,11 @@ export async function submitUserOperation(
   admit: () => Promise<void> = async () => {},
   receiptWaitMs: number = RECEIPT_WAIT_MS,
   lane: RelayLane | null = sepoliaLane(env),
+  /** Work that may outlive the answer (`ExecutionContext.waitUntil`): a late receipt's gas for the budget. */
+  defer: (work: Promise<unknown>) => void = () => {},
 ): Promise<RelayOutcome> {
-  if (!lane) throw new UserOpSubmitError('relay_failed', signerMissing(env, 'relayer'));
+  // Nothing was sent: the same answer the route gives for a relayer that is not configured.
+  if (!lane) throw new UserOpSubmitError('preflight_unavailable', signerMissing(env, 'relayer'));
   const { rpcUrl } = lane;
   const publicClient: ChainClient =
     lane.chainId === BASE_SEPOLIA_CHAIN_ID ? (getBaseSepoliaClient(rpcUrl) as unknown as ChainClient) : getBaseClient(rpcUrl);
@@ -468,6 +480,13 @@ export async function submitUserOperation(
     receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: receiptWaitMs, pollingInterval: RECEIPT_POLL_MS });
   } catch (err) {
     logRelay('aa_receipt_pending', op, { txHash, reason: revertReason(err) });
+    // The budget still counts its gas: read the receipt once more after the answer, within waitUntil's time.
+    defer(
+      publicClient
+        .waitForTransactionReceipt({ hash: txHash, timeout: LATE_RECEIPT_WAIT_MS, pollingInterval: RECEIPT_POLL_MS })
+        .then((late) => budget.spend(txHash, receiptGasWei(late as Parameters<typeof receiptGasWei>[0])))
+        .catch(() => {}),
+    );
     return { txHash, receipt: 'pending' };
   }
   await budget.spend(txHash, receiptGasWei(receipt as Parameters<typeof receiptGasWei>[0]));
@@ -577,7 +596,14 @@ export function createAaRoutes(deps: AaRouteDeps) {
           : await overLimit(c.env.AA_RELAY_RL, `aa:${sender}`);
         if (over) throw new UserOpSubmitError('rate_limited', 'too many ops for this account; retry shortly');
       };
-      const { txHash, receipt } = await deps.submit(c.env, parsed.userOp, admit, lane);
+      const defer = (work: Promise<unknown>) => {
+        try {
+          c.executionCtx.waitUntil(work);
+        } catch {
+          // No execution context (the tests): the work runs unawaited.
+        }
+      };
+      const { txHash, receipt } = await deps.submit(c.env, parsed.userOp, admit, lane, defer);
       return c.json({ ok: true, txHash, entryPoint: parsed.entryPoint, chainId: lane.chainId, receipt }, 202);
     } catch (err) {
       if (err instanceof UserOpSubmitError) {
@@ -600,5 +626,5 @@ export const aaRoutes = createAaRoutes({
     paymaster: SEPOLIA_DEPLOYMENTS.CofferdamPaymaster.address,
     factory: SEPOLIA_DEPLOYMENTS.CofferdamAccountFactory4337.address,
   },
-  submit: (env, op, admit, lane) => submitUserOperation(env, op, admit, RECEIPT_WAIT_MS, lane),
+  submit: (env, op, admit, lane, defer) => submitUserOperation(env, op, admit, RECEIPT_WAIT_MS, lane, defer),
 });

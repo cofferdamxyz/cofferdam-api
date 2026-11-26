@@ -116,8 +116,26 @@ export function signerSpecOf(env: SignerEnv, role: SignerRole): SignerSpec | nul
   if (kind !== 'cdp') return null;
   const address = env[vars.address]?.trim();
   const credentials = cdpCredentialsOf(env);
-  if (!address || !isAddress(address, { strict: false }) || !credentials) return null;
+  if (!address || !isAddress(address, { strict: false }) || !credentials || !credentialShapesHold(credentials)) return null;
   return { kind: 'cdp', address: getAddress(address), credentials };
+}
+
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * The secrets' shapes, checked before any request: the API key's secret is
+ * base64 of 64 bytes (Ed25519 seed and public key), the Wallet Secret base64.
+ * A malformed one is "not configured" (503), never a send that fails after the
+ * relay has said it may have gone out. The key's curve is still checked at
+ * first use.
+ */
+function credentialShapesHold(c: CdpCredentials): boolean {
+  if (!BASE64.test(c.apiKeySecret) || !BASE64.test(c.walletSecret)) return false;
+  try {
+    return atob(c.apiKeySecret).length === 64 && atob(c.walletSecret).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** What a role's switch needs and lacks, for a 503's message (names only, never a value). */

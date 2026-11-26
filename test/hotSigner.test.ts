@@ -37,7 +37,8 @@ vi.mock('../src/services/cdp/client.js', async (importOriginal) => ({
 }));
 
 const CDP_ACCOUNT = privateKeyToAccount(generatePrivateKey());
-const CREDS = { CDP_API_KEY_ID: 'id', CDP_API_KEY_SECRET: 'secret-value-api', CDP_WALLET_SECRET: 'secret-value-wallet' };
+// Shaped as CDP's (base64 of 64 bytes; base64), never real.
+const CREDS = { CDP_API_KEY_ID: 'id', CDP_API_KEY_SECRET: Buffer.alloc(64, 7).toString('base64'), CDP_WALLET_SECRET: Buffer.from('wallet-secret-value').toString('base64') };
 const TX_HASH = `0x${'cd'.repeat(32)}` as Hex;
 const noSleep = async () => {};
 
@@ -75,6 +76,9 @@ describe('signerSpecOf: which signer a role uses', () => {
     expect(signerSpecOf({ ...env, RELAYER_CDP_ADDRESS: undefined }, 'relayer')).toBeNull();
     expect(signerSpecOf({ ...env, RELAYER_CDP_ADDRESS: '0xnot' }, 'relayer')).toBeNull();
     expect(signerSpecOf({ ...env, CDP_WALLET_SECRET: '' }, 'relayer')).toBeNull();
+    // A malformed secret is not configured (503), never a send that fails after "may have been sent".
+    expect(signerSpecOf({ ...env, CDP_API_KEY_SECRET: Buffer.alloc(32, 7).toString('base64') }, 'relayer')).toBeNull();
+    expect(signerSpecOf({ ...env, CDP_WALLET_SECRET: 'not base64!' }, 'relayer')).toBeNull();
   });
 
   it('refuses an unknown switch instead of guessing', () => {
@@ -86,7 +90,8 @@ describe('signerSpecOf: which signer a role uses', () => {
     const env = { HANDLE_REGISTRAR_SIGNER: 'cdp', ...CREDS };
     const message = signerMissing(env, 'registrar');
     expect(message).toContain('HANDLE_REGISTRAR_CDP_ADDRESS');
-    expect(message).not.toContain('secret-value');
+    expect(message).not.toContain(CREDS.CDP_API_KEY_SECRET);
+    expect(message).not.toContain(CREDS.CDP_WALLET_SECRET);
     expect(signerMissing({}, 'registrar')).toBe('HANDLE_REGISTRAR_KEY not set');
   });
 });
@@ -248,6 +253,34 @@ describe('the relay on a CDP account', () => {
     chain.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [opEvent], gasUsed: 100n, effectiveGasPrice: 2n, l1Fee: 5n });
     await submitUserOperation(budgeted, op, async () => {}, 20_000, sepoliaLane(budgeted));
     expect(spent).toEqual([[TX_HASH, '205']]);
+    vi.mocked(console.warn).mockRestore();
+  });
+
+  it("counts a late receipt's gas after the answer, through the deferred work", async () => {
+    const { client } = fakeCdp();
+    cdp.fake = client;
+    const spent: string[] = [];
+    const ns = {
+      idFromName: (name: string) => name,
+      get: () => ({
+        admit: () => Promise.resolve({ allowed: true, calls: 1, gasWei: '0', alert: null }),
+        spend: (_d: string, _t: string, g: string) => {
+          spent.push(g);
+          return Promise.resolve({ calls: 1, gasWei: g, alert: null });
+        },
+      }),
+    };
+    const budgeted = { ...env, KEY_BUDGET_DO: ns } as unknown as Env;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    chain.waitForTransactionReceipt
+      .mockRejectedValueOnce(new Error('timed out'))
+      .mockResolvedValueOnce({ status: 'success', logs: [opEvent], gasUsed: 10n, effectiveGasPrice: 3n });
+    const deferred: Promise<unknown>[] = [];
+    const outcome = await submitUserOperation(budgeted, op, async () => {}, 20_000, sepoliaLane(budgeted), (w) => deferred.push(w));
+    expect(outcome.receipt).toBe('pending');
+    expect(deferred).toHaveLength(1);
+    await Promise.all(deferred);
+    expect(spent).toEqual(['30']);
     vi.mocked(console.warn).mockRestore();
   });
 
