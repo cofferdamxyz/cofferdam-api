@@ -95,6 +95,20 @@ export interface Env {
    */
   CDP_WEBHOOK_SECRET?: string;
 
+  // ── CDP Server Wallets (workspace decision 0090; runbook cdp-setup.md) ──
+  /**
+   * The plane's Secret API key on its CDP project: its id, and its Ed25519
+   * secret as base64 of seed ‖ public key. Signing only: never the Manage
+   * (modify policies) restriction, never export (decision 0090, item 10).
+   * With `CDP_WALLET_SECRET` (the project's Wallet Secret, base64 PKCS#8),
+   * read by `services/cdp/client.ts`, which nothing routes to yet (E4 puts
+   * the registrar and the relayer behind a switch). Set by the founder with
+   * `wrangler secret put`, copies in the vault (decision 0054).
+   */
+  CDP_API_KEY_ID?: string;
+  CDP_API_KEY_SECRET?: string;
+  CDP_WALLET_SECRET?: string;
+
   // ── Inference and chat (workspace decision 0037) ────────────────
   /**
    * Workers AI (wrangler.jsonc `ai`). Only `services/inference` may use it
