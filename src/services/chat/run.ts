@@ -102,6 +102,7 @@ export function parseChatRequest(body: unknown): {
   profile: string | null;
   language: ChatLanguage | null;
   context: string | null;
+  coins: AmountCurrency[];
 } {
   if (!body || typeof body !== 'object') throw new ChatRequestError('expected a JSON object');
   const b = body as Record<string, unknown>;
@@ -127,7 +128,11 @@ export function parseChatRequest(body: unknown): {
   if (b.context != null && typeof b.context !== 'string') throw new ChatRequestError('context must be text');
   const context = typeof b.context === 'string' ? b.context.trim() : '';
   if (context.length > CHAT_LIMITS.contextChars) throw new ChatRequestError('context is too long');
-  return { account, messages, tier, profile: profile || null, language, context: context || null };
+  // The coins the app opens a prefill in (cofferdam-app `chatBody`); an app from before them sends none and reads
+  // every amount as its revolver's coin, so the plane never prefills a BRS amount for it.
+  if (b.coins != null && !Array.isArray(b.coins)) throw new ChatRequestError('coins must be a list');
+  const coins = (Array.isArray(b.coins) ? b.coins : []).filter((x): x is AmountCurrency => x === 'USDC' || x === 'BRS');
+  return { account, messages, tier, profile: profile || null, language, context: context || null, coins };
 }
 
 // ── Prompts ──────────────────────────────────────────────────────────────────
@@ -265,7 +270,10 @@ export function mentionsOtherCurrency(text: string): boolean {
 /** The coins an amount in the chat may be in: the app's revolver (workspace decision 0100 question 7). */
 export type AmountCurrency = 'USDC' | 'BRS';
 
-const BRS_MARKER = /(r\$|\breais\b|\d\s*real\b|\bbrs\b|\bbrl\b|\bcontos?\b)/i;
+// Reais in Portuguese, Spanish (reales) and English (reals), "R$" with or without a space, the tickers and the slang.
+const BRS_MARKER = /(\br\s*\$|\breais\b|\breales\b|\breals\b|\bbrs\b|\bbrl\b|\bcontos?\b)/i;
+// One real, singular, only in Portuguese and Spanish: in English "20 real quick" is no currency.
+const ONE_REAL = /\d\s*real\b/i;
 const USD_MARKER = /(\$|\busdc?\b|\bdollars?\b|\bd[óo]lar(es)?\b|\bbucks?\b)/i;
 const FOREIGN_MARKER = /(€|£|¥|₹|\beuros?\b|\blibras?\b|\bpounds?\b|\bpesos?\b|\byen\b|\brupees?\b|\bsoles?\b)/i;
 
@@ -276,7 +284,8 @@ const FOREIGN_MARKER = /(€|£|¥|₹|\beuros?\b|\blibras?\b|\bpounds?\b|\bpeso
  * USDC, and "send 20 reais" in English is BRS too). Read in code, never by a
  * model:
  *
- * - a word or mark for reais (R$, reais, "1 real", BRS, BRL, conto) → BRS, in any language;
+ * - a word or mark for reais (R$, reais, reales, reals, BRS, BRL, conto; "1 real" in
+ *   Portuguese and Spanish) → BRS, in any language;
  * - one for dollars ($, dollars, dólares, USD, USDC) → USDC, in any language;
  * - both, or any other currency (euros, pesos, …) → null, and the amount is dropped;
  * - none: Portuguese → BRS, English and Spanish → USDC ("$" and a bare number
@@ -284,9 +293,9 @@ const FOREIGN_MARKER = /(€|£|¥|₹|\beuros?\b|\blibras?\b|\bpounds?\b|\bpeso
  *   0037 (t)).
  */
 export function amountCurrency(text: string, language: ChatLanguage): AmountCurrency | null {
-  const brs = BRS_MARKER.test(text);
+  const brs = BRS_MARKER.test(text) || (language !== 'en' && ONE_REAL.test(text));
   // "R$" holds a "$": dollars are read with the reais marks taken out.
-  const usd = USD_MARKER.test(text.replace(/r\$/gi, ' '));
+  const usd = USD_MARKER.test(text.replace(/\br\s*\$/gi, ' '));
   if (FOREIGN_MARKER.test(text) || (brs && usd)) return null;
   if (brs) return 'BRS';
   if (usd) return 'USDC';
@@ -588,6 +597,11 @@ export interface RunChatOptions {
   language?: ChatLanguage | null;
   /** A help sheet's notes for the answer models (cofferdam-app `help.ts`); never the router's, never logged. */
   context?: string | null;
+  /**
+   * The coins the app opens a prefill in (`coins` in the body). A BRS amount is prefilled only when the app lists
+   * BRS; an older app, which ignores `currency` and would read the amount in its revolver's coin, gets none.
+   */
+  coins?: AmountCurrency[];
 }
 
 /** Run one turn; the returned stream carries `ChatEvent`s as SSE. */
@@ -646,7 +660,7 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
       // The coin is the code's reading, never the model's: an amount whose coin the app has not got is dropped.
       if (fields.amount !== undefined) {
         const coin = amountCurrency(latest, language);
-        if (coin) fields.currency = coin;
+        if (coin && (coin === 'USDC' || (opts.coins ?? []).includes(coin))) fields.currency = coin;
         else delete fields.amount;
       }
       // Handles travel without the @; the app's validator checks the bare handle.

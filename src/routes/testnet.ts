@@ -15,7 +15,9 @@
  * Base Sepolia 400, and without `PODS_SANDBOX_API_KEY` (a staging key) the
  * route answers `503 brs_mint_unavailable`.
  *
- * The gate is the attachments': a fast `csa1:` session pinned to the body's
+ * The gate runs in the attachments' order: the global brake
+ * (`BRS_MINT_GLOBAL_RL`) and the per-IP ceiling (`BRS_MINT_IP_RL`) before
+ * anything else, the body, a fast `csa1:` session pinned to the body's
  * account, an active High on it (remembered five minutes), then
  * `BRS_MINT_RL` per account. The pBRL goes only to that account. The log
  * line carries the outcome and the amount, never the account.
@@ -84,6 +86,12 @@ export function createTestnetRoutes(deps: TestnetRouteDeps = defaultTestnetRoute
     const apiKey = c.env.PODS_SANDBOX_API_KEY;
     const base = podsSandboxBase(c.env.PODS_API_BASE_URL);
     if (!apiKey || !base) return c.json({ ok: false, error: 'brs_mint_unavailable' }, 503);
+    // Before anything that reads the body or the chain: everyone's brake, then a ceiling per IP.
+    if (await overLimit(c.env.BRS_MINT_GLOBAL_RL, 'brs-mint:global')) return c.json({ ok: false, error: 'rate_limited', retryAfterSeconds: 10 }, 429);
+    const ip = c.req.header('cf-connecting-ip');
+    if (ip && (await overLimit(c.env.BRS_MINT_IP_RL, `brs-mint-ip:${ip}`))) {
+      return c.json({ ok: false, error: 'rate_limited', retryAfterSeconds: 60 }, 429);
+    }
 
     let body: Record<string, unknown>;
     try {

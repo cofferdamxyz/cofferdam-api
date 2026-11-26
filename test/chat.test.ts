@@ -223,6 +223,12 @@ describe('routerState', () => {
 });
 
 describe('parseChatRequest', () => {
+  it('reads the coins the app opens a prefill in, keeping only known ones, none when absent', () => {
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi') }).coins).toEqual([]);
+    expect(parseChatRequest({ account: ACCOUNT, messages: user('hi'), coins: ['USDC', 'BRS', 'ETH'] }).coins).toEqual(['USDC', 'BRS']);
+    expect(() => parseChatRequest({ account: ACCOUNT, messages: user('hi'), coins: 'BRS' })).toThrow(/coins/);
+  });
+
   it('accepts a conversation that ends with the user and refuses the rest', () => {
     expect(parseChatRequest({ account: ACCOUNT, messages: user('hi') }).messages).toHaveLength(1);
     expect(() => parseChatRequest({ account: 'x', messages: user('hi') })).toThrow(/account/);
@@ -379,11 +385,14 @@ describe('runChat', () => {
       },
       calls,
     );
-    const events = await collect(runChat({ inference, messages: user('manda 20 pro joao') }));
+    const events = await collect(runChat({ inference, messages: user('manda 20 pro joao'), coins: ['USDC', 'BRS'] }));
     expect(events[0]).toMatchObject({ type: 'route', route: 'clarify' });
     expect(events).toContainEqual({ type: 'choices', requests: [{ id: 'send', amount: 20, currency: 'BRS', recipient: 'joao' }, { id: 'message' }] });
     expect(texts(events)).toContain('Toque em uma');
     expect(calls.filter((c) => c.op === 'chat-action')).toHaveLength(1);
+    // An app from before the coins (no `coins` in its body) would read 20 as its revolver's coin: no BRS amount for it.
+    const old = await collect(runChat({ inference, messages: user('manda 20 pro joao') }));
+    expect(old).toContainEqual({ type: 'choices', requests: [{ id: 'send', recipient: 'joao' }, { id: 'message' }] });
   });
 
   it('starts the answer only after the router when the early answer is off', async () => {
@@ -857,9 +866,20 @@ describe('amountCurrency (decision 0100 question 7, the founder 2026-11-26)', ()
     expect(amountCurrency('20 dollars or 100 reais to ana', 'en')).toBeNull();
   });
 
-  it('does not take "real" as reais without a number before it', () => {
+  it('does not take "real" as reais without a number before it, nor a singular real in English', () => {
     expect(amountCurrency('manda 20 de verdade, é real', 'pt')).toBe('BRS');
     expect(amountCurrency('send 20, for real', 'en')).toBe('USDC');
+    expect(amountCurrency('send 20 real quick to ana', 'en')).toBe('USDC');
+    expect(amountCurrency('mándale 1 real a ana', 'es')).toBe('BRS');
+  });
+
+  it('reads reais in Spanish and English plurals, and R$ with a space (the review of 2026-11-26)', () => {
+    expect(amountCurrency('manda 20 reales a ana', 'es')).toBe('BRS');
+    expect(amountCurrency('envía 20 reales brasileños', 'es')).toBe('BRS');
+    expect(amountCurrency('send 20 reals to ana', 'en')).toBe('BRS');
+    expect(amountCurrency('send 20 Brazilian reals to ana', 'en')).toBe('BRS');
+    expect(amountCurrency('send R $20 to ana', 'en')).toBe('BRS');
+    expect(amountCurrency('send 20 bucks to ana', 'en')).toBe('USDC');
   });
 });
 

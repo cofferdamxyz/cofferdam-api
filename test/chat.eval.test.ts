@@ -98,7 +98,7 @@ describe.skipIf(!LIVE)('chat evaluation (live, Workers AI)', () => {
       const { messages } = parseChatRequest({ account: ACCOUNT, messages: [...(prompt.history ?? []), { role: 'user', text: prompt.text }] });
       const log: Record<string, unknown>[] = [];
       const t0 = Date.now();
-      const evs = await events(runChat({ inference, messages, early, tier, highFloor, hireFloor, now: () => TODAY, log: (l) => log.push(l) }));
+      const evs = await events(runChat({ inference, messages, early, tier, highFloor, hireFloor, coins: ['USDC', 'BRS'], now: () => TODAY, log: (l) => log.push(l) }));
       const totalMs = Date.now() - t0;
       await sleep(Math.max(gap, 200));
       const result = scoreTurn(prompt, { events: evs as never, log, calls, totalMs, routerModel: models['chat-router']! });

@@ -308,6 +308,7 @@ export function createChatRoutes(deps: ChatRouteDeps = defaultChatRouteDeps) {
       profile: parsed.profile,
       language: parsed.language,
       context: parsed.context,
+      coins: parsed.coins,
       onTurn: store
         ? (usage) => {
             const at = deps.now();

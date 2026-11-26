@@ -425,6 +425,10 @@ export interface Env {
   AA_TEST_RELAY_RL?: RateLimit;
   /** `POST /v1/testnet/brs/mint`: per account (`brs-mint:<account>`), after the gate. */
   BRS_MINT_RL?: RateLimit;
+  /** `POST /v1/testnet/brs/mint`: the global brake (`brs-mint:global`), first. */
+  BRS_MINT_GLOBAL_RL?: RateLimit;
+  /** `POST /v1/testnet/brs/mint`: per IP (`brs-mint-ip:<ip>`), before the body and the session. */
+  BRS_MINT_IP_RL?: RateLimit;
   /** `/v1/ceremony/*` (decision 0016 co-signs): a global brake, and per account once the gate passes. */
   CEREMONY_RL?: RateLimit;
   /** `/v1/ceremony/*`: a generous per-IP ceiling before the gate. */

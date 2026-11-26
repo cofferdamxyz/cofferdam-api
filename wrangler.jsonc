@@ -286,7 +286,10 @@
     { "name": "ATTACHMENT_RL", "namespace_id": "1128", "simple": { "limit": 10, "period": 60 } },
     // POST /v1/testnet/brs/mint (pBRL on Base Sepolia through Pods' sandbox,
     // workspace decision 0100): per account, after the gate.
-    { "name": "BRS_MINT_RL", "namespace_id": "1129", "simple": { "limit": 4, "period": 60 } }
+    { "name": "BRS_MINT_RL", "namespace_id": "1129", "simple": { "limit": 4, "period": 60 } },
+    // The same route's global brake and per-IP ceiling, both before the body.
+    { "name": "BRS_MINT_GLOBAL_RL", "namespace_id": "1130", "simple": { "limit": 60, "period": 60 } },
+    { "name": "BRS_MINT_IP_RL", "namespace_id": "1131", "simple": { "limit": 10, "period": 60 } }
   ],
 
   // ─────────────────────────────────────────────────────────────────

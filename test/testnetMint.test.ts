@@ -196,9 +196,9 @@ function harness(opts: { env?: Record<string, unknown>; authority?: AuthorityChe
     }),
   );
   const env = { ENVIRONMENT: 'staging', PODS_SANDBOX_API_KEY: KEY, ...opts.env };
-  const send = (body: unknown, token: string | null = fx.fast) => {
+  const send = (body: unknown, token: string | null = fx.fast, extra: Record<string, string> = {}) => {
     const url = `${ORIGIN}/v1/testnet/brs/mint`;
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    const headers: Record<string, string> = { 'content-type': 'application/json', ...extra };
     if (token) {
       headers.authorization = `DPoP ${token}`;
       headers.dpop = signProof({ htm: 'POST', htu: url, token });
@@ -223,6 +223,17 @@ describe('POST /v1/testnet/brs/mint', () => {
     const other = harness({ env: { PODS_API_BASE_URL: 'https://api.pods.finance' } });
     expect((await other.send({ account: ACCOUNT, amount: '1' })).status).toBe(503);
     expect(other.mint).not.toHaveBeenCalled();
+  });
+
+  it('runs the global brake and the per-IP ceiling before the body, the session or Pods', async () => {
+    const refusing = { limit: async () => ({ success: false }) };
+    const global = harness({ env: { BRS_MINT_GLOBAL_RL: refusing } });
+    expect((await global.send({ account: ACCOUNT, amount: '1' })).status).toBe(429);
+    const perIp = harness({ env: { BRS_MINT_IP_RL: refusing } });
+    const res = await perIp.send({ account: 'not-even-an-address', amount: 'x' }, null, { 'cf-connecting-ip': '203.0.113.9' });
+    expect(res.status).toBe(429);
+    expect(global.mint).not.toHaveBeenCalled();
+    expect(perIp.mint).not.toHaveBeenCalled();
   });
 
   it('refuses a bad body or amount before the session, and no session at all', async () => {
