@@ -68,7 +68,9 @@ export function validatePrompts(prompts: unknown): string[] {
     for (const c of e.candidates ?? []) if (!actionIds.has(c)) errors.push(`${at}: candidate ${c} is not in CHAT_ACTIONS`);
     if (e.fields) {
       const declared = CHAT_ACTIONS.find((a) => a.id === e.action)?.fields ?? {};
-      for (const k of Object.keys(e.fields)) if (!(k in declared)) errors.push(`${at}: field ${k} is not declared by ${String(e.action)}`);
+      // `currency` is the plane's own reading of an amount's coin (`amountCurrency`), not a model field.
+      const planeSet = 'amount' in declared ? ['currency'] : [];
+      for (const k of Object.keys(e.fields)) if (!(k in declared) && !planeSet.includes(k)) errors.push(`${at}: field ${k} is not declared by ${String(e.action)}`);
     }
     if (typeof e.notes !== 'string') errors.push(`${at}: notes must be a string`);
     for (const key of ['avoid', 'mention'] as const) {

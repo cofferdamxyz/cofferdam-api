@@ -52,7 +52,7 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
     description:
       'Send or pay money to someone, in any language (send, pay, transfer; manda, envia, paga, transfere, passa; envía, paga, transfiere), to a person or a handle such as @ana',
     fields: {
-      amount: { type: 'number', description: 'The amount, only when the user typed it in US dollars (dollars, USD, USDC, $); leave it out for any other currency' },
+      amount: { type: 'number', description: 'The amount as a number, in whatever currency the user wrote it (dollars, USDC, reais, R$, or no currency at all); the plane reads the currency itself' },
       recipient: { type: 'string', description: 'The recipient handle without @, only if the user typed one' },
     },
   },
@@ -60,7 +60,7 @@ export const CHAT_ACTIONS: ChatActionDef[] = [
     id: 'add_money',
     description:
       'Add money to the account, in any language (add, top up, deposit; adicionar, depositar, colocar; añadir, depositar, recargar)',
-    fields: { amount: { type: 'number', description: 'The amount, only when the user typed it in US dollars (dollars, USD, USDC, $); leave it out for any other currency' } },
+    fields: { amount: { type: 'number', description: 'The amount as a number, in whatever currency the user wrote it (dollars, USDC, reais, R$, or no currency at all); the plane reads the currency itself' } },
   },
   {
     id: 'find_document',

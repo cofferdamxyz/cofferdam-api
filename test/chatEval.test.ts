@@ -206,7 +206,7 @@ describe('the REST adapter', () => {
     const inference = createInference({}, { ai })!;
     const prompt = set.find((p) => p.id === 'send-en-dollars-handle')!;
     const evs = await collect(runChat({ inference, messages: [{ role: 'user', text: prompt.text }], log: (l) => log.push(l) }));
-    expect(evs.find((e) => e.type === 'action')).toEqual({ type: 'action', request: { id: 'send', amount: 20, recipient: 'ana' } });
+    expect(evs.find((e) => e.type === 'action')).toEqual({ type: 'action', request: { id: 'send', amount: 20, currency: 'USDC', recipient: 'ana' } });
     await new Promise((r) => setTimeout(r, 20));
     expect(calls.some((c) => c.model === GEMMA && c.stream && c.aborted)).toBe(true);
 

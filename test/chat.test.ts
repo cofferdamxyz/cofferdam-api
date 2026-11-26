@@ -16,6 +16,7 @@ import {
   HELP_RULE,
   CHAT_LIMITS,
   isStrictBlock,
+  amountCurrency,
   keepsAmount,
   mentionsOtherCurrency,
   REASONING_FIRST_TRY_MS,
@@ -274,7 +275,7 @@ describe('runChat', () => {
     );
     const events = await collect(runChat({ inference, messages: user('send 20 to @ana') }));
     expect(events[0]).toMatchObject({ type: 'route', route: 'action', action: 'send' });
-    expect(events).toContainEqual({ type: 'action', request: { id: 'send', amount: 20, recipient: 'ana' } });
+    expect(events).toContainEqual({ type: 'action', request: { id: 'send', amount: 20, currency: 'USDC', recipient: 'ana' } });
     expect(texts(events)).not.toContain('never shown');
     expect(events[events.length - 1]).toEqual({ type: 'done' });
     expect(calls.map((c) => c.op)).toEqual(['chat-answer', 'chat-router', 'chat-action']);
@@ -380,7 +381,7 @@ describe('runChat', () => {
     );
     const events = await collect(runChat({ inference, messages: user('manda 20 pro joao') }));
     expect(events[0]).toMatchObject({ type: 'route', route: 'clarify' });
-    expect(events).toContainEqual({ type: 'choices', requests: [{ id: 'send', amount: 20, recipient: 'joao' }, { id: 'message' }] });
+    expect(events).toContainEqual({ type: 'choices', requests: [{ id: 'send', amount: 20, currency: 'BRS', recipient: 'joao' }, { id: 'message' }] });
     expect(texts(events)).toContain('Toque em uma');
     expect(calls.filter((c) => c.op === 'chat-action')).toHaveLength(1);
   });
@@ -501,7 +502,7 @@ describe('runChat', () => {
     expect(evs[0]).toMatchObject({ type: 'route', route: 'action', action: 'add_money', tier: 'thinking' });
     expect(evs[0]).not.toHaveProperty('effort');
     expect(action.map((c) => c.op)).toEqual(['chat-router', 'chat-action']);
-    expect(evs).toContainEqual({ type: 'action', request: { id: 'add_money', amount: 50 } });
+    expect(evs).toContainEqual({ type: 'action', request: { id: 'add_money', amount: 50, currency: 'USDC' } });
   });
 
   it('retries the reasoning call once when the first attempt sends nothing in time', async () => {
@@ -827,6 +828,38 @@ describe('createAuthorityMemo', () => {
     now += 5 * 60_000 + 1;
     expect(await createAuthorityMemo({ edge: cache, now: () => now }).get(att)).toBeNull();
     expect(await other.get(att)).toBeNull();
+  });
+});
+
+describe('amountCurrency (decision 0100 question 7, the founder 2026-11-26)', () => {
+  it('reads a bare amount by the message language: Portuguese is reais, English and Spanish dollars', () => {
+    expect(amountCurrency('manda 20 pro joao', 'pt')).toBe('BRS');
+    expect(amountCurrency('send 20 to ana', 'en')).toBe('USDC');
+    expect(amountCurrency('mándale 10 a camila', 'es')).toBe('USDC');
+  });
+
+  it('follows a named coin in any language', () => {
+    expect(amountCurrency('send 20 reais to ana', 'en')).toBe('BRS');
+    expect(amountCurrency('manda R$ 20 pro joao', 'pt')).toBe('BRS');
+    expect(amountCurrency('manda R$20 pro joao', 'pt')).toBe('BRS');
+    expect(amountCurrency('passa 50 conto pra @bia', 'pt')).toBe('BRS');
+    expect(amountCurrency('manda 1 real pra bia', 'pt')).toBe('BRS');
+    expect(amountCurrency('send 30 BRS to bia', 'en')).toBe('BRS');
+    expect(amountCurrency('manda 20 dólares pro joao', 'pt')).toBe('USDC');
+    expect(amountCurrency('manda 20 USDC pro joao', 'pt')).toBe('USDC');
+    expect(amountCurrency('manda $20 pro joao', 'pt')).toBe('USDC');
+    expect(amountCurrency('envía $20 a ana', 'es')).toBe('USDC');
+  });
+
+  it('drops an amount in a coin the app has not got, or with two coins named', () => {
+    expect(amountCurrency('send 20 euros to ana', 'en')).toBeNull();
+    expect(amountCurrency('manda 200 pesos a ana', 'es')).toBeNull();
+    expect(amountCurrency('20 dollars or 100 reais to ana', 'en')).toBeNull();
+  });
+
+  it('does not take "real" as reais without a number before it', () => {
+    expect(amountCurrency('manda 20 de verdade, é real', 'pt')).toBe('BRS');
+    expect(amountCurrency('send 20, for real', 'en')).toBe('USDC');
   });
 });
 

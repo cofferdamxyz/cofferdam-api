@@ -262,6 +262,37 @@ export function mentionsOtherCurrency(text: string): boolean {
   return OTHER_CURRENCY.test(text) && !USD.test(withoutBrl);
 }
 
+/** The coins an amount in the chat may be in: the app's revolver (workspace decision 0100 question 7). */
+export type AmountCurrency = 'USDC' | 'BRS';
+
+const BRS_MARKER = /(r\$|\breais\b|\d\s*real\b|\bbrs\b|\bbrl\b|\bcontos?\b)/i;
+const USD_MARKER = /(\$|\busdc?\b|\bdollars?\b|\bd[óo]lar(es)?\b|\bbucks?\b)/i;
+const FOREIGN_MARKER = /(€|£|¥|₹|\beuros?\b|\blibras?\b|\bpounds?\b|\bpesos?\b|\byen\b|\brupees?\b|\bsoles?\b)/i;
+
+/**
+ * The coin an amount in the latest message is in (the founder's ruling of
+ * 2026-11-26, decision 0100 question 7: a Portuguese "manda 20 pro joao" is
+ * reais now that Brazilians have a token, unless the user names dollars or
+ * USDC, and "send 20 reais" in English is BRS too). Read in code, never by a
+ * model:
+ *
+ * - a word or mark for reais (R$, reais, "1 real", BRS, BRL, conto) → BRS, in any language;
+ * - one for dollars ($, dollars, dólares, USD, USDC) → USDC, in any language;
+ * - both, or any other currency (euros, pesos, …) → null, and the amount is dropped;
+ * - none: Portuguese → BRS, English and Spanish → USDC ("$" and a bare number
+ *   stay dollars in Spanish: each peso would be its own stablecoin, decision
+ *   0037 (t)).
+ */
+export function amountCurrency(text: string, language: ChatLanguage): AmountCurrency | null {
+  const brs = BRS_MARKER.test(text);
+  // "R$" holds a "$": dollars are read with the reais marks taken out.
+  const usd = USD_MARKER.test(text.replace(/r\$/gi, ' '));
+  if (FOREIGN_MARKER.test(text) || (brs && usd)) return null;
+  if (brs) return 'BRS';
+  if (usd) return 'USDC';
+  return language === 'pt' ? 'BRS' : 'USDC';
+}
+
 /**
  * Whether the amount the action model read may be prefilled. The app has one
  * coin, USDC, and amounts read in it (decision 0046), so a bare number is the
@@ -612,7 +643,12 @@ export function runChat(opts: RunChatOptions): ReadableStream<Uint8Array> {
       for (const k of Object.keys(CHAT_ACTIONS.find((a) => a.id === id)?.fields ?? {})) {
         if (args[k] != null && args[k] !== '') fields[k] = args[k];
       }
-      if (!keepsAmount(latest)) delete fields.amount;
+      // The coin is the code's reading, never the model's: an amount whose coin the app has not got is dropped.
+      if (fields.amount !== undefined) {
+        const coin = amountCurrency(latest, language);
+        if (coin) fields.currency = coin;
+        else delete fields.amount;
+      }
       // Handles travel without the @; the app's validator checks the bare handle.
       if (typeof fields.recipient === 'string') fields.recipient = fields.recipient.replace(/^@/, '');
       return fields;
