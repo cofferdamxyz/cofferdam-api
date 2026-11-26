@@ -280,8 +280,12 @@ export function createCeremonyRoutes(deps: CeremonyRouteDeps) {
       // the attester's `CEREMONY_SIGNER=cdp` (`CDP_UNAVAILABLE`: no answer, 429
       // or 5xx; workspace decision 0090 item 12, cdp-setup.md E7). A CDP policy
       // refusal (`CDP_REFUSED`) stays a 502.
+      // The codes are anchored: the detail after them can carry CDP's
+      // `errorType`, which must never turn a refusal into a 503. A missing
+      // binding shows up as a TypeError's text, matched anywhere.
       const status =
-        /BAD_ATTESTER_KEY|BAD_CHAIN_ID_VAR|BAD_CEREMONY_SIGNATURE_VAR|BAD_CEREMONY_REGISTRY_VAR|CDP_UNAVAILABLE|is not a function|undefined/.test(message)
+        /^(BAD_ATTESTER_KEY|BAD_CHAIN_ID_VAR|BAD_CEREMONY_SIGNATURE_VAR|BAD_CEREMONY_REGISTRY_VAR|CDP_UNAVAILABLE):/.test(message) ||
+        /is not a function|undefined/.test(message)
           ? 503
           : 502;
       return c.json({ error: status === 503 ? 'attester_unavailable' : 'attester_rejected', message }, status);

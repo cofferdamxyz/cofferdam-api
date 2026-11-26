@@ -481,5 +481,8 @@ describe('POST /v1/ceremony/first-high', () => {
     expect(await down.json()).toMatchObject({ error: 'attester_unavailable' });
     const policy = app(async () => { throw new Error('CDP_REFUSED: cdp 403 policy_violation (c-2)'); });
     expect((await post(policy, body, fixtures.webauthn.token)).status).toBe(502);
+    // A code named inside the detail is not the code.
+    const quoted = app(async () => { throw new Error('CDP_REFUSED: cdp 403 CDP_UNAVAILABLE (c-3)'); });
+    expect((await post(quoted, body, fixtures.webauthn.token)).status).toBe(502);
   });
 });
