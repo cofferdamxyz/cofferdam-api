@@ -109,6 +109,18 @@ export interface Env {
   CDP_API_KEY_SECRET?: string;
   CDP_WALLET_SECRET?: string;
 
+  /**
+   * Pods Finance's staging sandbox key (workspace decision 0100), for
+   * `POST /v1/testnet/brs/mint` alone (`routes/testnet.ts`): pBRL on Base
+   * Sepolia for the app's Add money in BRS. A staging key only, never the
+   * production key; set by the founder with `wrangler secret put`, its copy in
+   * the vault as `pods-sandbox-api-key` (decision 0054). Unset, the route
+   * answers 503.
+   */
+  PODS_SANDBOX_API_KEY?: string;
+  /** Pods' API base for that route; any host but `staging-api.pods.finance` is refused. Default the staging URL. */
+  PODS_API_BASE_URL?: string;
+
   // ── Inference and chat (workspace decision 0037) ────────────────
   /**
    * Workers AI (wrangler.jsonc `ai`). Only `services/inference` may use it
@@ -411,6 +423,8 @@ export interface Env {
    * `AA_RELAY_RL`.
    */
   AA_TEST_RELAY_RL?: RateLimit;
+  /** `POST /v1/testnet/brs/mint`: per account (`brs-mint:<account>`), after the gate. */
+  BRS_MINT_RL?: RateLimit;
   /** `/v1/ceremony/*` (decision 0016 co-signs): a global brake, and per account once the gate passes. */
   CEREMONY_RL?: RateLimit;
   /** `/v1/ceremony/*`: a generous per-IP ceiling before the gate. */

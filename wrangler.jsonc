@@ -283,7 +283,10 @@
     // session and the High check pass (attachments:<account>); a phone tops up a small wallet.
     { "name": "ATTACHMENT_GLOBAL_RL", "namespace_id": "1126", "simple": { "limit": 600, "period": 60 } },
     { "name": "ATTACHMENT_IP_RL", "namespace_id": "1127", "simple": { "limit": 60, "period": 60 } },
-    { "name": "ATTACHMENT_RL", "namespace_id": "1128", "simple": { "limit": 10, "period": 60 } }
+    { "name": "ATTACHMENT_RL", "namespace_id": "1128", "simple": { "limit": 10, "period": 60 } },
+    // POST /v1/testnet/brs/mint (pBRL on Base Sepolia through Pods' sandbox,
+    // workspace decision 0100): per account, after the gate.
+    { "name": "BRS_MINT_RL", "namespace_id": "1129", "simple": { "limit": 4, "period": 60 } }
   ],
 
   // ─────────────────────────────────────────────────────────────────

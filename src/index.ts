@@ -43,6 +43,7 @@ import { workRoutes } from './routes/work.js';
 import { workListingRoutes } from './routes/workListing.js';
 import { redactVaultPath, vaultRoutes } from './routes/vault.js';
 import { attachmentRoutes } from './routes/attachments.js';
+import { testnetRoutes } from './routes/testnet.js';
 import { announcementsRoutes } from './routes/announcements.js';
 import { handlesRoutes, redactHandlePath } from './routes/handles.js';
 import { handlesWriteRoutes } from './routes/handlesWrite.js';
@@ -141,6 +142,7 @@ app.get('/', (c) => {
       { method: 'POST', path: '/v1/handshake/links' },
       { method: 'GET', path: '/v1/handshake/links/:token' },
       { method: 'GET', path: '/v1/announcements?after=' },
+      { method: 'POST', path: '/v1/testnet/brs/mint' },
     ],
     docs: 'https://github.com/cofferdamxyz/cofferdam-api/blob/main/README.md',
   });
@@ -164,6 +166,7 @@ app.route('/v1/work', workListingRoutes);
 app.route('/v1/jobs', jobsRoutes);
 app.route('/v1/vault', vaultRoutes);
 app.route('/v1/messages/attachments', attachmentRoutes);
+app.route('/v1/testnet', testnetRoutes);
 app.route('/v1/handles', handlesRoutes);
 app.route('/v1/handles', handlesWriteRoutes);
 app.route('/v1/handshake', handshakeRoutes);
