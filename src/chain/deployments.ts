@@ -141,6 +141,15 @@ export const SEPOLIA_DEPLOYMENTS = {
   MockUSDC: {
     address: '0x8c05Df95F91De2D70e0436B774fc9D1f86FF1f51',
   },
+  /**
+   * BRS on Base Sepolia: Pods' test token pBRL (18 decimals), not ours; only
+   * Pods' staging sandbox mints it. On the escrow factory's allowlist
+   * (workspace decision 0100 question 7), recorded as `BRS` in
+   * `deployments/baseSepolia.json` since the redeploy of 2026-11-26.
+   */
+  BRS: {
+    address: '0x9762f60740142cF11C0F32C6e24cd3e86016C0f2',
+  },
 
   // ── Account layer (decisions 0016 and 0023), deployed on Base Sepolia 2026-10-14 ──
   // deploy-auth.ts from CofferdamDev, which owns both registries and the
