@@ -8,7 +8,8 @@ import tseslint from 'typescript-eslint';
 const MAC_LANES = ['src/routes/chat.ts', 'src/services/chat/**', 'src/services/inference/**'];
 
 export default tseslint.config(
-  { ignores: ['node_modules/**', '**/.wrangler/**', 'dist/**'] },
+  // `.claude/**`: the session worktrees, full checkouts inside this one on the Mac.
+  { ignores: ['node_modules/**', '**/.wrangler/**', 'dist/**', '.claude/**'] },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {
