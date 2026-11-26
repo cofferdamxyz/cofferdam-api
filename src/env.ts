@@ -103,13 +103,33 @@ export interface Env {
    * secret as base64 of seed ‖ public key. Signing only: never the Manage
    * (modify policies) restriction, never export (decision 0090, item 10).
    * With `CDP_WALLET_SECRET` (the project's Wallet Secret, base64 PKCS#8),
-   * read by `services/cdp/client.ts`, which nothing routes to yet (E4 puts
-   * the registrar and the relayer behind a switch). Set by the founder with
-   * `wrangler secret put`, copies in the vault (decision 0054).
+   * read by `services/cdp/client.ts` for a role switched to `cdp` (E4,
+   * `services/hotSigner.ts`). Set by the founder with `wrangler secret put`,
+   * copies in the vault (decision 0054).
    */
   CDP_API_KEY_ID?: string;
   CDP_API_KEY_SECRET?: string;
   CDP_WALLET_SECRET?: string;
+  /**
+   * Who signs and sends the relay's `handleOps` (E4): `key` (default,
+   * `RELAYER_PRIVATE_KEY`) or `cdp` (the CDP account `RELAYER_CDP_ADDRESS`
+   * with the three CDP secrets). Any other value, or `cdp` without its
+   * address or secrets, answers `503 relayer_not_configured`: no fallback key.
+   * On Base Sepolia the paymaster sponsors only its owner-set relayer
+   * (decision 0071), so switching to `cdp` there needs `setRelayer` first.
+   */
+  RELAYER_SIGNER?: string;
+  /** The relayer's CDP account address (not a secret), read only under `RELAYER_SIGNER=cdp`. */
+  RELAYER_CDP_ADDRESS?: string;
+  /**
+   * Who signs for the handle anchor and pays its gas (E4): `key` (default,
+   * `HANDLE_REGISTRAR_KEY`) or `cdp` (`HANDLE_REGISTRAR_CDP_ADDRESS` with the
+   * CDP secrets). Not configured, every signing route answers `503
+   * anchor_unconfigured` and the relay sends nothing.
+   */
+  HANDLE_REGISTRAR_SIGNER?: string;
+  /** The registrar's CDP account address (not a secret), read only under `HANDLE_REGISTRAR_SIGNER=cdp`. */
+  HANDLE_REGISTRAR_CDP_ADDRESS?: string;
 
   /**
    * Pods Finance's staging sandbox key (workspace decision 0100), for
@@ -284,9 +304,9 @@ export interface Env {
    * Private key for the relayer account on Base Sepolia: submits ERC-4337
    * `handleOps` for the app's sponsored ops (`/v1/aa/user-operation`, refunded
    * by the paymaster).
-   * Same account used for the CDP Paymaster on Sepolia.
-   * Set via `wrangler secret put RELAYER_PRIVATE_KEY`.
-   * Migration path: replace with CDP Server-Side Wallets for production.
+   * Set via `wrangler secret put RELAYER_PRIVATE_KEY`. Read only while
+   * `RELAYER_SIGNER` is `key` (the default); production signs through CDP
+   * (decision 0090 item 3).
    */
   RELAYER_PRIVATE_KEY?: string;
 

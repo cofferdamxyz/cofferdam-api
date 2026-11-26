@@ -51,15 +51,12 @@ import { Hono } from 'hono';
 import {
   BaseError,
   ContractFunctionRevertedError,
-  createWalletClient,
   decodeErrorResult,
   encodeFunctionData,
-  http,
   type Address,
   type Chain,
   type Hex,
 } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 
 import { getBaseClient, getBaseSepoliaClient, type ChainClient } from '../chain/client.js';
@@ -77,7 +74,8 @@ import {
   type UserOpPolicy,
 } from '../services/userOp.js';
 import { identityLogLine } from '../services/identityLog.js';
-import { SendRefusedError, sendWithRetry } from '../services/relaySend.js';
+import { hotSigner, keySpec, signerMissing, signerSpecOf, type SignerSpec } from '../services/hotSigner.js';
+import { SendRefusedError } from '../services/relaySend.js';
 import {
   GAS_PRICE_ORACLE,
   GAS_PRICE_ORACLE_ABI,
@@ -144,30 +142,39 @@ export interface AaRouteDeps {
 export interface RelayLane {
   readonly chainId: typeof BASE_SEPOLIA_CHAIN_ID | typeof BASE_MAINNET_CHAIN_ID;
   readonly rpcUrl: string;
-  readonly privateKey: Hex;
+  /** Who signs and sends `handleOps`: a raw key or a CDP account (`services/hotSigner.ts`). */
+  readonly signer: SignerSpec;
   /** The identity registry whose `check` view pre-flights a bind, relink or rebind (none on Sepolia). */
   readonly identityRegistry?: Address;
   /** The op repays the L1 data fee through `preVerificationGas`, and the relayer signs at the op's own price. */
   readonly opPaysL1?: boolean;
 }
 
-/** Base Sepolia's lane: `BASE_SEPOLIA_RPC_URL` and `RELAYER_PRIVATE_KEY`, nothing added. */
-export function sepoliaLane(env: Env): RelayLane {
+/**
+ * Base Sepolia's lane: `BASE_SEPOLIA_RPC_URL` and the relayer `RELAYER_SIGNER`
+ * picks (`RELAYER_PRIVATE_KEY` by default, a CDP account under `cdp`), nothing
+ * added. Null while that signer is not configured.
+ */
+export function sepoliaLane(env: Env): RelayLane | null {
+  const signer = signerSpecOf(env, 'relayer');
+  if (!signer) return null;
   return {
     chainId: BASE_SEPOLIA_CHAIN_ID,
     rpcUrl: env.BASE_SEPOLIA_RPC_URL ?? DEFAULT_BASE_SEPOLIA_RPC_URL,
-    privateKey: env.RELAYER_PRIVATE_KEY as Hex,
+    signer,
   };
 }
 
 /** The Base mainnet test lane, or null while the key or the mainnet switch is off. */
 export function testLane(env: Env, config: TestRelayConfig): RelayLane | null {
   const rpcUrl = chainRpcUrl(env, BASE_MAINNET_CHAIN_ID);
-  if (!rpcUrl || !env.RELAYER_MAINNET_TEST_PRIVATE_KEY) return null;
+  // The M2 test lane keeps its own raw key: it ends with M2 and never moves to CDP.
+  const signer = keySpec(env.RELAYER_MAINNET_TEST_PRIVATE_KEY);
+  if (!rpcUrl || !signer) return null;
   return {
     chainId: BASE_MAINNET_CHAIN_ID,
     rpcUrl,
-    privateKey: env.RELAYER_MAINNET_TEST_PRIVATE_KEY as Hex,
+    signer,
     identityRegistry: config.registry,
     opPaysL1: true,
   };
@@ -393,13 +400,18 @@ export async function submitUserOperation(
   op: PackedUserOperationWire,
   admit: () => Promise<void> = async () => {},
   receiptWaitMs: number = RECEIPT_WAIT_MS,
-  lane: RelayLane = sepoliaLane(env),
+  lane: RelayLane | null = sepoliaLane(env),
 ): Promise<RelayOutcome> {
+  if (!lane) throw new UserOpSubmitError('relay_failed', signerMissing(env, 'relayer'));
   const { rpcUrl } = lane;
-  const relayer = privateKeyToAccount(lane.privateKey);
   const publicClient: ChainClient =
     lane.chainId === BASE_SEPOLIA_CHAIN_ID ? (getBaseSepoliaClient(rpcUrl) as unknown as ChainClient) : getBaseClient(rpcUrl);
   const chain: Chain = lane.chainId === BASE_SEPOLIA_CHAIN_ID ? baseSepolia : base;
+  const relayer = hotSigner(lane.signer, {
+    chain,
+    rpcUrl,
+    sendRaw: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
+  });
   if (lane.identityRegistry) await registryPreflight(publicClient, lane.identityRegistry, op);
   let request;
   try {
@@ -408,7 +420,7 @@ export async function submitUserOperation(
       abi: ENTRY_POINT_ABI,
       functionName: 'handleOps',
       args: [[op], relayer.address],
-      account: relayer,
+      account: relayer.address,
     }));
   } catch (err) {
     const reason = revertReason(err);
@@ -419,25 +431,17 @@ export async function submitUserOperation(
   if (lane.opPaysL1) await l1FeePreflight(publicClient, op, data);
   await preflightExecution(publicClient, relayer.address, data, op);
   await admit();
-  const wallet = createWalletClient({ account: relayer, chain, transport: http(rpcUrl) });
   // The mainnet test lane signs at the op's own price, so the EntryPoint's
   // repayment matches what the relayer's transaction pays for L2 gas.
   const fees = lane.opPaysL1 ? unpackGasFees(op.gasFees) : null;
   let txHash: Hex;
   try {
-    txHash = await sendWithRetry({
-      sign: async () => {
-        const prepared = await wallet.prepareTransactionRequest({
-          to: request.address,
-          data,
-          chain,
-          ...(fees ? { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas } : {}),
-        });
-        return wallet.signTransaction(prepared);
-      },
-      send: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
-      onAttemptError: (attempt, cls, reason) => logRelay('aa_send_refused', op, { attempt, class: cls, reason }),
-    });
+    // A raw key signs once and resends the same bytes; a CDP account resends
+    // under one idempotency key and never signs a second transaction.
+    txHash = await relayer.sendTransaction(
+      { to: request.address, data, ...(fees ? { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas } : {}) },
+      { onAttemptError: (attempt, cls, reason) => logRelay('aa_send_refused', op, { attempt, class: cls, reason }) },
+    );
   } catch (err) {
     // Refused as rate-limited on every attempt: the node took nothing, so the client may report a plain failure
     // (a 4xx) instead of searching for an op that was never sent (`relay_failed`, 502, may have been sent).
@@ -534,10 +538,11 @@ export function createAaRoutes(deps: AaRouteDeps) {
       }
       lane = test;
     } else {
-      if (!c.env.RELAYER_PRIVATE_KEY) {
-        return c.json({ ok: false, error: 'relayer_not_configured', message: 'RELAYER_PRIVATE_KEY not set' }, 503);
+      const sepolia = sepoliaLane(c.env);
+      if (!sepolia) {
+        return c.json({ ok: false, error: 'relayer_not_configured', message: signerMissing(c.env, 'relayer') }, 503);
       }
-      lane = sepoliaLane(c.env);
+      lane = sepolia;
     }
     try {
       // The per-sender bucket is counted only once policy and the handleOps

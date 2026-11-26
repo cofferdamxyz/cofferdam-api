@@ -70,6 +70,15 @@
     // test deployment only), AA_MAINNET_TEST_ACCOUNTS and the secret
     // RELAYER_MAINNET_TEST_PRIVATE_KEY.
     "AA_MAINNET_TEST_RELAY": "false",
+    // Who signs the relay and the handle registrar (workspace decision 0090,
+    // cdp-setup.md E4; src/services/hotSigner.ts): "key" (the raw secrets
+    // RELAYER_PRIVATE_KEY and HANDLE_REGISTRAR_KEY) or "cdp" (the CDP accounts
+    // RELAYER_CDP_ADDRESS and HANDLE_REGISTRAR_CDP_ADDRESS, set here, with the
+    // secrets CDP_API_KEY_ID, CDP_API_KEY_SECRET and CDP_WALLET_SECRET). No
+    // fallback: "cdp" without them answers 503. Sepolia's relayer under "cdp"
+    // also needs the Sepolia paymaster's setRelayer (decision 0071).
+    "RELAYER_SIGNER": "key",
+    "HANDLE_REGISTRAR_SIGNER": "key",
     // Celo mainnet, read-only: Self.xyz's identity registry lives there and
     // the attester's bind gate checks every proof against it. Must agree with
     // cofferdam-attester's CELO_RPC_URL chain (42220).
