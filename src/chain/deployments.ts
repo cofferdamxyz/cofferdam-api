@@ -69,11 +69,13 @@ export const SEPOLIA_DEPLOYMENTS = {
   },
   /**
    * Escrow factory — deploys one spot escrow per job via CREATE2
-   * (`createSpotEscrow(policy, salt)`). This is the entry point; individual
-   * escrows are not pre-deployed.
+   * (`createSpotEscrow(token, policy, salt)`, the token from the factory's
+   * allowlist: MockUSDC and pBRL on Sepolia; redeployed 2026-11-26, workspace
+   * decision 0100 question 7). This is the entry point; individual escrows are
+   * not pre-deployed.
    */
   EscrowFactory: {
-    address: '0x37553ab271a0078F95032B35F5494Fbf25206Fd2',
+    address: '0x431f869275bb0da7CF5050Ac8c87f7C7E495cB66',
   },
   /**
    * A single spot-escrow instance. NOTE: the shipped architecture is
@@ -82,7 +84,7 @@ export const SEPOLIA_DEPLOYMENTS = {
    * Resolve per-job addresses with `predictSpotEscrowAddress(policy, salt)`.
    */
   CofferdamSpotEscrow: {
-    address: '0xe6dCFc3Af1cB944b0Aa03f27325E7E47e390d9b1',
+    address: '0x7aDB70d319262fF4660163a62868aaBa0050475f',
   },
   /**
    * v2 — allow-list of trusted Self TEE attester ECDSA addresses.
