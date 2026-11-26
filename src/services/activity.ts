@@ -2,16 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Activity service — USDC Transfer events for a wallet address.
+ * Activity service — ERC-20 Transfer events of one activity token for a wallet
+ * address. The routes take the token by address (`token=0x…`, the coin the
+ * app's revolver is on, workspace decision 0100 question 7); the plane serves
+ * only the tokens of `ACTIVITY_TOKENS`, and the chain's first entry (USDC) when
+ * none is named.
  *
- * - Base Sepolia (84532): the plane's own record, fed by a Coinbase Developer
- *   Platform onchain webhook (`activityStore.ts`, workspace decision 0032),
- *   once `ACTIVITY_INDEX_FROM_BLOCK` and the `ACTIVITY_DO` binding are set.
- *   Blocks older than the subscription, and every request while the store is
- *   off, come from chunked `eth_getLogs` scans (`activityScan.ts`): the public
- *   node caps one call at 201 blocks, so scans run in 200-block chunks within a
- *   per-request call budget. SQD Portal's base-sepolia dataset is not
- *   real-time, so it cannot serve recent testnet activity.
+ * - Base Sepolia (84532): for a webhook-fed token (`webhookFed`, MockUSDC
+ *   today), the plane's own record, fed by a Coinbase Developer Platform
+ *   onchain webhook (`activityStore.ts`, workspace decision 0032), once
+ *   `ACTIVITY_INDEX_FROM_BLOCK` and the `ACTIVITY_DO` binding are set. Blocks
+ *   older than the subscription, every request while the store is off, and
+ *   every token no webhook feeds (pBRL) come from chunked `eth_getLogs` scans
+ *   (`activityScan.ts`): the public node caps one call at 201 blocks, so scans
+ *   run in 200-block chunks within a per-request call budget. SQD Portal's
+ *   base-sepolia dataset is not real-time, so it cannot serve recent testnet
+ *   activity.
  * - Base Mainnet (8453): SQD Portal Stream API (real-time dataset, 7-day
  *   lookback). The public Portal is rate-limited and used without an API key;
  *   on 429/529/502/503 or a network failure the same query runs as a chunked
@@ -33,26 +39,72 @@ import {
   type TransferLog,
 } from './activityScan.js';
 import type { ActivityStore, StoredTransfer } from './activityStore.js';
+import { SEPOLIA_DEPLOYMENTS } from '../chain/deployments.js';
 
-/** USDC token addresses per chain. */
-const USDC_ADDRESSES: Record<number, { address: string; decimals: number }> = {
-  // MockUSDC on Base Sepolia (from base-contracts/deployments/baseSepolia.json)
-  84532: { address: '0x8c05Df95F91De2D70e0436B774fc9D1f86FF1f51', decimals: 6 },
-  // Native USDC on Base Mainnet
-  8453: { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
+/** A token the activity routes report on. */
+export interface ActivityToken {
+  symbol: string;
+  /** EIP-55 address. */
+  address: `0x${string}`;
+  /** The token's on-chain decimals; `valueFormatted` divides by 10^decimals. */
+  decimals: number;
+  /**
+   * Whether the CDP webhook feeds the `ActivityDO` store with this token's
+   * transfers. Only such a token is read from the store; any other is scanned.
+   * Flip it only once the webhook's subscription filters on the contract too.
+   */
+  webhookFed?: boolean;
+}
+
+/**
+ * The tokens the activity routes serve, per chain; the first is the default
+ * (USDC), served when a request names no token. A table rather than any
+ * address a caller sends: the plane never scans arbitrary contracts. Adding a
+ * token is one line here (the app's own table is cofferdam-app
+ * `src/lib/tokens.ts`).
+ */
+export const ACTIVITY_TOKENS: Readonly<Record<number, readonly ActivityToken[]>> = {
+  84532: [
+    // MockUSDC (base-contracts/deployments/baseSepolia.json), fed by the CDP webhook.
+    { symbol: 'USDC', address: SEPOLIA_DEPLOYMENTS.MockUSDC.address, decimals: 6, webhookFed: true },
+    // Pods' pBRL, BRS's stand-in on Base Sepolia (18 decimals).
+    { symbol: 'pBRL', address: '0x9762f60740142cF11C0F32C6e24cd3e86016C0f2', decimals: 18 },
+  ],
+  8453: [
+    // Native Circle USDC.
+    { symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
+    // BRS, Nora's Brazilian real stablecoin.
+    { symbol: 'BRS', address: '0x0000006238e3C7797Ae71827da303560bae1B125', decimals: 6 },
+  ],
 };
 
-function usdcFor(chainId: number): { address: string; decimals: number } {
-  return USDC_ADDRESSES[chainId] ?? USDC_ADDRESSES[84532]!;
+/** The default token of a chain (USDC); an unknown chain falls back to Base Sepolia's, as before tokens. */
+export function defaultActivityToken(chainId: number): ActivityToken {
+  return ACTIVITY_TOKENS[chainId]?.[0] ?? ACTIVITY_TOKENS[84532]![0]!;
 }
 
-/** The token the activity routes report on for a chain, or null for an unknown chain. */
-export function activityTokenFor(chainId: number): string | null {
-  return USDC_ADDRESSES[chainId]?.address ?? null;
+/** The table's token at `address` on `chainId` (any case), or null when the plane does not serve it. */
+export function findActivityToken(chainId: number, address: string): ActivityToken | null {
+  const wanted = address.toLowerCase();
+  return ACTIVITY_TOKENS[chainId]?.find((t) => t.address.toLowerCase() === wanted) ?? null;
 }
 
-/** Chains whose activity the webhook-fed store records. */
-export const STORE_CHAINS = new Set([84532]);
+/** Whether the CDP webhook's transfers of `address` on `chainId` belong in the store. */
+export function isWebhookFedToken(chainId: number, address: string): boolean {
+  return findActivityToken(chainId, address)?.webhookFed === true;
+}
+
+/** Chains whose activity the webhook-fed store records: those with a webhook-fed token. */
+export const STORE_CHAINS = new Set(
+  Object.entries(ACTIVITY_TOKENS)
+    .filter(([, tokens]) => tokens.some((t) => t.webhookFed))
+    .map(([chainId]) => Number(chainId)),
+);
+
+/** Whether a request for `token` reads the store (a webhook-fed token, the store bound and indexing). */
+function readsStore(chainId: number, token: ActivityToken, opts: ActivityOptions): boolean {
+  return STORE_CHAINS.has(chainId) && token.webhookFed === true && opts.store != null && opts.indexFromBlock != null;
+}
 
 /** ERC-20 Transfer event signature: keccak256("Transfer(address,address,uint256)"). */
 const TRANSFER_TOPIC =
@@ -160,12 +212,16 @@ export interface ActivityOptions {
   store?: ActivityStore;
   /** First block the store is complete from (the subscription's start). */
   indexFromBlock?: number;
+  /** The token to report on (an `ACTIVITY_TOKENS` entry); the chain's default when absent. */
+  token?: ActivityToken;
+  /** A log reader in place of viem's over `rpcUrl` (the tests'). */
+  logReader?: (token: ActivityToken) => LogReader;
 }
 
 function toActivityTx(
   t: { hash: string; logIndex: number; blockNumber: number; timestamp: number; from: string; to: string; value: bigint | string },
   addr: string,
-  token: { address: string; decimals: number },
+  token: ActivityToken,
 ): ActivityTx {
   const value = BigInt(t.value);
   return {
@@ -184,15 +240,19 @@ function toActivityTx(
 
 const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
 
-/** A `LogReader` over viem for the chain's USDC contract. */
-function viemReader(chainId: number, rpcUrl: string | undefined): LogReader {
-  const token = usdcFor(chainId);
+/** The log reader for `token`: the tests' when given, else viem over the chain's RPC. */
+function readerFor(chainId: number, token: ActivityToken, opts: ActivityOptions): LogReader {
+  return opts.logReader ? opts.logReader(token) : viemReader(chainId, opts.rpcUrl, token);
+}
+
+/** A `LogReader` over viem for one token contract. */
+function viemReader(chainId: number, rpcUrl: string | undefined, token: ActivityToken): LogReader {
   const client = createPublicClient({ chain: chainId === 8453 ? base : baseSepolia, transport: http(rpcUrl) });
   return {
     head: async () => Number(await client.getBlockNumber()),
     transfers: async (fromBlock, toBlock): Promise<TransferLog[]> => {
       const logs = await client.getLogs({
-        address: token.address as `0x${string}`,
+        address: token.address,
         event: TRANSFER_EVENT,
         fromBlock: BigInt(fromBlock),
         toBlock: BigInt(toBlock),
@@ -279,17 +339,18 @@ export async function checkActivity(
   chainId: number = 84532,
   opts: ActivityOptions = {},
 ): Promise<ActivityCheckResult> {
-  if (STORE_CHAINS.has(chainId) && opts.store && opts.indexFromBlock != null) {
-    const latest = await opts.store.latestBlock(chainId, address);
+  const token = opts.token ?? defaultActivityToken(chainId);
+  if (readsStore(chainId, token, opts)) {
+    const latest = await opts.store!.latestBlock(chainId, address, token.address);
     return { hasNew: latest > sinceBlock, latestBlock: Math.max(latest, sinceBlock) };
   }
   if (RPC_FALLBACK_CHAINS.has(chainId)) {
-    return checkActivityViaRpc(address, sinceBlock, chainId, opts);
+    return checkActivityViaRpc(address, sinceBlock, chainId, token, opts);
   }
   // The public RPC fallback uses the chain's default endpoint: the Sepolia URLs are Sepolia-only.
   return withRpcFallback(
-    () => checkActivityViaPortal(portalUrl, address, sinceBlock, chainId),
-    () => checkActivityViaRpc(address, sinceBlock, chainId, { logRange: opts.logRange }),
+    () => checkActivityViaPortal(portalUrl, address, sinceBlock, chainId, token),
+    () => checkActivityViaRpc(address, sinceBlock, chainId, token, { logRange: opts.logRange, logReader: opts.logReader }),
   );
 }
 
@@ -298,9 +359,10 @@ async function checkActivityViaRpc(
   address: string,
   sinceBlock: number,
   chainId: number,
+  token: ActivityToken,
   opts: ActivityOptions,
 ): Promise<ActivityCheckResult> {
-  const reader = viemReader(chainId, opts.rpcUrl);
+  const reader = readerFor(chainId, token, opts);
   const latestBlock = await reader.head();
   const hasNew = await scanForwardHasTransfer(reader, address, {
     from: sinceBlock + 1,
@@ -317,19 +379,20 @@ async function checkActivityViaPortal(
   address: string,
   sinceBlock: number,
   chainId: number,
+  token: ActivityToken,
 ): Promise<ActivityCheckResult> {
   const portalBase = portalUrlFor(chainId, portalUrl);
   const addr = address.toLowerCase();
   const paddedAddr = padAddressToTopic(addr);
-  const token = usdcFor(chainId);
+  const contract = token.address.toLowerCase();
 
   const body = {
     type: 'evm' as const,
     fromBlock: sinceBlock + 1,
     fields: { block: { number: true } },
     logs: [
-      { address: [token.address], topic0: [TRANSFER_TOPIC], topic1: [paddedAddr] },
-      { address: [token.address], topic0: [TRANSFER_TOPIC], topic2: [paddedAddr] },
+      { address: [contract], topic0: [TRANSFER_TOPIC], topic1: [paddedAddr] },
+      { address: [contract], topic0: [TRANSFER_TOPIC], topic2: [paddedAddr] },
     ],
   };
 
@@ -383,16 +446,19 @@ export async function getActivity(
   opts: ActivityOptions = {},
   toBlock?: number,
 ): Promise<ActivityResult> {
-  if (STORE_CHAINS.has(chainId) && opts.store && opts.indexFromBlock != null) {
-    const storeOpts = { ...opts, store: opts.store, indexFromBlock: opts.indexFromBlock };
-    return getActivityWithStore(address, limit, fromBlock, chainId, storeOpts, toBlock);
+  const token = opts.token ?? defaultActivityToken(chainId);
+  if (readsStore(chainId, token, opts)) {
+    const storeOpts = { ...opts, store: opts.store!, indexFromBlock: opts.indexFromBlock! };
+    return getActivityWithStore(address, limit, fromBlock, chainId, token, storeOpts, toBlock);
   }
+  // A token no webhook feeds is scanned, never read from the store: the store
+  // holds none of its transfers, and an empty answer would read as none.
   if (RPC_FALLBACK_CHAINS.has(chainId)) {
-    return getActivityViaRpc(address, limit, fromBlock, chainId, opts, toBlock);
+    return getActivityViaRpc(address, limit, fromBlock, chainId, token, opts, toBlock);
   }
   return withRpcFallback(
-    () => getActivityViaPortal(portalUrl, address, limit, fromBlock, chainId, toBlock),
-    () => getActivityViaRpc(address, limit, fromBlock, chainId, { logRange: opts.logRange }, toBlock),
+    () => getActivityViaPortal(portalUrl, address, limit, fromBlock, chainId, token, toBlock),
+    () => getActivityViaRpc(address, limit, fromBlock, chainId, token, { logRange: opts.logRange, logReader: opts.logReader }, toBlock),
   );
 }
 
@@ -405,23 +471,23 @@ async function getActivityWithStore(
   limit: number,
   fromBlock: number | undefined,
   chainId: number,
+  token: ActivityToken,
   opts: ActivityOptions & { store: ActivityStore; indexFromBlock: number },
   toBlock?: number,
 ): Promise<ActivityResult> {
   const addr = address.toLowerCase();
-  const token = usdcFor(chainId);
   const cap = Math.min(limit, MAX_RESULTS);
   const lower = Math.max(0, fromBlock ?? 0);
   const upper = toBlock != null && toBlock >= 0 ? toBlock : null;
 
   let stored: StoredTransfer[] = [];
   if (upper == null || upper >= opts.indexFromBlock) {
-    stored = (await opts.store.list(chainId, addr, cap, upper)).filter(
+    stored = (await opts.store.list(chainId, addr, token.address, cap, upper)).filter(
       (t) => t.blockNumber >= Math.max(lower, opts.indexFromBlock),
     );
   }
   const txs = stored.map((t) => toActivityTx(t, addr, token));
-  const latest = upper == null ? await opts.store.latestBlock(chainId, addr) : undefined;
+  const latest = upper == null ? await opts.store.latestBlock(chainId, addr, token.address) : undefined;
   const headBlock = latest != null ? Math.max(latest, opts.indexFromBlock) : undefined;
 
   if (txs.length >= cap) {
@@ -431,7 +497,7 @@ async function getActivityWithStore(
   if (rpcUpper < lower) {
     return { transactions: txs, cursor: null, headBlock };
   }
-  const older = await getActivityViaRpc(addr, cap - txs.length, lower, chainId, opts, rpcUpper);
+  const older = await getActivityViaRpc(addr, cap - txs.length, lower, chainId, token, opts, rpcUpper);
   return { transactions: [...txs, ...older.transactions], cursor: older.cursor, headBlock };
 }
 
@@ -444,12 +510,12 @@ async function getActivityViaRpc(
   limit: number,
   fromBlock: number | undefined,
   chainId: number,
+  token: ActivityToken,
   opts: ActivityOptions,
   toBlockOverride?: number,
 ): Promise<ActivityResult> {
   const addr = address.toLowerCase();
-  const token = usdcFor(chainId);
-  const reader = viemReader(chainId, opts.rpcUrl);
+  const reader = readerFor(chainId, token, opts);
   const head = await reader.head();
   const upper = toBlockOverride != null && toBlockOverride >= 0 ? Math.min(toBlockOverride, head) : head;
 
@@ -477,12 +543,13 @@ async function getActivityViaPortal(
   limit: number,
   fromBlock: number | undefined,
   chainId: number,
+  token: ActivityToken,
   toBlockOverride?: number,
 ): Promise<ActivityResult> {
   const portalBase = portalUrlFor(chainId, portalUrl);
   const addr = address.toLowerCase();
   const paddedAddr = padAddressToTopic(addr);
-  const token = usdcFor(chainId);
+  const contract = token.address.toLowerCase();
 
   const startBlock =
     fromBlock != null && fromBlock >= 0
@@ -505,8 +572,8 @@ async function getActivityViaPortal(
       },
     },
     logs: [
-      { address: [token.address], topic0: [TRANSFER_TOPIC], topic1: [paddedAddr] },
-      { address: [token.address], topic0: [TRANSFER_TOPIC], topic2: [paddedAddr] },
+      { address: [contract], topic0: [TRANSFER_TOPIC], topic1: [paddedAddr] },
+      { address: [contract], topic0: [TRANSFER_TOPIC], topic2: [paddedAddr] },
     ],
   };
 
@@ -588,21 +655,7 @@ async function getActivityViaPortal(
 
   const capped = unique.slice(0, cap);
 
-  const result: ActivityTx[] = capped.map((t) => {
-    const value = BigInt(t.data);
-    return {
-      hash: t.hash,
-      direction: (t.from === addr ? 'out' : 'in') as 'in' | 'out',
-      from: t.from,
-      to: t.to,
-      value: value.toString(),
-      valueFormatted: Number(value) / 10 ** token.decimals,
-      tokenAddress: token.address.toLowerCase(),
-      blockNumber: t.blockNumber,
-      timestamp: t.timestamp,
-      logIndex: t.logIndex,
-    };
-  });
+  const result: ActivityTx[] = capped.map((t) => toActivityTx({ ...t, value: BigInt(t.data) }, addr, token));
 
   const cursor = result.length > 0 ? result[result.length - 1]!.blockNumber : null;
   return { transactions: result, cursor };

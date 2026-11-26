@@ -6,11 +6,14 @@ import { BASE_SEPOLIA_CHAIN_ID } from '../chain/deployments.js';
 import type { Env } from '../env.js';
 import { ActivityRpcError } from '../services/activityScan.js';
 import {
-  activityTokenFor,
   checkActivity,
+  defaultActivityToken,
+  findActivityToken,
   getActivity,
+  isWebhookFedToken,
   STORE_CHAINS,
   type ActivityOptions,
+  type ActivityToken,
 } from '../services/activity.js';
 import {
   DurableActivityStore,
@@ -44,6 +47,17 @@ export function activityOptions(env: Env, chainId: number): ActivityOptions {
   };
 }
 
+/**
+ * The token a request reports on: the chain's default (USDC) when `token` is
+ * absent, as older app builds send none; else the `ACTIVITY_TOKENS` entry at
+ * that address on the chain, or null (the route answers 400 `unsupported_token`).
+ */
+export function requestedToken(chainId: number, param: string | undefined): ActivityToken | null {
+  if (param == null || param === '') return defaultActivityToken(chainId);
+  if (!/^0x[a-fA-F0-9]{40}$/.test(param)) return null;
+  return findActivityToken(chainId, param);
+}
+
 function failure(c: Context<{ Bindings: Env }>, error: string, err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
   // An RPC refusal is upstream (502); anything else is ours (500). The app keeps its cache on both.
@@ -51,11 +65,16 @@ function failure(c: Context<{ Bindings: Env }>, error: string, err: unknown) {
 }
 
 /**
- * GET /v1/activity?address=0x...&limit=20[&fromBlock=&toBlock=&chainId=]
+ * GET /v1/activity?address=0x...&limit=20[&fromBlock=&toBlock=&chainId=&token=0x...]
  *
- * Recent USDC transfers (incoming and outgoing) for an address, newest first,
- * with `cursor` (the next page's `toBlock`) and `headBlock` (the newest block
- * covered). Sepolia reads the webhook-fed store, then chunked RPC; mainnet
+ * Recent transfers (incoming and outgoing) of one token for an address, newest
+ * first, with `cursor` (the next page's `toBlock`) and `headBlock` (the newest
+ * block covered). `token` is the address of the coin the app's revolver is on
+ * (workspace decision 0100 question 7), one of the chain's `ACTIVITY_TOKENS`
+ * (else 400 `unsupported_token`); absent, USDC. Each transaction's
+ * `tokenAddress` is that token, lower-case, and `valueFormatted` uses its
+ * decimals. Sepolia reads the webhook-fed store for a webhook-fed token
+ * (MockUSDC), then chunked RPC, and scans any other token (pBRL); mainnet
  * reads SQD Portal (workspace decisions 0009 and 0032).
  */
 activityRoutes.get('/', async (c) => {
@@ -80,6 +99,11 @@ activityRoutes.get('/', async (c) => {
   const toBlockParam = c.req.query('toBlock');
   const toBlock = toBlockParam != null && /^\d+$/.test(toBlockParam) ? parseInt(toBlockParam, 10) : undefined;
 
+  const token = requestedToken(chainId, c.req.query('token'));
+  if (!token) {
+    return c.json({ ok: false, error: 'unsupported_token' }, 400);
+  }
+
   try {
     const result = await getActivity(
       c.env.SQD_PORTAL_URL,
@@ -87,13 +111,14 @@ activityRoutes.get('/', async (c) => {
       limit,
       fromBlock,
       chainId,
-      activityOptions(c.env, chainId),
+      { ...activityOptions(c.env, chainId), token },
       toBlock,
     );
     return c.json({
       ok: true,
       chainId,
       address: address.toLowerCase(),
+      token: token.address.toLowerCase(),
       transactions: result.transactions,
       cursor: result.cursor,
       headBlock: result.headBlock ?? null,
@@ -104,11 +129,13 @@ activityRoutes.get('/', async (c) => {
 });
 
 /**
- * GET /v1/activity/check?address=0x...&sinceBlock=12345
+ * GET /v1/activity/check?address=0x...&sinceBlock=12345[&chainId=&token=0x...]
  *
- * Whether any transfer touching the address landed after `sinceBlock`, and
- * the newest block seen. The app serves its cache when `hasNew` is false and
- * keeps `latestBlock` as its next `sinceBlock`.
+ * Whether any transfer of the token touching the address landed after
+ * `sinceBlock`, and the newest block seen. `token` as on `GET /v1/activity`
+ * (absent, USDC; a token off the chain's table, 400 `unsupported_token`). The
+ * app serves its cache when `hasNew` is false and keeps `latestBlock` as its
+ * next `sinceBlock`, per token.
  */
 activityRoutes.get('/check', async (c) => {
   const address = c.req.query('address');
@@ -128,12 +155,21 @@ activityRoutes.get('/check', async (c) => {
   const chainIdParam = c.req.query('chainId');
   const chainId = chainIdParam ? parseInt(chainIdParam, 10) : DEFAULT_CHAIN_ID;
 
+  const token = requestedToken(chainId, c.req.query('token'));
+  if (!token) {
+    return c.json({ ok: false, error: 'unsupported_token' }, 400);
+  }
+
   try {
-    const result = await checkActivity(c.env.SQD_PORTAL_URL, address, sinceBlock, chainId, activityOptions(c.env, chainId));
+    const result = await checkActivity(c.env.SQD_PORTAL_URL, address, sinceBlock, chainId, {
+      ...activityOptions(c.env, chainId),
+      token,
+    });
     return c.json({
       ok: true,
       chainId,
       address: address.toLowerCase(),
+      token: token.address.toLowerCase(),
       hasNew: result.hasNew,
       latestBlock: result.latestBlock,
     });
@@ -147,9 +183,11 @@ activityRoutes.get('/check', async (c) => {
  *
  * Coinbase Developer Platform onchain webhook (`onchain.activity.detected`,
  * filtered to the token contract and `Transfer`). Verifies `X-Hook0-Signature`
- * over the raw body, then records each transfer for its sender and recipient.
- * Deliveries are at-least-once; the store dedupes on (hash, logIndex). Events
- * for other contracts or networks are acknowledged and ignored.
+ * over the raw body, then records each transfer of a webhook-fed token
+ * (`ACTIVITY_TOKENS` entries with `webhookFed`, MockUSDC today) for its sender
+ * and recipient. Deliveries are at-least-once; the store dedupes on
+ * (hash, logIndex). Events for other contracts or networks are acknowledged
+ * and ignored.
  */
 activityRoutes.post('/webhooks/cdp', async (c) => {
   const secret = c.env.CDP_WEBHOOK_SECRET;
@@ -173,7 +211,7 @@ activityRoutes.post('/webhooks/cdp', async (c) => {
   let recorded = 0;
   let ignored = 0;
   for (const event of events) {
-    const parsed = parseCdpTransfer(event, activityTokenFor);
+    const parsed = parseCdpTransfer(event, isWebhookFedToken);
     if (!parsed || !STORE_CHAINS.has(parsed.chainId)) {
       ignored++;
       continue;
