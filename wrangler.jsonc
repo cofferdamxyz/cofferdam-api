@@ -79,6 +79,10 @@
     // also needs the Sepolia paymaster's setRelayer (decision 0071).
     "RELAYER_SIGNER": "key",
     "HANDLE_REGISTRAR_SIGNER": "key",
+    // The hot keys' daily budgets (decision 0090 item 11; src/services/keyBudgetStore.ts),
+    // JSON by role: calls and gasWei alert, hardCalls and hardGasWei refuse, the
+    // hard stop well above normal use. Unset until the founder sets the figures (C2):
+    // "KEY_BUDGETS": "{\"relayer\":{\"calls\":2000,\"gasWei\":\"50000000000000000\",\"hardCalls\":20000,\"hardGasWei\":\"500000000000000000\"}}",
     // Celo mainnet, read-only: Self.xyz's identity registry lives there and
     // the attester's bind gate checks every proof against it. Must agree with
     // cofferdam-attester's CELO_RPC_URL chain (42220).
@@ -204,6 +208,11 @@
   // ATTACHMENT_ISSUER_DO: one object, `issuer`, that makes each 30-day epoch's
   // class keys and keeps them wrapped under the secret ATTACHMENT_KEY_WRAP.
   // Their migration, v6-attachments, is the founder's to deploy.
+  // KEY_BUDGET_DO (workspace decision 0090 item 11, cdp-setup.md E5): one
+  // SQLite-backed object per hot key, role and chain, counting the key's sends
+  // and the gas they paid per UTC day; the var KEY_BUDGETS sets the budget that
+  // alerts and the hard stop that refuses (unset: counted, never refused). Its
+  // migration, v7-key-budget, is the founder's to deploy.
   "durable_objects": {
     "bindings": [
       { "name": "BIND_BUNDLES_DO", "class_name": "BindBundleDO" },
@@ -212,7 +221,8 @@
       { "name": "POP_REPLAY_DO", "class_name": "PopReplayDO" },
       { "name": "VAULT_HANDOFF_DO", "class_name": "VaultHandoffDO" },
       { "name": "ATTACHMENT_QUOTA_DO", "class_name": "AttachmentQuotaDO" },
-      { "name": "ATTACHMENT_ISSUER_DO", "class_name": "AttachmentIssuerDO" }
+      { "name": "ATTACHMENT_ISSUER_DO", "class_name": "AttachmentIssuerDO" },
+      { "name": "KEY_BUDGET_DO", "class_name": "KeyBudgetDO" }
     ]
   },
   // Workers AI, reached only through src/services/inference (decision 0037).
@@ -228,7 +238,8 @@
     { "tag": "v3-chat-usage", "new_sqlite_classes": ["ChatUsageDO"] },
     { "tag": "v4-pop-replay", "new_sqlite_classes": ["PopReplayDO"] },
     { "tag": "v5-vault-handoff", "new_sqlite_classes": ["VaultHandoffDO"] },
-    { "tag": "v6-attachments", "new_sqlite_classes": ["AttachmentQuotaDO", "AttachmentIssuerDO"] }
+    { "tag": "v6-attachments", "new_sqlite_classes": ["AttachmentQuotaDO", "AttachmentIssuerDO"] },
+    { "tag": "v7-key-budget", "new_sqlite_classes": ["KeyBudgetDO"] }
   ],
 
   // ─────────────────────────────────────────────────────────────────

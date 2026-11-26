@@ -75,6 +75,7 @@ import {
 } from '../services/userOp.js';
 import { identityLogLine } from '../services/identityLog.js';
 import { hotSigner, keySpec, signerMissing, signerSpecOf, type SignerSpec } from '../services/hotSigner.js';
+import { keyBudgetOf, receiptGasWei } from '../services/keyBudgetStore.js';
 import { SendRefusedError } from '../services/relaySend.js';
 import {
   GAS_PRICE_ORACLE,
@@ -102,6 +103,7 @@ export class UserOpSubmitError extends Error {
       | 'preflight_unavailable'
       | 'relay_failed'
       | 'rate_limited'
+      | 'budget_exhausted'
       | 'user_op_reverted',
     message: string,
     /** The mined transaction, for `user_op_reverted`. */
@@ -431,6 +433,13 @@ export async function submitUserOperation(
   if (lane.opPaysL1) await l1FeePreflight(publicClient, op, data);
   await preflightExecution(publicClient, relayer.address, data, op);
   await admit();
+  // The key's daily budget (decision 0090 item 11): refused only at the hard
+  // stop, set well above normal use; counted per signer and chain.
+  const budget = keyBudgetOf(env, 'relayer', lane.chainId, relayer.address);
+  if (!(await budget.admit())) {
+    logRelay('aa_budget_stopped', op, { chainId: lane.chainId });
+    throw new UserOpSubmitError('budget_exhausted', "the relayer's daily budget is spent; retry later");
+  }
   // The mainnet test lane signs at the op's own price, so the EntryPoint's
   // repayment matches what the relayer's transaction pays for L2 gas.
   const fees = lane.opPaysL1 ? unpackGasFees(op.gasFees) : null;
@@ -461,6 +470,7 @@ export async function submitUserOperation(
     logRelay('aa_receipt_pending', op, { txHash, reason: revertReason(err) });
     return { txHash, receipt: 'pending' };
   }
+  await budget.spend(txHash, receiptGasWei(receipt as Parameters<typeof receiptGasWei>[0]));
   if (receipt.status !== 'success') {
     // `handleOps` itself reverted: the op did not run in this transaction. A
     // resend after a nonce clash (`relaySend.ts`) may mean it ran in the
@@ -485,6 +495,7 @@ const SUBMIT_STATUS = {
   user_op_reverted: 422,
   rate_limited: 429,
   relay_failed: 502,
+  budget_exhausted: 503,
   preflight_unavailable: 503,
 } as const satisfies Record<UserOpSubmitError['code'], number>;
 

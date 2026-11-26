@@ -28,6 +28,7 @@ import { baseSepolia } from 'viem/chains';
 import { chainRpcUrl } from '../../chain/chains.js';
 import type { Env } from '../../env.js';
 import { hotSigner, signerSpecOf, type SignerSpec } from '../hotSigner.js';
+import { keyBudgetOf, receiptGasWei } from '../keyBudgetStore.js';
 import { HANDLES_CHAIN_ID } from './config.js';
 
 const bytes32 = { type: 'bytes32' } as const;
@@ -203,6 +204,14 @@ export interface AnchorChain {
   deployedBefore(account: Address, seconds: number): Promise<boolean>;
 }
 
+/** The registrar's daily hard stop (decision 0090 item 11): not a contract refusal, so callers wait and retry. */
+export class RegistrarBudgetStop extends Error {
+  constructor() {
+    super("the registrar's daily budget is spent");
+    this.name = 'RegistrarBudgetStop';
+  }
+}
+
 /** A call the simulation refused: the contract's error name only, never its arguments. */
 export class AnchorRevert extends Error {
   constructor(readonly reason: string) {
@@ -284,6 +293,13 @@ export function rpcAnchorChain(env: Env, anchor: Address | null): AnchorChain | 
     rpcUrl,
     sendRaw: (raw) => publicClient.sendRawTransaction({ serializedTransaction: raw }),
   });
+  // The registrar's daily budget (decision 0090 item 11): its receipts are read
+  // more than once (the routes, then the relay), so gas counts once per hash.
+  const budget = keyBudgetOf(env, 'registrar', HANDLES_CHAIN_ID, registrar.address);
+  const settled = async (r: { status: string; transactionHash: Hex }): Promise<ReceiptStatus> => {
+    await budget.spend(r.transactionHash, receiptGasWei(r as Parameters<typeof receiptGasWei>[0]));
+    return r.status === 'success' ? 'success' : 'reverted';
+  };
   return {
     chainId: HANDLES_CHAIN_ID,
     anchor,
@@ -309,21 +325,22 @@ export function rpcAnchorChain(env: Env, anchor: Address | null): AnchorChain | 
       } catch (err) {
         throw contractRevert(err) ?? err;
       }
+      // At the hard stop the send fails as a node error does: a route answers
+      // unavailable and the relay's job waits a minute, never a refusal.
+      if (!(await budget.admit())) throw new RegistrarBudgetStop();
       // A raw key signs once and resends the same bytes; a CDP account resends under one idempotency key.
       return registrar.sendTransaction(anchorTransaction(anchor, call));
     },
     async receipt(hash) {
       try {
-        const r = await publicClient.getTransactionReceipt({ hash });
-        return r.status === 'success' ? 'success' : 'reverted';
+        return await settled(await publicClient.getTransactionReceipt({ hash }));
       } catch {
         return 'pending';
       }
     },
     async waitReceipt(hash, timeoutMs) {
       try {
-        const r = await publicClient.waitForTransactionReceipt({ hash, timeout: timeoutMs, pollingInterval: 1_000 });
-        return r.status === 'success' ? 'success' : 'reverted';
+        return await settled(await publicClient.waitForTransactionReceipt({ hash, timeout: timeoutMs, pollingInterval: 1_000 }));
       } catch {
         return 'pending';
       }

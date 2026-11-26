@@ -41,7 +41,7 @@ import type { Env } from '../env.js';
 import { checkOnChainAuthority, type AuthorityCheck } from '../services/authorityCheck.js';
 import { TIER } from '../services/ceremony.js';
 import { createAuthorityMemo, type AuthorityMemo } from '../services/chat/authorityMemo.js';
-import { AnchorRevert, CHANGE_KIND, rpcAnchorChain, statementSignerOf, ZERO_ADDRESS, type AnchorChain, type AnchorRecord } from '../services/handles/anchor.js';
+import { AnchorRevert, RegistrarBudgetStop, CHANGE_KIND, rpcAnchorChain, statementSignerOf, ZERO_ADDRESS, type AnchorChain, type AnchorRecord } from '../services/handles/anchor.js';
 import {
   anchorAddressOf,
   claimDelayRange,
@@ -703,6 +703,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
       txHash = await chain.send(call);
     } catch (err) {
       if (err instanceof AnchorRevert) refuse(409, 'anchor_refused', { reason: err.reason });
+      if (err instanceof RegistrarBudgetStop) refuse(503, 'registrar_budget_exhausted');
       throw err;
     }
     const receipt = await chain.waitReceipt(txHash!, RECEIPT_WAIT_MS);
@@ -819,6 +820,7 @@ export function createHandlesWriteRoutes(deps: HandlesWriteDeps = defaultHandles
         txHash = await chain.send({ functionName: 'advance', args: [id, newOwner, newMetaAddress, BigInt(deadline), ownerSig, newOwnerSig, registrarSig] });
       } catch (err) {
         if (err instanceof AnchorRevert) refuse(409, 'anchor_refused', { reason: err.reason });
+        if (err instanceof RegistrarBudgetStop) refuse(503, 'registrar_budget_exhausted');
         throw err;
       }
       // The row follows only once mined: the relay settles the job if the receipt is late.

@@ -220,6 +220,37 @@ describe('the relay on a CDP account', () => {
     expect(chain.sendRawTransaction).not.toHaveBeenCalled();
   });
 
+  it("refuses at the key's hard stop before CDP sees anything, and counts a receipt's gas", async () => {
+    const { client, sends } = fakeCdp();
+    cdp.fake = client;
+    const admitted: boolean[] = [];
+    const spent: Array<[string, string]> = [];
+    let allow = false;
+    const ns = {
+      idFromName: (name: string) => name,
+      get: () => ({
+        admit: () => {
+          admitted.push(allow);
+          return Promise.resolve({ allowed: allow, calls: 0, gasWei: '0', alert: null });
+        },
+        spend: (_day: string, t: string, g: string) => {
+          spent.push([t, g]);
+          return Promise.resolve({ calls: 1, gasWei: g, alert: null });
+        },
+      }),
+    };
+    const budgeted = { ...env, KEY_BUDGET_DO: ns } as unknown as Env;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = await submitUserOperation(budgeted, op, async () => {}, 20_000, sepoliaLane(budgeted)).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'budget_exhausted' });
+    expect(sends).toHaveLength(0);
+    allow = true;
+    chain.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [opEvent], gasUsed: 100n, effectiveGasPrice: 2n, l1Fee: 5n });
+    await submitUserOperation(budgeted, op, async () => {}, 20_000, sepoliaLane(budgeted));
+    expect(spent).toEqual([[TX_HASH, '205']]);
+    vi.mocked(console.warn).mockRestore();
+  });
+
   it('is not configured under cdp without its secrets, even with a raw key set', () => {
     expect(sepoliaLane({ ...env, CDP_API_KEY_SECRET: undefined } as Env)).toBeNull();
   });

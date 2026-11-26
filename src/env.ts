@@ -16,6 +16,7 @@ import type { AttachmentIssuerDO } from './services/attachmentIssuerDO.js';
 import type { AttachmentQuotaDO } from './services/attachmentQuotaDO.js';
 import type { BindBundleDO } from './services/bindBundleDO.js';
 import type { ChatUsageDO } from './services/chatUsageDO.js';
+import type { KeyBudgetDO } from './services/keyBudgetDO.js';
 import type { PopReplayDO } from './services/popReplayDO.js';
 import type { VaultHandoffDO } from './services/vaultHandoffDO.js';
 
@@ -391,6 +392,19 @@ export interface Env {
    * answers 503 `replay_store_unavailable`, never an unchecked proof.
    */
   POP_REPLAY_DO?: DurableObjectNamespace<PopReplayDO>;
+  /**
+   * The hot keys' daily budgets (workspace decision 0090 item 11; E5):
+   * one object per role, chain and signer address (`services/keyBudgetStore.ts`).
+   * Unbound, nothing is counted and nothing is refused.
+   */
+  KEY_BUDGET_DO?: DurableObjectNamespace<KeyBudgetDO>;
+  /**
+   * JSON by role (`relayer`, `registrar`): `calls` and `gasWei` (a decimal
+   * string) are the daily budget that alerts once crossed, `hardCalls` and
+   * `hardGasWei` the hard stop that refuses, set well above normal use. A role
+   * absent or malformed is counted with no alert and no stop.
+   */
+  KEY_BUDGETS?: string;
 
   /**
    * The device-link ceremony's one-shot relay, one object per `keyHash` and account (`<keyHash>:<account>`)
