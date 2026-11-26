@@ -17,7 +17,9 @@
  * profile mints at most R$10,000 in all, R$1,000 per quote.
  *
  * Staging only: `podsSandboxBase` refuses any host but
- * `staging-api.pods.finance`, requests follow no redirect, and the key
+ * `staging-api.pods.finance`, requests follow no redirect (`redirect: 'manual'`,
+ * a 3xx refused as `REDIRECT`: Workers has no `redirect: 'error'`, which throws a
+ * TypeError before any request), and the key
  * (`PODS_SANDBOX_API_KEY`) goes only in the `x-api-key` header to that host.
  * Nothing here ever reads a production key.
  */
@@ -126,12 +128,14 @@ export async function mintPbrl(input: MintInput): Promise<MintResult> {
         method,
         headers: { 'x-api-key': input.apiKey, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
         body: body === undefined ? undefined : JSON.stringify(body),
-        redirect: 'error',
+        redirect: 'manual',
         signal: AbortSignal.timeout(20_000),
       });
     } catch {
       throw new PodsError(0, undefined);
     }
+    // Never followed, so the key never reaches the redirect's host.
+    if (res.status >= 300 && res.status < 400) throw new PodsError(res.status, 'REDIRECT');
     let json: Record<string, unknown> = {};
     try {
       json = (await res.json()) as Record<string, unknown>;

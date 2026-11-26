@@ -122,7 +122,8 @@ function fakePods(opts: { approved?: boolean; refuse?: { path: string; status: n
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ method, path: u.pathname, key: new Headers(init?.headers).get('x-api-key'), body });
-    expect(init?.redirect).toBe('error');
+    // Workers implements only follow and manual: 'error' throws a TypeError before any request.
+    expect(init?.redirect).toBe('manual');
     const json = (status: number, v: unknown) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json' } });
     if (opts.refuse && u.pathname === opts.refuse.path) return json(opts.refuse.status, { error: { code: opts.refuse.code } });
     if (u.pathname === '/api/v1/kyc/sumsub-share-token') return json(200, { kycUserId: 'kyc-1' });
@@ -168,6 +169,17 @@ describe('mintPbrl', () => {
     expect(await mintPbrl(input(linked.f, 100))).toEqual({ ok: false, error: 'wallet_linked_elsewhere', code: 'KYC_WALLET_ALREADY_LINKED', mintedCents: 0, txHashes: [] });
     const limit = fakePods({ refuse: { path: '/v2/swap/quote', status: 422, code: 'LIMIT_EXCEEDED' } });
     expect(await mintPbrl(input(limit.f, 100))).toMatchObject({ ok: false, error: 'pods_refused', code: 'LIMIT_EXCEEDED', mintedCents: 0 });
+  });
+
+  it('refuses a redirect without following it, so the key goes nowhere else', async () => {
+    const calls: string[] = [];
+    const f = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response(null, { status: 302, headers: { location: 'https://elsewhere.example/api' } });
+    }) as unknown as typeof fetch;
+    expect(await mintPbrl(input(f, 100))).toMatchObject({ ok: false, error: 'pods_refused', code: 'REDIRECT', mintedCents: 0 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('staging-api.pods.finance');
   });
 
   it('answers unreachable when the request itself fails', async () => {
