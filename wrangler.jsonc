@@ -99,10 +99,12 @@
     // (address 0x17838cDF0788eF83a70E95A645D7C1E9ac107E19), HANDLES_MAP_KEY and HANDLE_STATEMENT_KEY.
     "HANDLE_ANCHOR_ADDRESS": "0x8b346614EBC7eE242eCB2Bb5F04D9CBF91ed1aA8",
     // First block the webhook-fed activity store is complete from (decision
-    // 0032). Leave unset until the CDP subscription exists; then set it to the
-    // head block at creation. ACTIVITY_RPC_URL (the CDP Node URL, carrying a
-    // client key) and CDP_WEBHOOK_SECRET are secrets, never vars.
-    // "ACTIVITY_INDEX_FROM_BLOCK": "<head block at subscription creation>",
+    // 0032). The head block read right after both CDP subscriptions (MockUSDC
+    // 7bb4899b-a0ab-4848-bd09-f86935c1c813, pBRL 7b025699-22f1-4b38-8507-ce9344229420)
+    // were created on 2026-11-26, so both are complete from it. A token subscribed
+    // later needs a block of its own first. ACTIVITY_RPC_URL (the CDP Node URL,
+    // carrying a client key) and CDP_WEBHOOK_SECRET are secrets, never vars.
+    "ACTIVITY_INDEX_FROM_BLOCK": "64057465",
     // Inclusive eth_getLogs span per call; 200 is the public node's cap.
     "ACTIVITY_LOG_RANGE": "200",
     // Chat fair-use cap per account per UTC month, in US dollars of estimated
